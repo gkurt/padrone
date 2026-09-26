@@ -17,7 +17,7 @@
     },
     "docs": {
       "name": "@padrone/docs",
-      "version": "1.9.0",
+      "version": "2.0.0",
       "dependencies": {
         "@astrojs/react": "6.0.0",
         "@astrojs/starlight": "^0.41.1",
@@ -37,7 +37,7 @@
     },
     "examples/deploy-example": {
       "name": "@padrone/deploy-example",
-      "version": "1.9.0",
+      "version": "2.0.0",
       "bin": "src/cli.ts",
       "dependencies": {
         "padrone": "workspace:*",
@@ -46,7 +46,7 @@
     },
     "examples/padrone-example": {
       "name": "@padrone/tasks-example",
-      "version": "1.9.0",
+      "version": "2.0.0",
       "bin": "src/tasks.ts",
       "dependencies": {
         "ai": "^7.0.8",
@@ -61,7 +61,7 @@
     },
     "packages/padrone": {
       "name": "padrone",
-      "version": "1.9.0",
+      "version": "2.0.0",
       "bin": {
         "padrone": "./src/cli/index.ts",
       },

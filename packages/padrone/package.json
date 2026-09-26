@@ -1,6 +1,6 @@
 {
   "name": "padrone",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Create type-safe, interactive CLI apps with Zod schemas",
   "license": "MIT",
   "type": "module",

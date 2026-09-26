@@ -66,12 +66,13 @@ program.runtime({
 |----------|------|---------|-------------|
 | `output` | `(text: string) => void` | `console.log` | Write normal output |
 | `error` | `(text: string) => void` | `console.error` | Write error output |
-| `argv` | `() => string[]` | `process.argv.slice(2)` | Return raw CLI arguments |
+| `argv` | `() => string[]` | `process.argv.slice(2)` | Return raw CLI arguments. Each entry is taken as one token, as the shell split it |
 | `env` | `() => Record<string, string \| undefined>` | `process.env` | Return environment variables |
 | `format` | `string` | `'auto'` | Default help output format |
 | `interactive` | `boolean` | `false` | Whether the runtime supports interactive prompts |
 | `prompt` | `(config: InteractivePromptConfig) => Promise<unknown>` | Enquirer (when `interactive: true`) | Custom prompt implementation |
 | `progress` | `(message: string, options?: PadroneProgressOptions) => PadroneProgress` | Built-in terminal spinner | Progress indicator factory. See [Progress Indicators](/padrone/guides/progress-indicators/) |
+| `setExitCode` | `(code: number) => void` | Sets `process.exitCode` | Called by `cli()` when a run ends with an error or a signal. Override to capture or ignore it |
 
 Successive `.runtime()` calls merge with previous configuration.
 
@@ -572,7 +573,7 @@ program.command(['serve', 's'], (c) =>
 
 ### .cli(prefs?)
 
-Execute the program as a CLI. This is the main process entry point that reads from `process.argv` and throws on validation errors.
+Execute the program as a CLI. This is the main process entry point that reads from `process.argv` (each entry one token, as the shell split it) and exits non-zero when the run fails.
 
 ```typescript
 // Parse process.argv
@@ -596,6 +597,8 @@ program.cli({ context: { db, logger } });
   - `context`: User-defined context object. Required when the program has a non-`unknown` context type.
 
 **Returns:** `PadroneCommandResult` with `command`, `args`, `argsResult`, and `result`. Returns a `Promise` when the matched command is async.
+
+**Exit code:** When the run ends with an error (routing, validation, or a thrown action — including one that only surfaces on `drain()`), `cli()` sets the exit code through `runtime.setExitCode` to the error's `exitCode` (`PadroneError` carries one; 130 for SIGINT), or `1`. It uses `process.exitCode` rather than `process.exit()`, so output still flushes. Successful runs, `--help` and `--version` leave it at `0`.
 
 **Note:** Interactive prompting only triggers in `cli()` and `eval()`, not in `parse()` or `run()`. When a command has interactive meta and the runtime has `interactive: true`, missing field values are prompted before validation. The `--repl` flag starts a REPL session (optionally scoped to a command).
 
@@ -622,7 +625,7 @@ if (result.argsResult?.issues) {
 
 **Returns:** `PadroneCommandResult` with `command`, `args`, `argsResult`, and `result`. Returns a `Promise` when the matched command is async.
 
-**Difference from `cli()`:** `eval()` is designed for programmatic use (REPL, AI tools, testing). It uses soft error handling — validation failures are returned as `argsResult.issues` rather than thrown. `cli()` is the process entry point that throws on errors and reads from `process.argv`.
+**Difference from `cli()`:** `eval()` is designed for programmatic use (REPL, AI tools, testing). It uses soft error handling — validation failures are returned as `argsResult.issues` rather than thrown. `cli()` is the process entry point that prints errors, sets a non-zero exit code on failure, and reads from `process.argv`.
 
 ---
 

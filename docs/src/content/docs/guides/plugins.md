@@ -219,7 +219,7 @@ const startup = defineInterceptor({ name: 'startup' }, () => ({
 | Property | Type | Description |
 |----------|------|-------------|
 | `command` | `PadroneCommand` | The root command |
-| `input` | `string \| undefined` | Raw CLI input string |
+| `input` | `string \| string[] \| undefined` | Raw CLI input: the string passed to `eval()`/REPL, or the argv array from `cli()` (each entry one token) |
 | `signal` | `AbortSignal` | Cancellation signal (provided by the signal extension) |
 | `context` | `unknown` | User-provided context from `cli()`/`eval()` |
 | `caller` | `string` | Invocation method (`'cli'`, `'eval'`, `'repl'`, etc.) |
@@ -247,7 +247,7 @@ const parseLogger = defineInterceptor({ name: 'parse-logger' }, () => ({
 | Property | Type | Description |
 |----------|------|-------------|
 | `command` | `PadroneCommand` | The root command |
-| `input` | `string \| undefined` | Raw CLI input string |
+| `input` | `string \| string[] \| undefined` | Raw CLI input: the string passed to `eval()`/REPL, or the argv array from `cli()` (each entry one token) |
 | `signal` | `AbortSignal` | Cancellation signal |
 | `context` | `unknown` | User-provided context from `cli()`/`eval()` |
 | `caller` | `string` | Invocation method |

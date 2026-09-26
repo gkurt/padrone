@@ -7,12 +7,18 @@ import type { AnyPadroneCommand, PadroneActionContext } from './command.ts';
 // Interceptor system
 // ---------------------------------------------------------------------------
 
+/**
+ * Raw CLI input: a command line to tokenize (`eval()`, the REPL), or argv entries already
+ * tokenized by the shell (`cli()`), each taken as exactly one token.
+ */
+export type PadroneInput = string | string[];
+
 /** Base context shared across all interceptor phases within a single execution. */
 export type InterceptorBaseContext<TContext = object> = {
   /** The resolved command for this execution. In the parse phase, this is the root program. */
   command: AnyPadroneCommand;
-  /** The raw CLI input string (undefined when invoked without input). */
-  input: string | undefined;
+  /** The raw CLI input: a string from `eval()`/REPL, or the argv array from `cli()` (undefined when invoked without input). */
+  input: PadroneInput | undefined;
   /** Cancellation signal that fires when the process receives a termination signal. */
   signal: AbortSignal;
   /** User-defined context object, resolved through the command's parent chain. */

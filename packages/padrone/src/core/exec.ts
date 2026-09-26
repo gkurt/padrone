@@ -12,6 +12,7 @@ import type {
   InterceptorValidateResult,
   PadroneActionContext,
   PadroneEvalPreferences,
+  PadroneInput,
   RegisteredInterceptor,
   ResolvedInterceptor,
 } from '../types/index.ts';
@@ -24,7 +25,7 @@ import { buildCommandArgs, formatIssueMessages, validateCommandArgs } from './va
 export type ExecContext = {
   rootCommand: AnyPadroneCommand;
   builder: AnyPadroneProgram;
-  parseCommandFn: (input: string | undefined) => {
+  parseCommandFn: (input: PadroneInput | undefined) => {
     command: AnyPadroneCommand;
     rawArgs: Record<string, unknown>;
     args: string[];
@@ -129,7 +130,7 @@ function handleValidationIssues(argsResult: StandardSchemaV1.FailureResult, comm
  * - 'hard': print error + help and throw (cli-without-input behavior)
  */
 export function execCommand(
-  resolvedInput: string | undefined,
+  resolvedInput: PadroneInput | undefined,
   ctx: ExecContext,
   evalOptions?: PadroneEvalPreferences,
   errorMode: 'soft' | 'hard' = 'soft',

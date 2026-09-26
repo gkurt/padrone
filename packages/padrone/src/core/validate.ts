@@ -1,5 +1,5 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
-import type { AnyPadroneCommand, InterceptorValidateResult } from '../types/index.ts';
+import type { AnyPadroneCommand, InterceptorValidateResult, PadroneInput } from '../types/index.ts';
 import { coerceArgs, detectUnknownArgs, extractSchemaMetadata, getJsonSchema, parsePositionalConfig, preprocessArgs } from './args.ts';
 import { getCommandRuntime } from './commands.ts';
 import { getNestedValue, parseCliInputToParts, setNestedValue } from './parse.ts';
@@ -7,10 +7,11 @@ import { thenMaybe } from './results.ts';
 
 /**
  * Parses CLI input to find the command and extract raw arguments without validation.
+ * A string is tokenized; an array (argv) is taken as already tokenized. Without input, reads the runtime's argv.
  */
-export function parseCommand(input: string | undefined, rootCommand: AnyPadroneCommand, findCommandByName: FindCommandFn) {
-  input ??= getCommandRuntime(rootCommand).argv().join(' ') || undefined;
-  if (!input) {
+export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPadroneCommand, findCommandByName: FindCommandFn) {
+  input ??= getCommandRuntime(rootCommand).argv();
+  if (!input.length) {
     const defaultCommand = findCommandByName('', rootCommand.commands);
     if (defaultCommand) {
       return { command: defaultCommand, rawArgs: {} as Record<string, unknown>, args: [] as string[], unmatchedTerms: [] as string[] };

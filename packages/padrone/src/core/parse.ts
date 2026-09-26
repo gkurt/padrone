@@ -48,11 +48,12 @@ type QuoteChar = '"' | "'" | '`';
 
 /**
  * Split a string by a delimiter, respecting quoted segments and optional bracket nesting.
- * Handles escape sequences within quotes (\\" and \\\\).
+ * Handles escape sequences within quotes (\\" and \\\\). A quoted empty segment (`""`) is kept as an empty token.
  */
 function splitQuoteAware(input: string, delimiter: ' ' | ',', opts?: { brackets?: boolean; trim?: boolean }): string[] {
   const results: string[] = [];
   let current = '';
+  let quoted = false;
   let inQuote: QuoteChar | null = null;
   let bracketDepth = 0;
   let i = 0;
@@ -84,10 +85,12 @@ function splitQuoteAware(input: string, delimiter: ' ' | ',', opts?: { brackets?
       current += char;
     } else if (char === '"' || char === "'" || char === '`') {
       inQuote = char;
+      quoted = true;
     } else if (char === delimiter || (delimiter === ' ' && char === '\t')) {
-      if (delimiter === ' ' ? current : true) {
+      if (delimiter === ' ' ? current || quoted : true) {
         results.push(opts?.trim ? current.trim() : current);
         current = '';
+        quoted = false;
       }
     } else {
       current += char;
@@ -95,15 +98,20 @@ function splitQuoteAware(input: string, delimiter: ' ' | ',', opts?: { brackets?
     i++;
   }
 
-  if (delimiter === ' ' ? current : current || results.length > 0) {
+  if (delimiter === ' ' ? current || quoted : current || results.length > 0) {
     results.push(opts?.trim ? current.trim() : current);
   }
 
   return results;
 }
 
-export function parseCliInputToParts(input: string): ParsePart[] {
-  const parts = splitQuoteAware(input.trim(), ' ', { brackets: true });
+/**
+ * Parses CLI input into parts. A string (from `eval()` or the REPL) is tokenized first, honoring quotes;
+ * an array (argv, already tokenized by the shell) is taken as is — each entry is exactly one token.
+ */
+export function parseCliInputToParts(input: string | readonly string[]): ParsePart[] {
+  const literal = typeof input !== 'string';
+  const parts = literal ? input : splitQuoteAware(input.trim(), ' ', { brackets: true });
   const result: ParsePart[] = [];
 
   // Index into `result` of the last part that can accept a pending value (-1 = none)
@@ -113,8 +121,6 @@ export function parseCliInputToParts(input: string): ParsePart[] {
   let afterDoubleDash = false;
 
   for (const part of parts) {
-    if (!part) continue;
-
     // Bare `--` separator: everything after is a literal positional arg
     if (part === '--' && !afterDoubleDash) {
       pendingIdx = -1;
@@ -136,14 +142,14 @@ export function parseCliInputToParts(input: string): ParsePart[] {
       const key = part.slice(5).split('.');
       result.push({ type: 'named', key, value: undefined, negated: true });
     } else if (part.startsWith('--')) {
-      const [keyStr = '', value] = splitNamedArgValue(part.slice(2));
+      const [keyStr = '', value] = splitNamedArgValue(part.slice(2), literal);
       const key = keyStr.split('.');
       result.push({ type: 'named', key, value });
       if (typeof value === 'undefined') pendingIdx = result.length - 1;
     } else if (part.startsWith('-') && part.length > 1 && !/^-\d/.test(part)) {
       // Short flag(s) (but not negative numbers like -5)
       // Supports flag stacking: -abc → -a -b -c (last flag can take a value)
-      const [keyStr = '', value] = splitNamedArgValue(part.slice(1));
+      const [keyStr = '', value] = splitNamedArgValue(part.slice(1), literal);
 
       if (keyStr.length > 1 && typeof value === 'undefined') {
         // Flag stacking: -abc → -a, -b, -c (all set to true except last which can take next arg's value)
@@ -177,8 +183,9 @@ export function parseCliInputToParts(input: string): ParsePart[] {
 
 /**
  * Split named arg key and value, handling quoted values after =.
+ * `literal` (an argv token) keeps quotes as typed: the shell has already removed its own.
  */
-function splitNamedArgValue(str: string): [string, string | string[] | undefined] {
+function splitNamedArgValue(str: string, literal: boolean): [string, string | string[] | undefined] {
   const eqIndex = str.indexOf('=');
   if (eqIndex === -1) return [str, undefined];
 
@@ -187,9 +194,10 @@ function splitNamedArgValue(str: string): [string, string | string[] | undefined
 
   // Remove surrounding quotes from value if present
   if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'")) ||
-    (value.startsWith('`') && value.endsWith('`'))
+    !literal &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")) ||
+      (value.startsWith('`') && value.endsWith('`')))
   ) {
     value = value.slice(1, -1);
     return [key, value];

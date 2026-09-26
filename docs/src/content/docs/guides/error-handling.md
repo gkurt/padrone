@@ -59,24 +59,20 @@ Every `PadroneError` carries:
 
 ### With cli()
 
-`cli()` throws errors. Catch them to customize the exit behavior:
+`cli()` never throws: it prints routing and validation errors with help, and returns the error on the result. When a run ends with an error, it sets the process exit code to the error's `exitCode` (`1` by default, `130` after SIGINT) through `runtime.setExitCode` — `process.exitCode` in the default runtime, so output still flushes. Inspect the result to customize what happens next:
 
 ```typescript
-try {
-  await program.cli();
-} catch (error) {
-  if (error instanceof PadroneError) {
-    console.error(error.message);
-    if (error.suggestions.length > 0) {
-      console.error('\nSuggestions:');
-      for (const s of error.suggestions) {
-        console.error(`  - ${s}`);
-      }
-    }
-    process.exit(error.exitCode);
-  }
-  throw error; // Re-throw unexpected errors
+const { error } = await program.cli().drain();
+if (error instanceof PadroneError && error.suggestions.length > 0) {
+  console.error('\nSuggestions:');
+  for (const s of error.suggestions) console.error(`  - ${s}`);
 }
+```
+
+To take over the exit code yourself (or ignore it, e.g. in tests), pass `setExitCode` in the runtime:
+
+```typescript
+program.runtime({ setExitCode: (code) => console.error(`exit ${code}`) }).cli();
 ```
 
 ### With eval()

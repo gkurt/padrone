@@ -9,6 +9,7 @@ import type {
   InterceptorPipelinePhase,
   InterceptorShutdownContext,
   InterceptorStartContext,
+  PadroneInput,
   PadroneInterceptorFn,
   RegisteredInterceptor,
   ResolvedInterceptor,
@@ -197,7 +198,7 @@ export function runInterceptorChain<TCtx extends object, TResult>(
 export function wrapWithLifecycle<T>(
   interceptors: ResolvedInterceptor[],
   command: AnyPadroneCommand,
-  input: string | undefined,
+  input: PadroneInput | undefined,
   pipeline: (signal: AbortSignal, context: unknown) => T | Promise<T>,
   wrapErrorResult?: (result: unknown) => T,
   signal?: AbortSignal,
@@ -318,7 +319,7 @@ export function wrapWithLifecycle<T>(
 export function wrapWithCommandLifecycle<T>(
   interceptors: ResolvedInterceptor[],
   command: AnyPadroneCommand,
-  input: string | undefined,
+  input: PadroneInput | undefined,
   pipeline: () => T | Promise<T>,
   wrapErrorResult: ((result: unknown) => T) | undefined,
   signal: AbortSignal,

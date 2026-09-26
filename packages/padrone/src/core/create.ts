@@ -20,6 +20,7 @@ import type {
   InterceptorMeta,
   PadroneBuilder,
   PadroneCommand,
+  PadroneInput,
   PadroneInterceptorFn,
   PadroneProgram,
   PadroneSchema,
@@ -101,7 +102,7 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
         }
       : inputCommand;
 
-  const parseCommandFn = (input: string | undefined) => parseCommand(input, existingCommand, findCommandByName);
+  const parseCommandFn = (input: PadroneInput | undefined) => parseCommand(input, existingCommand, findCommandByName);
   const collectInterceptorsFn = (cmd: AnyPadroneCommand) => collectInterceptors(cmd, existingCommand);
 
   // Execution context shared by exec and program methods.

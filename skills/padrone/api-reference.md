@@ -298,6 +298,7 @@ Custom I/O adapter for non-terminal environments.
   interactive?: 'supported' | 'unsupported' | 'forced' | 'disabled',
   prompt?: (config) => Promise<unknown>,
   readLine?: (prompt: string) => Promise<string | null>,
+  setExitCode?: (code: number) => void,  // cli() calls it on error; default sets process.exitCode
 })
 ```
 
@@ -327,7 +328,7 @@ Explicitly marks the command as async. Alternative to `asyncSchema()`.
 
 ### `.cli(prefs?)`
 
-CLI entry point. Parses `process.argv`. Throws on validation errors.
+CLI entry point. Parses `process.argv`, each entry one token (quoting from the shell is kept). Prints errors and sets the exit code (the error's `exitCode`, or 1) via `runtime.setExitCode`; never throws.
 
 ```ts
 program.cli();

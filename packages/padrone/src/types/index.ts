@@ -41,6 +41,7 @@ export type {
   InterceptorValidateContext,
   InterceptorValidateResult,
   PadroneContextInterceptor,
+  PadroneInput,
   PadroneInterceptor,
   PadroneInterceptorFn,
   RegisteredInterceptor,

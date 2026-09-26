@@ -78,7 +78,7 @@ program.cli();
 
 | Method | Purpose |
 |---|---|
-| `.cli(prefs?)` | Entry point from `process.argv` — throws on validation errors. Pass `context` in prefs. |
+| `.cli(prefs?)` | Entry point from `process.argv` (one token per entry) — prints errors and sets the exit code (error's `exitCode`, or 1). Pass `context` in prefs. |
 | `.eval(input, prefs?)` | Parse + validate + execute a string — returns issues softly. Pass `context` in prefs. |
 | `.run(name, args, prefs?)` | Execute by name with args object (sync, no validation). Pass `context` in prefs. |
 | `.parse(input?)` | Parse without executing |

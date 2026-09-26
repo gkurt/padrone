@@ -20,6 +20,32 @@ import { resolveRegisteredInterceptors, runInterceptorChain } from './intercepto
 import { errorResult, makeThenable, thenMaybe, warnIfUnexpectedAsync, withDrain, withPromiseDrain } from './results.ts';
 import { coreValidateForParse } from './validate.ts';
 
+/** The exit code an error asks for: its own `exitCode` (as `PadroneError` carries), or 1. */
+function errorExitCode(error: unknown): number {
+  const code = (error as { exitCode?: unknown } | null)?.exitCode;
+  return typeof code === 'number' ? code : 1;
+}
+
+/**
+ * Sets the process exit code for a `cli()` result that ended with an error or a signal —
+ * and for an error that only surfaces when the result is drained. Successful runs leave it untouched.
+ */
+function reportExitCode<T extends { error?: unknown; exitCode?: number; drain: () => Promise<{ error?: unknown }> }>(
+  result: T,
+  setExitCode: ((code: number) => void) | undefined,
+): T {
+  if (!setExitCode) return result;
+  const code = result.exitCode ?? (result.error !== undefined ? errorExitCode(result.error) : undefined);
+  if (code) setExitCode(code);
+  const drain = result.drain;
+  result.drain = async () => {
+    const drained = await drain();
+    if (drained.error !== undefined && result.error === undefined) setExitCode(result.exitCode ?? errorExitCode(drained.error));
+    return drained;
+  };
+  return result;
+}
+
 export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadroneProgram['eval']) {
   const { rootCommand } = ctx;
 
@@ -215,16 +241,19 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
     createReplIterator({ existingCommand: rootCommand, evalCommand, replActiveRef }, options);
 
   const cli: AnyPadroneProgram['cli'] = (cliOptions) => {
+    const runtime = getCommandRuntime(rootCommand);
+    const setExitCode = cliOptions?.runtime?.setExitCode ?? runtime.setExitCode;
+    const withExitCode = (result: any) => reportExitCode(result, setExitCode);
     try {
-      const runtime = getCommandRuntime(rootCommand);
-      const resolvedInput = (runtime.argv().join(' ') || undefined) as string | undefined;
+      // argv is already tokenized by the shell: pass it through as is, one token per entry.
+      const argv = runtime.argv();
+      const result = execCommand(argv.length ? argv : undefined, ctx, cliOptions, 'hard', 'cli');
 
-      const result = execCommand(resolvedInput, ctx, cliOptions, 'hard', 'cli');
-
-      if (result instanceof Promise) return withPromiseDrain(result.catch((err: unknown) => errorResultWithSignal(err))) as any;
-      return makeThenable(result);
+      if (result instanceof Promise)
+        return withPromiseDrain(result.catch((err: unknown) => errorResultWithSignal(err)).then(withExitCode)) as any;
+      return makeThenable(withExitCode(result));
     } catch (err) {
-      return makeThenable(errorResultWithSignal(err)) as any;
+      return makeThenable(withExitCode(errorResultWithSignal(err))) as any;
     }
   };
 

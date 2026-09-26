@@ -100,6 +100,7 @@ export type {
   PadroneContextInterceptor,
   PadroneDrainResult,
   PadroneExtension,
+  PadroneInput,
   PadroneInterceptor,
   PadroneInterceptorFn,
   PadroneParseResult,

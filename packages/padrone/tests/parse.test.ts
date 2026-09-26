@@ -225,10 +225,12 @@ describe('parseCliInputToParts', () => {
       expect(result).toEqual([{ type: 'named', key: ['name'], value: 'hello world' }]);
     });
 
-    it('should handle empty quoted strings (tokenizer produces empty token, consumed as pending)', () => {
-      // "" tokenizes to an empty string which is falsy, so the pending value is never consumed
-      const result = parseCliInputToParts('--name ""');
-      expect(result).toEqual([{ type: 'named', key: ['name'], value: undefined }]);
+    it('an empty quoted string is the empty value', () => {
+      expect(parseCliInputToParts('--name ""')).toEqual([{ type: 'named', key: ['name'], value: '' }]);
+      expect(parseCliInputToParts("greet ''")).toEqual([
+        { type: 'term', value: 'greet' },
+        { type: 'arg', value: '' },
+      ]);
     });
   });
 

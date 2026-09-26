@@ -7,6 +7,7 @@ import type {
   CommandTypesBase,
   InterceptorStartContext,
   PadroneCommand,
+  PadroneInput,
   PadroneReplPreferences,
 } from '../types/index.ts';
 import type { PadroneSchema } from '../types/schema.ts';
@@ -75,7 +76,7 @@ function createReplInterceptor(defaults?: PadroneReplPreferences, disabled?: boo
 }
 
 /** Check for --repl flag in input. */
-function checkReplFlag(input: string | undefined, rootCommand: AnyPadroneCommand): { scope?: string } | null {
+function checkReplFlag(input: PadroneInput | undefined, rootCommand: AnyPadroneCommand): { scope?: string } | null {
   if (!input) return null;
 
   const parts = parseCliInputToParts(input);

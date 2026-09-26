@@ -166,6 +166,10 @@ function defaultExit(code: number): never {
   throw new Error(`Exit with code ${code}`);
 }
 
+function defaultSetExitCode(code: number): void {
+  if (typeof process !== 'undefined') process.exitCode = code;
+}
+
 function getTerminalInfo(): PadroneRuntime['terminal'] {
   if (typeof process === 'undefined') return undefined;
   return {
@@ -190,6 +194,7 @@ export function createDefaultRuntime(): ResolvedPadroneRuntime {
     onSignal: defaultOnSignal,
     terminal: getTerminalInfo(),
     exit: defaultExit,
+    setExitCode: defaultSetExitCode,
   };
 }
 
@@ -235,5 +240,6 @@ export function resolveRuntime(partial?: PadroneRuntime): ResolvedPadroneRuntime
     onSignal: partial.onSignal ?? defaults.onSignal,
     terminal: partial.terminal ?? defaults.terminal,
     exit: partial.exit ?? defaults.exit,
+    setExitCode: partial.setExitCode ?? defaults.setExitCode,
   };
 }

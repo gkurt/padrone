@@ -229,6 +229,13 @@ export type PadroneRuntime = {
    * Non-Node runtimes can throw an error or no-op.
    */
   exit?: (code: number) => never;
+
+  /**
+   * Set the exit code the process ends with, without exiting, so output streams still flush.
+   * `cli()` calls it when a run ends with an error (the error's `exitCode`, or 1) or a signal (e.g. 130 for SIGINT).
+   * The default runtime sets `process.exitCode`; custom runtimes can capture it or no-op.
+   */
+  setExitCode?: (code: number) => void;
 };
 
 /**
@@ -236,9 +243,9 @@ export type PadroneRuntime = {
  * The `prompt`, `interactive`, and `readLine` fields remain optional since not all runtimes provide them.
  */
 export type ResolvedPadroneRuntime = Required<
-  Omit<PadroneRuntime, 'prompt' | 'interactive' | 'readLine' | 'stdin' | 'theme' | 'onSignal' | 'terminal' | 'exit'>
+  Omit<PadroneRuntime, 'prompt' | 'interactive' | 'readLine' | 'stdin' | 'theme' | 'onSignal' | 'terminal' | 'exit' | 'setExitCode'>
 > &
-  Pick<PadroneRuntime, 'prompt' | 'interactive' | 'readLine' | 'stdin' | 'theme' | 'onSignal' | 'terminal' | 'exit'>;
+  Pick<PadroneRuntime, 'prompt' | 'interactive' | 'readLine' | 'stdin' | 'theme' | 'onSignal' | 'terminal' | 'exit' | 'setExitCode'>;
 
 /**
  * Sentinel value returned by the terminal REPL session when Ctrl+C is pressed.

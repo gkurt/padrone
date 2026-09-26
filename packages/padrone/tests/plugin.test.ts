@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import type { PadroneInput } from 'padrone';
 import { createPadrone, defineInterceptor } from 'padrone';
 import * as z from 'zod/v4';
 
@@ -111,7 +112,7 @@ describe('interceptors', () => {
 
   describe('parse phase', () => {
     it('should provide input and root command in context', () => {
-      let capturedInput: string | undefined;
+      let capturedInput: PadroneInput | undefined;
       let capturedCommandName: string | undefined;
 
       const interceptor = defineInterceptor({ name: 'parse-spy' }, () => ({
@@ -439,7 +440,7 @@ describe('interceptors', () => {
     });
 
     it('should provide input and root command in context', () => {
-      let capturedInput: string | undefined;
+      let capturedInput: PadroneInput | undefined;
       let capturedCommandName: string | undefined;
 
       const interceptor = defineInterceptor({ name: 'start-spy' }, () => ({

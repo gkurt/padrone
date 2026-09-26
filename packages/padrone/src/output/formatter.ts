@@ -117,6 +117,10 @@ export type HelpInfo = {
     hasArguments: boolean;
     /** The name of the field that reads from stdin, if any. Shown as `[stdin > field]` in usage. */
     stdinField?: string;
+    /** Replaces the generated usage line when set. */
+    text?: string;
+    /** The flag that shows help (e.g. `--help`), used in hints. Absent when help has no flag. */
+    helpFlag?: string;
   };
   /** List of subcommands */
   subcommands?: HelpSubcommandInfo[];
@@ -130,7 +134,38 @@ export type HelpInfo = {
   examples?: string[];
   /** Full help info for nested commands (used in 'full' detail mode) */
   nestedCommands?: HelpInfo[];
+  /** Text shown before the rest of the help (from `.configure({ help: { before } })`) */
+  before?: string;
+  /** Text shown after the rest of the help (from `.configure({ help: { after } })`) */
+  after?: string;
 };
+
+/** Declarative help customization for a single command, set via `.configure({ help })`. */
+export type PadroneHelpConfig = {
+  /** Replaces the generated usage line (the text after `Usage:`). */
+  usage?: string;
+  /** Text shown before the rest of the help. */
+  before?: string;
+  /** Text shown after the rest of the help. */
+  after?: string;
+};
+
+export type PadroneHelpContext = {
+  /** The command whose help is being generated. */
+  command: unknown;
+  /** The requested output format (`'auto'` picks ANSI or text from the terminal). */
+  format: HelpFormat | 'auto';
+  detail: HelpDetail;
+  /** Renders help info with the built-in formatter for this format. */
+  render: (info: HelpInfo) => string;
+};
+
+/**
+ * Function form of `.configure({ help })`: receives the generated help info (with any declarative parts applied)
+ * and returns modified info, rendered by the built-in formatter, or the final help string.
+ * It applies to the command and its subcommands; a subcommand's own function takes precedence.
+ */
+export type PadroneHelpTransform = (info: HelpInfo, ctx: PadroneHelpContext) => HelpInfo | string;
 
 // ============================================================================
 // Formatter Interface
@@ -155,6 +190,7 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
   const { newline, indent, join, wrapDocument } = layout;
 
   function formatUsageSection(info: HelpInfo): string[] {
+    if (info.usage.text !== undefined) return [`${styler.label('Usage:')} ${styler.command(info.usage.text)}`];
     const usageParts: string[] = [styler.command(info.usage.command), info.usage.hasSubcommands ? styler.meta('[command]') : ''];
     // Show actual positional argument names in usage line
     if (info.positionals && info.positionals.length > 0) {
@@ -460,9 +496,11 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
       // Collapsed summary: show selected builtins on a single line with a combined hint
       const highlights = ['help [command]', 'version', '[command] --repl'];
       lines.push(`${styler.label('Global:')} ${styler.meta(highlights.join(', '))}`);
-      const hint = info.usage.hasSubcommands
-        ? `Run "${info.name} [command] --help" for more information. Use "--all" for all global commands.`
-        : `Use "${info.name} help --all" for more information on global commands.`;
+      const helpFlag = info.usage.helpFlag;
+      const hint =
+        info.usage.hasSubcommands && helpFlag
+          ? `Run "${info.name} [command] ${helpFlag}" for more information. Use "--all" for all global commands.`
+          : `Use "${info.name} help --all" for more information on global commands.`;
       lines.push(styler.meta(hint));
       return lines;
     }
@@ -510,6 +548,11 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
         const deprecationMessage =
           typeof info.deprecated === 'string' ? `⚠️  This command is deprecated: ${info.deprecated}` : '⚠️  This command is deprecated';
         lines.push(styler.deprecated(deprecationMessage));
+        lines.push('');
+      }
+
+      if (info.before) {
+        lines.push(info.before);
         lines.push('');
       }
 
@@ -571,6 +614,11 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
         lines.push('');
       }
 
+      if (info.after) {
+        lines.push(info.after);
+        lines.push('');
+      }
+
       // Nested commands section (full detail mode)
       if (info.nestedCommands?.length) {
         lines.push(styler.section('Subcommand Details:'));
@@ -609,6 +657,7 @@ function createJsonFormatter(): Formatter {
 function createMinimalFormatter(): Formatter {
   return {
     format(info: HelpInfo): string {
+      if (info.usage.text !== undefined) return info.usage.text;
       const parts: string[] = [info.usage.command];
       if (info.usage.hasSubcommands) parts.push('[command]');
       if (info.positionals && info.positionals.length > 0) {

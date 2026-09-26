@@ -33,6 +33,7 @@ export type {
   PadroneProgressMessage,
   PadroneProgressMessages,
   PadroneProgressRenderer,
+  PadroneVersionOptions,
   VersionCommand,
   WithAsync,
   WithHelp,
@@ -63,7 +64,7 @@ export type { UpdateCheckConfig } from './feature/update-check.ts';
 export type { WrapConfig, WrapResult } from './feature/wrap.ts';
 export type { AnsiStyle, ColorConfig, ColorTheme } from './output/colorizer.ts';
 export { colorThemes } from './output/colorizer.ts';
-export type { HelpDetail, HelpFormat, HelpInfo } from './output/formatter.ts';
+export type { HelpDetail, HelpFormat, HelpInfo, PadroneHelpConfig, PadroneHelpContext, PadroneHelpTransform } from './output/formatter.ts';
 export type { PadroneOutputIndicator } from './output/output-indicator.ts';
 export type { KeyValueOptions, ListItem, ListOptions, TableOptions, TreeNode, TreeOptions } from './output/primitives.ts';
 export type { OutputContext, OutputFormat } from './output/styling.ts';

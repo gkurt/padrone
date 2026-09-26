@@ -363,6 +363,47 @@ program.help('', { format: 'html' });
 program.help('', { format: 'json' });
 ```
 
+### Customizing Help
+
+Pass `help` to `.configure()` as a declarative object, which applies to that command only:
+
+```typescript
+.command('deploy', (c) =>
+  c.configure({
+    help: {
+      usage: 'app deploy <env> [--force]',       // replaces the generated usage line
+      before: 'Beta: this command may change.',  // shown before the help
+      after: 'Docs: https://example.com/deploy', // shown after the help
+    },
+  }),
+)
+```
+
+Or as a function, which applies to that command and its subcommands (a subcommand's own function wins). It receives the generated help info, with any declarative parts applied, and returns modified info, rendered in the requested format, or the final string:
+
+```typescript
+program.configure({
+  help: (info, ctx) => ({ ...info, after: 'Report issues at https://example.com/issues' }),
+});
+
+program.configure({
+  help: (info, ctx) => `${banner}\n${ctx.render(info)}`, // ctx.render uses the built-in formatter
+});
+```
+
+`ctx` also has the `command`, the requested `format` and the `detail` level. The customization is used everywhere help is shown: `--help`, `help <command>`, `program.help()`, errors with `showHelpOnError`, and generated docs.
+
+The help and version flags can be renamed, or removed by passing `[]` (the `help` and `version` commands remain):
+
+```typescript
+createPadrone('app', {
+  builtins: {
+    help: { flags: ['help', '?'] },  // --help, -?
+    version: { flags: ['version'] }, // --version only, freeing -v and -V
+  },
+});
+```
+
 ## Command Override
 
 Re-registering a command with the same name merges the new definition with the existing one. The new handler receives the previous handler as a `base` parameter:

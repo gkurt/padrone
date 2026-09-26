@@ -127,7 +127,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.command(name, builder)` | Add subcommand (name or `[name, ...aliases]`) |
 | `.context(transform?)` | Define typed context or transform inherited context |
 | `.mount(name, program, options?)` | Mount another program as subcommand tree |
-| `.configure(config)` | Set title, description, version, etc. |
+| `.configure(config)` | Set title, description, version, help customization (`help: { usage, before, after }` or `(info, ctx) => …`), etc. |
 | `.extend(padroneEnv(schema))` | Map env vars to args (composable extension) |
 | `.extend(padroneConfig({ files, schema }))` | Load args from config files (composable extension) |
 | `.wrap(config)` | Wrap an external CLI tool *(experimental)* |

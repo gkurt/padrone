@@ -5,7 +5,7 @@ import { thenMaybe } from '../core/results.ts';
 import { formatIssueMessages } from '../core/validate.ts';
 import type { HelpDetail, HelpFormat } from '../output/formatter.ts';
 import { generateHelp } from '../output/help.ts';
-import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneCommand } from '../types/index.ts';
+import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneCommand, PadroneCommandConfig } from '../types/index.ts';
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
@@ -27,21 +27,43 @@ export type PadroneHelpOptions = {
    * Defaults to `false`: the error is followed by a one-line hint pointing to `--help`.
    */
   showHelpOnError?: boolean;
+  /**
+   * Flags that show help: long names (`'help'` → `--help`) and single characters (`'h'` → `-h`).
+   * Defaults to `['help', 'h']`. Pass `[]` to keep only the `help` command.
+   */
+  flags?: readonly string[];
 };
 
-/** The one-line hint shown after an error: `Run "my-cli build --help" for usage.` */
-function helpHint(rootCommand: AnyPadroneCommand, command: AnyPadroneCommand): string {
-  const path = [rootCommand.name, command === rootCommand ? '' : command.path].filter(Boolean).join(' ');
-  return `Run "${path} --help" for usage.`;
+const DEFAULT_HELP_FLAGS = ['help', 'h'] as const;
+
+/** Formats a flag name as typed: `help` → `--help`, `h` → `-h`. */
+export function flagDisplay(name: string): string {
+  return name.length > 1 ? `--${name}` : `-${name}`;
 }
 
-const createHelpInterceptor = (options: PadroneHelpOptions) =>
-  defineInterceptor(
+/** The one-line hint shown after an error: `Run "my-cli build --help" for usage.` */
+function helpHint(rootCommand: AnyPadroneCommand, command: AnyPadroneCommand, flags: readonly string[]): string {
+  const path = command === rootCommand ? '' : command.path;
+  const flag = flags.find((f) => f.length > 1) ?? flags[0];
+  const invocation = flag ? [rootCommand.name, path, flagDisplay(flag)] : [rootCommand.name, 'help', path];
+  return `Run "${invocation.filter(Boolean).join(' ')}" for usage.`;
+}
+
+const createHelpInterceptor = (options: PadroneHelpOptions) => {
+  const helpFlags = options.flags ?? DEFAULT_HELP_FLAGS;
+  return defineInterceptor(
     {
       id: 'padrone:help',
       name: 'padrone:help',
       order: -1000,
-      options: { help: 'flag', h: 'flag', all: 'flag', detail: 'value', d: 'value', format: 'value', f: 'value' },
+      options: {
+        ...Object.fromEntries(helpFlags.map((flag) => [flag, 'flag' as const])),
+        all: 'flag',
+        detail: 'value',
+        d: 'value',
+        format: 'value',
+        f: 'value',
+      },
     },
     () => {
       let helpText: string | undefined;
@@ -51,7 +73,7 @@ const createHelpInterceptor = (options: PadroneHelpOptions) =>
         parse(ctx, next) {
           return thenMaybe(next(), (res) => {
             const flags = frameworkFlags(res.rawArgs, res.command);
-            const hasHelpFlag = flags.get('help') || flags.get('h');
+            const hasHelpFlag = helpFlags.some((flag) => flags.get(flag));
             const reverseHelp =
               !hasHelpFlag && res.positionalArgs?.length > 0 && res.positionalArgs[res.positionalArgs.length - 1] === 'help';
 
@@ -59,7 +81,7 @@ const createHelpInterceptor = (options: PadroneHelpOptions) =>
               const detail = flags.get('detail') as HelpDetail | undefined;
               const format = flags.get('format') as HelpFormat | undefined;
               const all = flags.get('all') as boolean | undefined;
-              flags.delete('help', 'h', 'detail', 'format', 'all', 'd', 'f');
+              flags.delete(...helpFlags, 'detail', 'format', 'all', 'd', 'f');
 
               const rootCommand = getRootCommand(res.command);
               resolveAllCommands(rootCommand);
@@ -140,7 +162,7 @@ const createHelpInterceptor = (options: PadroneHelpOptions) =>
                 }),
               );
             } else {
-              ctx.runtime.error(`\n${helpHint(rootCommand, sourceCmd)}`);
+              ctx.runtime.error(`\n${helpHint(rootCommand, sourceCmd, helpFlags)}`);
             }
 
             return er;
@@ -149,6 +171,7 @@ const createHelpInterceptor = (options: PadroneHelpOptions) =>
       };
     },
   );
+};
 
 // ── Extension ────────────────────────────────────────────────────────────
 
@@ -170,7 +193,11 @@ export function padroneHelp(options: PadroneHelpOptions = {}): <T extends Comman
     builder
       .command(['help', 'h'], (c) =>
         c
-          .configure({ description: 'Display help for a command', hidden: true })
+          .configure({
+            description: 'Display help for a command',
+            hidden: true,
+            flagNames: options.flags ?? DEFAULT_HELP_FLAGS,
+          } as PadroneCommandConfig)
           .arguments(passthroughSchema({ command: 'string[]', detail: 'string', format: 'string', all: 'boolean' }), {
             positional: ['...command'],
           })

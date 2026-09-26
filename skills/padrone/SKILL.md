@@ -167,7 +167,7 @@ Padrone's core is minimal — most features are implemented as extensions compos
 | `interactive` | -999 | `--interactive` flag, auto-prompting |
 | `suggestions` | -500 | "Did you mean?" for unknown commands/options |
 
-Each can be disabled: `createPadrone('myapp', { builtins: { help: false } })`. `help` also takes options: `{ help: { showHelpOnError: true } }` prints full help after errors (default: a one-line `--help` hint on stderr).
+Each can be disabled: `createPadrone('myapp', { builtins: { help: false } })`. `help` also takes options: `{ help: { showHelpOnError: true } }` prints full help after errors (default: a one-line `--help` hint on stderr); `{ help: { flags: ['help', '?'] } }` and `{ version: { flags: ['version'] } }` rename the flags. Customize help per command with `.configure({ help: { usage, before, after } })`, or with a function `(info, ctx) => info | string` that also applies to subcommands.
 
 Advanced opt-in extensions imported from `'padrone'`: `padroneLogger()`, `padroneTiming()`, `padroneProgress()`, `padroneUpdateCheck()`, `padroneEnv()`, `padroneConfig()`. Optional integrations live behind subpath imports to keep their dependencies out of the main bundle: `padroneInk` from `'padrone/ink'`, `padroneMcp` from `'padrone/mcp'`, `padroneServe` from `'padrone/serve'`, `padroneTracing` from `'padrone/tracing'`, `padroneCompletion` from `'padrone/completion'`, `padroneMan` from `'padrone/man'`.
 

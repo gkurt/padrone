@@ -7,7 +7,7 @@ import { padroneRepl } from '../extension/repl.ts';
 import { padroneSignalHandling } from '../extension/signal.ts';
 import { padroneStdin } from '../extension/stdin.ts';
 import { padroneSuggestions } from '../extension/suggestions.ts';
-import type { VersionCommand } from '../extension/version.ts';
+import type { PadroneVersionOptions, VersionCommand } from '../extension/version.ts';
 import { padroneVersion } from '../extension/version.ts';
 import { createWrapHandler } from '../feature/wrap.ts';
 import type {
@@ -53,8 +53,8 @@ export { asyncSchema } from './results.ts';
 export type PadroneBuiltins = {
   /** Enable `help` command, `--help` / `-h` flags, and default help display. Defaults to `true`. Pass options to configure it. */
   help?: boolean | PadroneHelpOptions;
-  /** Enable `version` command and `--version` / `-v` / `-V` flags. Defaults to `true`. */
-  version?: boolean;
+  /** Enable `version` command and `--version` / `-v` / `-V` flags. Defaults to `true`. Pass options to rename the flags. */
+  version?: boolean | PadroneVersionOptions;
   /** Enable `repl` command and `--repl` flag. Defaults to `true`. */
   repl?: boolean;
   /** Enable `--color` / `--no-color` flag support. Defaults to `true`. */
@@ -86,7 +86,7 @@ export function createPadrone<TProgramName extends string, const TBuiltins exten
 
   const b = options?.builtins;
   if (b?.help !== false) builder = builder.extend(padroneHelp(typeof b?.help === 'object' ? b.help : undefined));
-  if (b?.version !== false) builder = builder.extend(padroneVersion());
+  if (b?.version !== false) builder = builder.extend(padroneVersion(typeof b?.version === 'object' ? b.version : undefined));
   if (b?.repl !== false) builder = builder.extend(padroneRepl());
   if (b?.color !== false) builder = builder.extend(padroneColor());
   if (b?.suggestions !== false) builder = builder.extend(padroneSuggestions());

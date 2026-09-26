@@ -42,7 +42,17 @@ export function getCommand(program: object): AnyPadroneCommand {
 export const commandSymbol = Symbol('padrone_command');
 
 /** Config keys that are merged when overriding a command. */
-export const configKeys = ['title', 'description', 'version', 'deprecated', 'hidden', 'mutation', 'needsApproval'] as const;
+export const configKeys = [
+  'title',
+  'description',
+  'version',
+  'deprecated',
+  'hidden',
+  'mutation',
+  'needsApproval',
+  'help',
+  'flagNames',
+] as const;
 
 /**
  * Merges an existing command with an override.

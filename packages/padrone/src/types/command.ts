@@ -1,5 +1,6 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { PadroneRuntime, ResolvedPadroneRuntime } from '../core/runtime.ts';
+import type { PadroneHelpConfig, PadroneHelpTransform } from '../output/formatter.ts';
 import type { FullCommandName } from '../util/type-utils.ts';
 import type { PadroneArgsSchemaMeta, PadroneGlobalArgsMeta } from './args-meta.ts';
 import type { AnyPadroneProgram } from './builder.ts';
@@ -79,6 +80,11 @@ export type PadroneCommandConfig = {
    * - In `tool()`: defaults `needsApproval` to `true` when not explicitly set.
    */
   mutation?: boolean;
+  /**
+   * Customize this command's help: a declarative `{ usage, before, after }` (this command only), or a function
+   * receiving the generated help info that returns modified info or the final string (this command and its subcommands).
+   */
+  help?: PadroneHelpConfig | PadroneHelpTransform;
 };
 
 export type PadroneCommand<
@@ -108,6 +114,10 @@ export type PadroneCommand<
   needsApproval?: boolean | ((args: TArgs) => Promise<boolean> | boolean);
   /** Usage examples shown in help output. Each entry is a command-line invocation string. */
   examples?: string[];
+  /** Help customization, set by `.configure({ help })`. */
+  help?: PadroneHelpConfig | PadroneHelpTransform;
+  /** @internal Flags that invoke this built-in command (e.g. `['help', 'h']` for `--help`/`-h`). */
+  flagNames?: readonly string[];
   argsSchema?: TArgs;
   meta?: GetArgsMeta<TArgs>;
   /**

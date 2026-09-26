@@ -6,7 +6,7 @@ import {
   type PadroneArgsSchemaMeta,
   parsePositionalConfig,
 } from '../core/args.ts';
-import { findCommandByName, getGlobalArgs } from '../core/commands.ts';
+import { findCommandByName, getGlobalArgs, resolveCommand } from '../core/commands.ts';
 import type { AnyPadroneCommand, PadroneSchema } from '../types/index.ts';
 import { getRootCommand } from '../util/utils.ts';
 import type { ColorConfig, ColorTheme } from './colorizer.ts';
@@ -18,6 +18,7 @@ import {
   type HelpInfo,
   type HelpPositionalInfo,
   type HelpSubcommandInfo,
+  type PadroneHelpTransform,
 } from './formatter.ts';
 
 export type HelpPreferences = {
@@ -259,8 +260,16 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
       hasPositionals,
       hasArguments: false, // updated below after extracting arguments
       stdinField: cmd.meta?.stdin,
+      helpFlag: getHelpFlag(rootCmd),
     },
   };
+
+  // Declarative customization from `.configure({ help: { usage, before, after } })`
+  if (cmd.help && typeof cmd.help === 'object') {
+    if (cmd.help.usage !== undefined) helpInfo.usage.text = cmd.help.usage;
+    if (cmd.help.before) helpInfo.before = cmd.help.before;
+    if (cmd.help.after) helpInfo.after = cmd.help.after;
+  }
 
   // Build subcommands info (filter out hidden commands unless showing full detail)
   if (cmd.commands && cmd.commands.length > 0) {
@@ -422,6 +431,24 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
 // Main Entry Point
 // ============================================================================
 
+/** The flag that shows help (`--help`, or a renamed one), from the help command's flags. */
+function getHelpFlag(rootCommand: AnyPadroneCommand): string | undefined {
+  const found = rootCommand.commands?.find((c) => c.name === 'help');
+  const helpCommand = found && resolveCommand(found);
+  const names = helpCommand?.flagNames ?? (helpCommand ? ['help', 'h'] : []);
+  const name = names.find((n) => n.length > 1) ?? names[0];
+  if (!name) return undefined;
+  return name.length > 1 ? `--${name}` : `-${name}`;
+}
+
+/** The nearest help function from `.configure({ help })`, walking from the command up to the root. */
+function findHelpTransform(command: AnyPadroneCommand): PadroneHelpTransform | undefined {
+  for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
+    if (typeof current.help === 'function') return current.help;
+  }
+  return undefined;
+}
+
 export function generateHelp(rootCommand: AnyPadroneCommand, commandObj: AnyPadroneCommand = rootCommand, prefs?: HelpPreferences): string {
   const helpInfo = getHelpInfo(commandObj, prefs?.detail, prefs?.all);
   const formatter = createFormatter(
@@ -433,5 +460,16 @@ export function generateHelp(rootCommand: AnyPadroneCommand, commandObj: AnyPadr
     prefs?.terminal,
     prefs?.env,
   );
-  return formatter.format(helpInfo);
+
+  const transform = findHelpTransform(commandObj);
+  if (!transform) return formatter.format(helpInfo);
+
+  const render = (info: HelpInfo) => formatter.format(info);
+  const transformed = transform(helpInfo, {
+    command: commandObj,
+    format: prefs?.format ?? 'auto',
+    detail: prefs?.detail ?? 'standard',
+    render,
+  });
+  return typeof transformed === 'string' ? transformed : render(transformed);
 }

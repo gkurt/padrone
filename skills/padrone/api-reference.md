@@ -242,6 +242,10 @@ Re-paths all nested commands. Drops the mounted program's version. Preserves int
   version?: string,
   deprecated?: boolean | string,
   hidden?: boolean,
+  // This command only: replace the usage line, add text before/after
+  help?: { usage?: string; before?: string; after?: string }
+    // Or a function for this command and its subcommands (nearest wins); return HelpInfo or the final string
+    | ((info: HelpInfo, ctx: { command, format, detail, render: (info) => string }) => HelpInfo | string),
 })
 ```
 

@@ -44,6 +44,7 @@ program.configure({
 | `hidden` | `boolean` | Hide from help output |
 | `group` | `string` | Group name for organizing in help output |
 | `mutation` | `boolean` | Mark as mutation (POST-only in serve, destructiveHint in MCP, defaults needsApproval in tool) |
+| `help` | `PadroneHelpConfig \| PadroneHelpTransform` | `{ usage?, before?, after? }` for this command, or `(info, ctx) => HelpInfo \| string` for this command and its subcommands. See [Customizing Help](/padrone/guides/commands-arguments/#customizing-help) |
 
 ---
 
@@ -1242,8 +1243,8 @@ The following extensions are applied automatically by `createPadrone()` and can 
 
 | Export | Builtin key | Purpose |
 |--------|-------------|---------|
-| `padroneHelp(options?)` | `help` | Help command and `--help` flag. `{ showHelpOnError: true }` prints the full help after errors |
-| `padroneVersion()` | `version` | Version command and `--version` flag |
+| `padroneHelp(options?)` | `help` | Help command and `--help` flag. Options: `showHelpOnError` prints the full help after errors; `flags` renames the help flags (default `['help', 'h']`) |
+| `padroneVersion(options?)` | `version` | Version command and `--version` flag. `flags` renames the version flags (default `['version', 'v', 'V']`) |
 | `padroneRepl()` | `repl` | REPL command and `--repl` flag |
 | `padroneColor()` | `color` | `--color`/`--no-color` support |
 | `padroneSuggestions()` | `suggestions` | "Did you mean?" suggestions |

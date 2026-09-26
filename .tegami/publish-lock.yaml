@@ -1,23 +1,27 @@
 core:changelogs:
-  - content: "---\npackages:\n  padrone:\n    type: major\n---\n\n## Externalize optional integrations to dedicated subpath entry points\n\nOptional integrations are now exported from dedicated subpath entry points so bundlers that don't tree-shake re-exports keep their dependencies out of the main bundle. Update imports as follows:\n\n- `padroneInk`, `isReactElement`, `InkOptions` → `'padrone/ink'`\n- `padroneMcp`, `WithMcp`, `PadroneMcpPreferences` → `'padrone/mcp'`\n- `padroneServe`, `WithServe` → `'padrone/serve'`\n- `padroneTracing`, `WithTracing`, `PadroneTracer`, `PadroneTracingConfig`, `OtelSpan`, `OtelTracer`, `OtelTracerProvider` → `'padrone/tracing'`\n- `padroneCompletion`, `WithCompletion` → `'padrone/completion'`\n- `padroneMan`, `WithMan` → `'padrone/man'`\n"
-    filename: split-optional-entry-points.md
+  - content: "---\npackages:\n  padrone:\n    type: minor\n---\n\n## `cli()` keeps argv tokens whole and exits non-zero on errors\n\n- Each `process.argv` entry is now exactly one token, so shell quoting is kept: `app g \"Dancing Script\" -c \"Hello World\"` no longer splits the values apart. Quotes, backslashes, `=` and non-ASCII text inside a value come through as typed, and an explicit empty entry (`-c \"\"`) is the value `\"\"` instead of `true`. `eval()` and the REPL still tokenize their string input, and a quoted `\"\"` there is now `\"\"` too.\n- A `cli()` run that ends with an error (routing, validation, or a thrown action) now sets the process exit code to the error's `exitCode`, or `1` (130 after SIGINT). It uses `process.exitCode`, not `process.exit()`, so output still flushes. Successful runs, `--help` and `--version` exit `0`.\n- New `runtime.setExitCode(code)` to capture or ignore that exit code in custom runtimes.\n- Interceptor `ctx.input` is now `string | string[] | undefined` (the `PadroneInput` type): `cli()` passes the argv array.\n"
+    filename: cli-argv-exit-codes.md
+    v: 0.0.0
+  - content: "---\npackages:\n  padrone:\n    type: patch\n---\n\n## Fix build failure when generating type declarations for the `padrone/zod` entry\n\nThe `padrone/zod` entry used a named re-export which tripped a `rolldown-plugin-dts` chunk-merge bug during the multi-entry build, breaking `npm publish`. Switched to a wildcard re-export so declaration generation succeeds.\n"
+    filename: fix-zod-dts-build.md
     v: 0.0.0
 core:packages:
   - id: npm:@padrone/root
     updated: true
   - id: npm:@padrone/docs
     updated: true
-  - changelogIds:
-      - split-optional-entry-points.md
-    id: npm:padrone
-    updated: true
   - id: npm:@padrone/tasks-example
     updated: true
   - id: npm:@padrone/deploy-example
+    updated: true
+  - changelogIds:
+      - cli-argv-exit-codes.md
+      - fix-zod-dts-build.md
+    id: npm:padrone
     updated: true
 npm:packages:
   - id: npm:@padrone/root
   - id: npm:@padrone/docs
-  - id: npm:padrone
   - id: npm:@padrone/tasks-example
   - id: npm:@padrone/deploy-example
+  - id: npm:padrone

@@ -174,6 +174,11 @@ export type InterceptorMeta = {
    * `--help build` keeps `build` as a command. The command's own schema takes precedence on conflicts.
    */
   options?: Record<string, OptionArity>;
+  /**
+   * Environment variables this interceptor reads into args, keyed by arg name (e.g. `{ port: 'APP_PORT' }`).
+   * Shown in help as `Env: APP_PORT`.
+   */
+  env?: Record<string, string | readonly string[]>;
 };
 
 /**

@@ -162,6 +162,7 @@ The first argument is metadata (`name`, `order`, optional `id`). The second argu
 | `disabled` | `boolean` | Skip this interceptor during execution |
 | `inherit` | `boolean` | When `false`, applies only to the command it's registered on (default: `true`) |
 | `options` | `Record<string, OptionArity>` | Options the interceptor reads from `rawArgs` that aren't in the command's schema, keyed by long name or single-char flag. Tells the parser whether each takes a value: `'flag'`, `'value'`, `'optional'` or `'array'` |
+| `env` | `Record<string, string \| string[]>` | Environment variables the interceptor reads into args, keyed by arg name. Shown in help as `Env: NAME` |
 
 If your interceptor reads its own flag from `rawArgs` (like the built-in `--help` or `--config`), declare it in `options` so the parser knows how to read it. For example, `options: { profile: 'value', p: 'value' }` makes `--profile dev deploy` read `dev` as the value and still route to `deploy`. The command's own schema takes precedence when both define the same name.
 

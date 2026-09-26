@@ -269,6 +269,12 @@ const program = createPadrone('app')
 
 The env schema validates `process.env` and transforms env var names into argument names. `padroneEnv` can be applied at the program level (inherited by all commands) or at the command level.
 
+For a simple one-to-one mapping, skip the schema and use `vars`. Values are coerced by the command's schema like CLI input, the first variable that is set wins, and the variables are listed in help as `Env: APP_PORT`:
+
+```typescript
+.extend(padroneEnv({ vars: { port: 'APP_PORT', apiKey: ['API_KEY', 'APP_API_KEY'] } }))
+```
+
 A variable that is set but invalid (e.g. `APP_PORT=abc`) is reported as a validation error. A variable that isn't set is skipped, leaving the argument to the CLI or its default, so keep env fields `.optional()`.
 
 Priority order: CLI argument > Stdin > Environment variable > Config file > Interactive prompt > Default value

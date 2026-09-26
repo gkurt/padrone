@@ -20,12 +20,28 @@ export type PadroneEnvOptions = {
   override?: boolean;
   /** When `false`, the base `.env` (and `.env.local`) files are not loaded. @default true */
   base?: boolean;
+  /**
+   * Map args to environment variables directly, e.g. `{ port: 'APP_PORT', token: ['API_TOKEN', 'TOKEN'] }`
+   * (the first variable that is set wins). Values are strings, coerced by the command's schema like CLI input.
+   * These variables are shown in help. Can be combined with an env schema.
+   */
+  vars?: Record<string, string | readonly string[]>;
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 function isSchema(value: unknown): value is StandardSchemaV1 {
   return value != null && typeof value === 'object' && '~standard' in value;
+}
+
+/** Reads `vars` from the env: each arg gets the value of the first of its variables that is set. */
+function readEnvVars(env: Record<string, string | undefined>, vars: Record<string, string | readonly string[]>): Record<string, unknown> {
+  const values: Record<string, unknown> = {};
+  for (const [arg, names] of Object.entries(vars)) {
+    const name = (typeof names === 'string' ? [names] : names).find((n) => env[n] !== undefined);
+    if (name) values[arg] = env[name];
+  }
+  return values;
 }
 
 // ── Extension ────────────────────────────────────────────────────────────
@@ -67,12 +83,16 @@ export function padroneEnv(
   const fileOptions: LoadEnvFilesOptions | undefined = hasFiles ? options : undefined;
   const override = options?.override ?? false;
 
-  const interceptor = defineInterceptor({ id: 'padrone:env', name: 'padrone:env', order: -1000 }, () => ({
+  const vars = options?.vars;
+
+  const interceptor = defineInterceptor({ id: 'padrone:env', name: 'padrone:env', order: -1000, ...(vars && { env: vars }) }, () => ({
     validate(ctx: InterceptorValidateContext, next) {
       const processEnv = ctx.runtime.env();
 
       const applyEnv = (envFromFiles: Record<string, string>) => {
         const rawEnv = override ? { ...processEnv, ...envFromFiles } : { ...envFromFiles, ...processEnv };
+        const rawArgs = vars ? applyValues(ctx.rawArgs, readEnvVars(rawEnv, vars)) : ctx.rawArgs;
+        const proceed = () => (vars ? next({ rawArgs }) : next());
 
         if (schema) {
           const envValidated = schema['~standard'].validate(rawEnv);
@@ -84,7 +104,7 @@ export function padroneEnv(
                 const key = typeof name === 'object' ? name.key : name;
                 return key !== undefined && rawEnv[String(key)] !== undefined;
               });
-              if (invalid.length === 0) return next();
+              if (invalid.length === 0) return proceed();
               return {
                 args: undefined,
                 argsResult: {
@@ -92,12 +112,13 @@ export function padroneEnv(
                 },
               } as InterceptorValidateResult;
             }
-            if (!result.value) return next();
-            return next({ rawArgs: applyValues(ctx.rawArgs, result.value as Record<string, unknown>) });
+            if (!result.value) return proceed();
+            return next({ rawArgs: applyValues(rawArgs, result.value as Record<string, unknown>) });
           });
         }
 
-        // No schema — merge file env values directly into rawArgs
+        // No schema — merge file env values directly into rawArgs (unless `vars` picks what to read)
+        if (vars) return proceed();
         if (Object.keys(envFromFiles).length > 0) {
           return next({ rawArgs: applyValues(ctx.rawArgs, envFromFiles) });
         }

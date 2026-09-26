@@ -221,6 +221,8 @@ program.extend(
 
 **Parameters:**
 - `schema`: A Standard Schema that validates env vars and transforms them to argument names
+- `options.vars`: Map arguments to variables directly, without a schema: `padroneEnv({ vars: { port: 'APP_PORT', token: ['API_TOKEN', 'TOKEN'] } })`. The first variable that is set wins, and values are coerced by the command's schema like CLI input. These variables are shown in help (`Env: APP_PORT`). Can be combined with a schema.
+- `options.modes`, `local`, `dir`, `override`, `base`: `.env` file loading
 
 Env values are applied after CLI args and stdin, but before config file values. Can be applied at the program level (inherited by all commands) or at the command level.
 
@@ -1221,7 +1223,7 @@ These extensions are available as named exports from `'padrone'`:
 
 | Export | Purpose |
 |--------|---------|
-| `padroneEnv(schema)` | Parse environment variables into args |
+| `padroneEnv(schema?, options?)` | Parse environment variables into args (`vars` maps args to variables and shows them in help) |
 | `padroneConfig(options)` | Load args from config files |
 | `padroneProgress(config)` | Auto-managed progress indicators |
 | `padroneLogger(options)` | Structured logging with levels |

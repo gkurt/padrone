@@ -358,6 +358,11 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
     : [];
 
   const visibleArgs = [...ownArgs, ...inheritedArgs].filter((arg) => !arg.hidden);
+  const envVars = collectInterceptorEnv(cmd);
+  for (const arg of visibleArgs) {
+    const names = envVars[arg.name];
+    if (names) arg.env = typeof names === 'string' ? names : [...names];
+  }
   if (visibleArgs.length > 0) {
     helpInfo.arguments = visibleArgs;
     helpInfo.usage.hasArguments = true;
@@ -432,6 +437,21 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
 // ============================================================================
 // Main Entry Point
 // ============================================================================
+
+/**
+ * Env variables that interceptors on the command chain read into args (e.g. `padroneEnv({ vars })`), keyed by arg name.
+ * The nearest declaration wins; an ancestor's interceptor counts only when it is inherited.
+ */
+function collectInterceptorEnv(command: AnyPadroneCommand): Record<string, string | readonly string[]> {
+  const env: Record<string, string | readonly string[]> = {};
+  for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
+    for (const { meta } of current.interceptors ?? []) {
+      if (meta.disabled || !meta.env || (current !== command && meta.inherit === false)) continue;
+      for (const [arg, names] of Object.entries(meta.env)) env[arg] ??= names;
+    }
+  }
+  return env;
+}
 
 /** The flag that shows help (`--help`, or a renamed one), from the help command's flags. */
 function getHelpFlag(rootCommand: AnyPadroneCommand): string | undefined {

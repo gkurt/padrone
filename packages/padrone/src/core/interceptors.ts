@@ -28,6 +28,7 @@ function buildInterceptorFn(meta: InterceptorMeta, factory: InterceptorFactory<a
   if (meta.disabled !== undefined) (factory as any).disabled = meta.disabled;
   if (meta.inherit !== undefined) (factory as any).inherit = meta.inherit;
   if (meta.options !== undefined) (factory as any).options = meta.options;
+  if (meta.env !== undefined) (factory as any).env = meta.env;
   (factory as any).provides = () => factory;
   (factory as any).requires = () => factory;
   return factory as PadroneInterceptorFn<any, any, any>;
@@ -98,6 +99,7 @@ export function toRegisteredInterceptor(
         disabled: metaOrFn.disabled,
         inherit: metaOrFn.inherit,
         options: metaOrFn.options,
+        env: metaOrFn.env,
       },
       factory: metaOrFn,
     };

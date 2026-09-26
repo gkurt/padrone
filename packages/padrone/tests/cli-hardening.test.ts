@@ -442,3 +442,61 @@ describe('command options named like built-in flags', () => {
     expect(program.eval(['--version']).result).toBe('1.0.0');
   });
 });
+
+describe('padroneEnv vars', () => {
+  const varsProgram = (env: Record<string, string>) =>
+    createPadrone('app')
+      .runtime({ env: () => env })
+      .extend(padroneEnv({ vars: { port: 'APP_PORT', token: ['API_TOKEN', 'TOKEN'], tags: 'APP_TAGS' } }))
+      .command('serve', (c) =>
+        c
+          .arguments(
+            z.object({
+              port: z.number().default(3000).describe('Port'),
+              token: z.string().optional(),
+              tags: z.string().array().optional(),
+            }),
+          )
+          .action((args) => args),
+      );
+
+  it('reads mapped variables, coerced by the command schema', async () => {
+    expect((await varsProgram({ APP_PORT: '8080', TOKEN: 't', APP_TAGS: 'x' }).eval('serve')).args).toEqual({
+      port: 8080,
+      token: 't',
+      tags: ['x'],
+    });
+  });
+
+  it('uses the first variable that is set, and lets the CLI win', async () => {
+    const program = varsProgram({ API_TOKEN: 'first', TOKEN: 'second', APP_PORT: '8080' });
+    expect((await program.eval('serve --port 9000')).args).toEqual({ port: 9000, token: 'first' });
+  });
+
+  it('reports an invalid value through the command schema', async () => {
+    const result = await varsProgram({ APP_PORT: 'abc' }).eval('serve');
+    expect(result.args).toBeUndefined();
+    expect(issuesOf(result)?.[0]).toStartWith('port:');
+  });
+
+  it('shows the variables in help', () => {
+    const help = varsProgram({}).help('serve', { format: 'text' });
+    expect(help).toContain('Env: APP_PORT');
+    expect(help).toContain('Env: API_TOKEN, TOKEN');
+    const info = JSON.parse(varsProgram({}).help('serve', { format: 'json' })) as { arguments: { name: string; env?: unknown }[] };
+    expect(info.arguments.find((a) => a.name === 'port')?.env).toBe('APP_PORT');
+  });
+
+  it('can be combined with an env schema', async () => {
+    const program = createPadrone('app')
+      .runtime({ env: () => ({ APP_PORT: '8080', APP_HOST: 'h.example' }) })
+      .extend(
+        padroneEnv(
+          z.object({ APP_HOST: z.string().optional() }).transform((e) => ({ host: e.APP_HOST })),
+          { vars: { port: 'APP_PORT' } },
+        ),
+      )
+      .command('serve', (c) => c.arguments(z.object({ port: z.number(), host: z.string() })).action((args) => args));
+    expect((await program.eval('serve')).args).toEqual({ port: 8080, host: 'h.example' });
+  });
+});

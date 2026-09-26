@@ -272,6 +272,9 @@ import { createPadrone, padroneEnv } from 'padrone';
   port: e.MY_APP_PORT,
   host: e.MY_APP_HOST,
 }))))
+
+// Or map args to variables directly (coerced by the command schema, shown in help as `Env: …`)
+.extend(padroneEnv({ vars: { port: 'MY_APP_PORT', host: ['MY_APP_HOST', 'HOST'] } }))
 ```
 
 #### `padroneConfig(options)` extension

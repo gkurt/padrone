@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   createPadrone,
+  createTerminalProgress,
   type PadroneProgress,
   type PadroneProgressDefaults,
   type PadroneProgressRenderer,
@@ -827,6 +828,182 @@ describe('progress', () => {
       program.eval('cmd');
       // The mock doesn't track time specifically, but the update call should succeed
       expect(indicators[0]!.indicator.calls).toEqual(['succeed:']);
+    });
+  });
+
+  describe('pipeline edge cases', () => {
+    it('should start and succeed progress when run() skips validation', () => {
+      const { factory, indicators } = createMockProgress();
+      const program = createPadrone('app').command('cmd', (c) =>
+        c.extend(padroneProgress({ message: 'Working...', renderer: factory })).action((_args, ctx) => {
+          ctx.context.progress.update('halfway');
+          return 'done';
+        }),
+      );
+
+      const result = program.run('cmd', undefined);
+      expect(result.error).toBeUndefined();
+      expect(result.result).toBe('done');
+      expect(indicators).toHaveLength(1);
+      expect(indicators[0]!.message).toBe('Working...');
+      expect(indicators[0]!.indicator.calls).toEqual(['update:halfway', 'succeed:']);
+    });
+
+    it('should fail progress when run() action throws', () => {
+      const { factory, indicators } = createMockProgress();
+      const program = createPadrone('app').command('cmd', (c) =>
+        c.extend(padroneProgress({ message: 'Working...', renderer: factory })).action(() => {
+          throw new Error('boom');
+        }),
+      );
+
+      program.run('cmd', undefined);
+      expect(indicators[0]!.indicator.calls).toEqual(['fail:boom']);
+    });
+
+    it('should pause around runtime output and restore it afterwards', () => {
+      const { factory, indicators } = createMockProgress();
+      const lines: unknown[] = [];
+      const output = (...args: unknown[]) => lines.push(...args);
+      let runtimeOutput: unknown;
+      const program = createPadrone('app').command('cmd', (c) =>
+        c.extend(padroneProgress({ message: 'Working...', renderer: factory })).action((_args, ctx) => {
+          ctx.runtime.output('hello');
+          runtimeOutput = ctx.runtime;
+          return undefined;
+        }),
+      );
+
+      program.eval('cmd', { runtime: { output } });
+      expect(lines).toEqual(['hello']);
+      expect(indicators[0]!.indicator.calls).toEqual(['pause', 'resume', 'succeed:']);
+      expect((runtimeOutput as { output: unknown }).output).toBe(output);
+    });
+
+    it('should stop the indicator when a success callback throws', () => {
+      const { factory, indicators } = createMockProgress();
+      const program = createPadrone('app').command('cmd', (c) =>
+        c
+          .extend(
+            padroneProgress({
+              message: {
+                progress: 'Working...',
+                success: () => {
+                  throw new Error('bad callback');
+                },
+              },
+              renderer: factory,
+            }),
+          )
+          .action(() => 'done'),
+      );
+
+      const result = program.eval('cmd');
+      expect(result.error).toBeInstanceOf(Error);
+      expect(indicators[0]!.indicator.calls).toEqual(['stop']);
+    });
+  });
+
+  describe('createTerminalProgress', () => {
+    async function withStderr(isTTY: boolean, fn: (writes: string[], stdoutWrites: string[]) => void | Promise<void>) {
+      const writes: string[] = [];
+      const stdoutWrites: string[] = [];
+      const stderr = process.stderr as unknown as Record<string, unknown>;
+      const stdout = process.stdout as unknown as Record<string, unknown>;
+      const original = { isTTY: stderr.isTTY, write: stderr.write, columns: stderr.columns, stdoutWrite: stdout.write };
+      Object.defineProperty(stderr, 'isTTY', { value: isTTY, configurable: true, writable: true });
+      Object.defineProperty(stderr, 'columns', { value: 80, configurable: true, writable: true });
+      stderr.write = (chunk: string) => writes.push(String(chunk)) > 0;
+      stdout.write = (chunk: string) => stdoutWrites.push(String(chunk)) > 0;
+      try {
+        await fn(writes, stdoutWrites);
+      } finally {
+        Object.defineProperty(stderr, 'isTTY', { value: original.isTTY, configurable: true, writable: true });
+        Object.defineProperty(stderr, 'columns', { value: original.columns, configurable: true, writable: true });
+        stderr.write = original.write;
+        stdout.write = original.stdoutWrite;
+      }
+    }
+
+    it('should print the latest message on succeed in non-TTY mode', async () => {
+      await withStderr(false, (writes) => {
+        const p = createTerminalProgress('Validating...');
+        p.update('Deploying...');
+        p.succeed();
+        expect(writes).toEqual(['✔ Deploying...\n']);
+      });
+    });
+
+    it('should only print one final message in non-TTY mode', async () => {
+      await withStderr(false, (writes) => {
+        const p = createTerminalProgress('Working...');
+        p.succeed('Done');
+        p.succeed();
+        p.fail('Failed');
+        expect(writes).toEqual(['✔ Done\n']);
+      });
+    });
+
+    it('should only print one final message in TTY mode', async () => {
+      await withStderr(true, (writes) => {
+        const p = createTerminalProgress('Working...');
+        p.succeed('Done');
+        p.succeed();
+        p.fail('Failed');
+        expect(writes.filter((w) => w.endsWith('\n'))).toEqual(['✔ Done\n']);
+      });
+    });
+
+    it('should not print a final message after stop()', async () => {
+      await withStderr(true, (writes) => {
+        const p = createTerminalProgress('Working...');
+        p.stop();
+        p.succeed('Done');
+        expect(writes.filter((w) => w.endsWith('\n'))).toEqual([]);
+      });
+    });
+
+    it('should print final messages when spinner and bar are disabled and the initial message is empty', async () => {
+      await withStderr(true, (writes) => {
+        const p = createTerminalProgress('', { spinner: false, bar: false });
+        p.update('Step 1');
+        p.succeed();
+        expect(writes.filter((w) => w.endsWith('\n'))).toEqual(['✔ Step 1\n']);
+      });
+    });
+
+    it('should not write escape codes to stdout on pause()', async () => {
+      await withStderr(true, (_writes, stdoutWrites) => {
+        const p = createTerminalProgress('Working...');
+        p.pause();
+        p.resume();
+        p.stop();
+        expect(stdoutWrites).toEqual([]);
+      });
+    });
+
+    it('should render narrow indeterminate bars without throwing', async () => {
+      await withStderr(true, (writes) => {
+        for (const animation of ['bounce', 'slide', 'pulse'] as const) {
+          for (const width of [0, 1, 2, 3]) {
+            const p = createTerminalProgress('Working...', { bar: { width, animation } });
+            p.update({ indeterminate: true });
+            p.update(Number.NaN);
+            p.stop();
+          }
+        }
+        expect(writes.some((w) => w.includes('NaN'))).toBe(false);
+      });
+    });
+
+    it('should keep redrawing elapsed time without a spinner or bar', async () => {
+      await withStderr(true, async (writes) => {
+        const p = createTerminalProgress('Working...', { spinner: false, bar: false, time: true });
+        const initial = writes.length;
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        p.stop();
+        expect(writes.length).toBeGreaterThan(initial);
+      });
     });
   });
 });

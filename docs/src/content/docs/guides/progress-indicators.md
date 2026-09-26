@@ -26,7 +26,9 @@ Running `app deploy` shows a spinner with "Deploying..." that auto-succeeds when
 
 ## Auto-Managed Progress
 
-Use `padroneProgress()` to configure automatic progress indicators. Register it with `.extend()` on a command. The indicator starts before validation and is automatically stopped on success or failure.
+Use `padroneProgress()` to configure automatic progress indicators. Register it with `.extend()` on a command. The indicator starts before validation and is automatically stopped on success or failure. With `run()`, which skips validation, it starts right before the action.
+
+When stderr is not a TTY (piped output, CI), the built-in renderer doesn't animate and only prints the final success or error line, using the latest message.
 
 ### Simple Message
 
@@ -193,8 +195,11 @@ c.extend(padroneProgress('Importing...'))
 | `succeed(message?, options?)` | Mark as succeeded and stop |
 | `fail(message?, options?)` | Mark as failed and stop |
 | `stop()` | Stop without success/fail status |
+| `eta.start()` / `eta.stop()` / `eta.reset()` | Control the ETA display at runtime |
 | `pause()` | Temporarily hide (for clean output) |
 | `resume()` | Redraw after `pause()` |
+
+With the built-in renderer, once the indicator is stopped (by `succeed()`, `fail()` or `stop()`), further calls are ignored, so calling `succeed()` yourself in an action replaces the auto-managed final message instead of printing a second one. Custom renderers should do the same.
 
 The `update()` method accepts several forms:
 
@@ -369,6 +374,7 @@ c.extend(padroneProgress({
     stop() { /* ... */ },
     pause() { /* ... */ },
     resume() { /* ... */ },
+    eta: { start() {}, stop() {}, reset() {} },
   }),
 }))
 ```
@@ -391,6 +397,7 @@ function createMockProgress() {
       stop: () => calls.push('stop'),
       pause: () => {},
       resume: () => {},
+      eta: { start() {}, stop() {}, reset() {} },
     };
     indicators.push({ message, indicator, calls });
     return indicator;
@@ -406,7 +413,7 @@ const program = createPadrone('app')
   );
 
 program.eval('cmd');
-// indicators[0].calls → ['succeed:']
+// indicators[0].calls → ['succeed:undefined']
 ```
 
 ## Output Coordination

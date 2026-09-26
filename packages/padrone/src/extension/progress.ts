@@ -1,6 +1,12 @@
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { PadroneBarConfig, PadroneProgress, PadroneProgressOptions, PadroneSpinnerConfig } from '../core/runtime.ts';
-import type { AnyPadroneBuilder, CommandTypesBase } from '../types/index.ts';
+import type {
+  AnyPadroneBuilder,
+  CommandTypesBase,
+  InterceptorExecuteContext,
+  InterceptorExecuteResult,
+  InterceptorValidateResult,
+} from '../types/index.ts';
 import type { WithInterceptor } from '../util/type-utils.ts';
 import type { PadroneProgressRenderer } from './progress-renderer.ts';
 import { createTerminalProgress } from './progress-renderer.ts';
@@ -14,7 +20,7 @@ export type PadroneProgressMessage = string | null | { message?: string | null; 
 
 /** Per-phase message configuration for progress indicators. */
 export type PadroneProgressMessages<TRes = unknown> = {
-  /** Message shown during async validation. Defaults to `''` (spinner only). */
+  /** Message shown during validation. Defaults to the `progress` message. */
   validation?: string;
   /** Message shown while the command's action is running. */
   progress?: string;
@@ -85,21 +91,14 @@ function resolveMessage(field: unknown, value: unknown, fallback?: string): { me
   return { message: fallback };
 }
 
-function cleanup(
-  indicator: PadroneProgress,
-  successConfig: unknown,
-  errorConfig: unknown,
-  error: unknown,
-  result: unknown,
-  isError: boolean,
-) {
+function cleanup(indicator: PadroneProgress, msgs: ResolvedMessages, isError: boolean, value: unknown) {
   if (isError) {
-    const fallback = error instanceof Error ? error.message : String(error);
-    const { message: errorMsg, indicator: errorIcon } = resolveMessage(errorConfig, error, fallback);
-    indicator.fail(errorMsg, errorIcon !== undefined ? { indicator: errorIcon } : undefined);
+    const fallback = value instanceof Error ? value.message : String(value);
+    const { message, indicator: icon } = resolveMessage(msgs.error, value, fallback);
+    indicator.fail(message, icon !== undefined ? { indicator: icon } : undefined);
   } else {
-    const { message: successMsg, indicator: successIcon } = resolveMessage(successConfig, result);
-    indicator.succeed(successMsg, successIcon !== undefined ? { indicator: successIcon } : undefined);
+    const { message, indicator: icon } = resolveMessage(msgs.success, value);
+    indicator.succeed(message, icon !== undefined ? { indicator: icon } : undefined);
   }
 }
 
@@ -107,12 +106,11 @@ function cleanup(
 // Interceptor
 // ---------------------------------------------------------------------------
 
-function resolveMessages(raw: string | PadroneProgressMessages | undefined): {
-  progress: string;
-  validation: string;
-  success: unknown;
-  error: unknown;
-} {
+type ResolvedMessages = { progress: string; validation: string; success: unknown; error: unknown };
+
+type ProgressPhaseContext = Pick<InterceptorExecuteContext, 'context' | 'runtime'>;
+
+function resolveMessages(raw: string | PadroneProgressMessages | undefined): ResolvedMessages {
   if (!raw || typeof raw === 'string') {
     return { progress: raw || 'Working...', validation: '', success: undefined, error: undefined };
   }
@@ -125,10 +123,10 @@ function resolveMessages(raw: string | PadroneProgressMessages | undefined): {
 }
 
 function mergeMessages(
-  cmd: ReturnType<typeof resolveMessages>,
-  ctx: ReturnType<typeof resolveMessages>,
+  cmd: ResolvedMessages,
+  ctx: ResolvedMessages,
   cmdRaw: string | PadroneProgressMessages | undefined,
-): ReturnType<typeof resolveMessages> {
+): ResolvedMessages {
   // String shorthand: all fields come from the string, no context fallback for individual fields
   if (typeof cmdRaw === 'string') return cmd;
   // Object: per-field fallback to context
@@ -144,164 +142,137 @@ function mergeMessages(
 function progressInterceptor(config: string | PadroneProgressConfig) {
   const isObj = typeof config === 'object';
   const rawMessage = typeof config === 'string' ? config : isObj ? config.message : undefined;
-  // Raw constructor values — undefined means "not set by caller"
-  const rawSpinner = isObj ? config.spinner : undefined;
-  const rawBar = isObj ? config.bar : undefined;
-  const rawRenderer = isObj ? config.renderer : undefined;
-  const rawTime = isObj ? config.time : undefined;
-  const rawEta = isObj ? config.eta : undefined;
-  const rawSilent = isObj ? config.silent : undefined;
+
+  function resolveSettings(context: unknown) {
+    const ctxCfg = (context as { progressConfig?: PadroneProgressDefaults } | undefined)?.progressConfig;
+    // Constructor values win; undefined means "not set by caller"
+    const spinner = (isObj ? config.spinner : undefined) ?? ctxCfg?.spinner;
+    const bar = (isObj ? config.bar : undefined) ?? ctxCfg?.bar;
+    const time = (isObj ? config.time : undefined) ?? ctxCfg?.time;
+    const eta = (isObj ? config.eta : undefined) ?? ctxCfg?.eta;
+    const options: PadroneProgressOptions | undefined =
+      spinner !== undefined || bar !== undefined || time !== undefined || eta !== undefined ? { spinner, bar, time, eta } : undefined;
+    return {
+      silent: (isObj ? config.silent : undefined) ?? ctxCfg?.silent ?? false,
+      renderer: (isObj ? config.renderer : undefined) ?? ctxCfg?.renderer ?? createTerminalProgress,
+      options,
+      msgs: mergeMessages(resolveMessages(rawMessage), resolveMessages(ctxCfg?.message), rawMessage),
+    };
+  }
 
   return defineInterceptor({ id: 'padrone:progress', name: 'padrone:progress' })
     .requires<{ progressConfig?: PadroneProgressDefaults }>()
     .factory(() => {
+      let settings: ReturnType<typeof resolveSettings> | undefined;
       let indicator: PadroneProgress | undefined;
       let restoreOutput: (() => void) | undefined;
-      // Lazily resolved from context + constructor args
-      let resolvedRenderer: PadroneProgressRenderer | undefined;
-      let resolvedOptions: PadroneProgressOptions | undefined;
-      let resolvedSilent = false;
-      let msgs: ReturnType<typeof resolveMessages> | undefined;
 
-      function resolve(ctx: { context?: { progressConfig?: PadroneProgressDefaults } }) {
-        if (resolvedRenderer) return;
-        const ctxCfg = (ctx.context as Record<string, unknown> | undefined)?.progressConfig as PadroneProgressDefaults | undefined;
-        resolvedSilent = rawSilent ?? ctxCfg?.silent ?? false;
-        const spinner = rawSpinner ?? ctxCfg?.spinner;
-        const bar = rawBar ?? ctxCfg?.bar;
-        const time = rawTime ?? ctxCfg?.time;
-        const eta = rawEta ?? ctxCfg?.eta;
-        resolvedRenderer = rawRenderer ?? ctxCfg?.renderer ?? createTerminalProgress;
-        resolvedOptions =
-          spinner !== undefined || bar !== undefined || time !== undefined || eta !== undefined ? { spinner, bar, time, eta } : undefined;
-        msgs = mergeMessages(resolveMessages(rawMessage), resolveMessages(ctxCfg?.message), rawMessage);
-      }
+      const resolve = (ctx: { context?: unknown }) => (settings ??= resolveSettings(ctx.context));
 
-      const teardown = () => {
+      /** Creates the indicator and routes runtime output through pause/resume. No-op if already started or silent. */
+      const start = (ctx: ProgressPhaseContext, message: string) => {
+        const { silent, renderer, options } = resolve(ctx);
+        if (silent || indicator) return;
+        const active = renderer(message, options);
+        indicator = active;
+
+        const { runtime } = ctx;
+        const originalOutput = runtime.output;
+        const originalError = runtime.error;
+        runtime.output = (...args: unknown[]) => {
+          active.pause();
+          originalOutput(...args);
+          active.resume();
+        };
+        runtime.error = (text: string) => {
+          active.pause();
+          originalError(text);
+          active.resume();
+        };
+        restoreOutput = () => {
+          runtime.output = originalOutput;
+          runtime.error = originalError;
+        };
+      };
+
+      /** Stops the indicator with the configured success/error message. Runs at most once. */
+      const finish = (isError: boolean, value: unknown) => {
+        const active = indicator;
+        if (!active) return;
         restoreOutput?.();
         indicator = undefined;
         restoreOutput = undefined;
+        try {
+          cleanup(active, settings!.msgs, isError, value);
+        } catch (err) {
+          active.stop();
+          throw err;
+        }
       };
 
       return {
         validate(ctx, next) {
-          resolve(ctx);
-          if (resolvedSilent) return next();
-          indicator = resolvedRenderer!(msgs!.validation || msgs!.progress, resolvedOptions);
+          const { msgs } = resolve(ctx);
+          start(ctx, msgs.validation || msgs.progress);
 
-          const originalOutput = ctx.runtime.output;
-          const originalError = ctx.runtime.error;
-          ctx.runtime.output = (...args: unknown[]) => {
-            indicator!.pause();
-            originalOutput(...args);
-            indicator!.resume();
-          };
-          ctx.runtime.error = (text: string) => {
-            indicator!.pause();
-            originalError(text);
-            indicator!.resume();
-          };
-          restoreOutput = () => {
-            ctx.runtime.output = originalOutput;
-            ctx.runtime.error = originalError;
-          };
-
-          const onValidationFailure = (error: unknown) => {
-            if (indicator) {
-              cleanup(indicator, msgs!.success, msgs!.error, error, undefined, true);
-              teardown();
-            }
-          };
-
-          const checkResult = (result: any) => {
-            if (result.argsResult?.issues) onValidationFailure(new Error('Validation failed'));
+          const checkResult = (result: InterceptorValidateResult) => {
+            if (result.argsResult?.issues) finish(true, new Error('Validation failed'));
             return result;
           };
+          const onError = (err: unknown): never => {
+            finish(true, err);
+            throw err;
+          };
 
-          let result: any;
+          let result: InterceptorValidateResult | Promise<InterceptorValidateResult>;
           try {
             result = next();
           } catch (err) {
-            onValidationFailure(err);
-            throw err;
+            return onError(err);
           }
-          if (result instanceof Promise) {
-            return result.then(checkResult, (err: unknown) => {
-              onValidationFailure(err);
-              throw err;
-            });
-          }
-          return checkResult(result);
+          return result instanceof Promise ? result.then(checkResult, onError) : checkResult(result);
         },
 
-        execute(_ctx, next) {
-          if (resolvedSilent) return next({ context: { progress: noopIndicator } });
+        execute(ctx, next) {
+          const { silent, msgs } = resolve(ctx);
+          if (silent) return next({ context: { progress: noopIndicator } });
 
-          // Transition from validation message to progress message
-          if (indicator && msgs!.validation) indicator.update(msgs!.progress);
+          // `run()` skips validation, so the indicator may not exist yet
+          if (indicator) {
+            if (msgs.validation) indicator.update(msgs.progress);
+          } else {
+            start(ctx, msgs.progress);
+          }
 
-          const effectiveIndicator = indicator ?? noopIndicator;
-
-          const onSuccess = (value: unknown) => {
-            cleanup(effectiveIndicator, msgs!.success, msgs!.error, undefined, value, false);
-            teardown();
-          };
-          const onError = (err: unknown) => {
-            if (indicator) {
-              cleanup(indicator, msgs!.success, msgs!.error, err, undefined, true);
-              teardown();
-            }
+          const onError = (err: unknown): never => {
+            finish(true, err);
             throw err;
           };
+          const settle = (r: InterceptorExecuteResult): InterceptorExecuteResult => {
+            if (!(r.result instanceof Promise)) {
+              finish(false, r.result);
+              return r;
+            }
+            const result = r.result.then((value: unknown) => {
+              finish(false, value);
+              return value;
+            }, onError);
+            return { ...r, result };
+          };
 
-          let result: any;
+          let result: InterceptorExecuteResult | Promise<InterceptorExecuteResult>;
           try {
-            result = next({ context: { progress: effectiveIndicator } });
+            result = next({ context: { progress: indicator ?? noopIndicator } });
           } catch (err) {
-            onError(err);
+            return onError(err);
           }
-          if (result instanceof Promise) {
-            return result.then(
-              (r) => {
-                if (r.result instanceof Promise) {
-                  return {
-                    result: r.result.then(
-                      (value: unknown) => {
-                        onSuccess(value);
-                        return value;
-                      },
-                      (err: unknown) => onError(err),
-                    ),
-                  };
-                }
-                onSuccess(r.result);
-                return r;
-              },
-              (err: unknown) => onError(err),
-            );
-          }
-          if (result!.result instanceof Promise) {
-            return {
-              result: result!.result.then(
-                (value: unknown) => {
-                  onSuccess(value);
-                  return value;
-                },
-                (err: unknown) => onError(err),
-              ),
-            };
-          }
-          onSuccess(result!.result);
-          return result;
+          return result instanceof Promise ? result.then(settle, onError) : settle(result);
         },
 
         shutdown(ctx) {
           // Safety net: if validate/execute cleanup paths were bypassed (e.g., outer interceptor
           // threw during execute before reaching this interceptor's execute handler), stop the indicator.
-          if (indicator) {
-            cleanup(indicator, msgs!.success, msgs!.error, ctx.error, ctx.result, !!ctx.error);
-            teardown();
-          }
+          finish(!!ctx.error, ctx.error ?? ctx.result);
         },
       };
     })
@@ -318,8 +289,8 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
  * - `string` — a single message used for all states.
  * - `PadroneProgressConfig` — separate messages for validation, progress, success, and error.
  *
- * The indicator is automatically started before validation, updated at each phase transition,
- * and stopped on success (`.succeed()`) or failure (`.fail()`).
+ * The indicator is automatically started before validation (or before the action for `run()`),
+ * updated at each phase transition, and stopped on success (`.succeed()`) or failure (`.fail()`).
  *
  * Provides `{ progress: PadroneProgress }` on the command context.
  * Access it in action handlers as `ctx.context.progress`.

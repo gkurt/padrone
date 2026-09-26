@@ -54,7 +54,7 @@ function resolveBarConfig(bar: boolean | PadroneBarConfig | undefined): Resolved
   if (!bar) return { ...defaultBarConfig };
   if (bar === true) return { ...defaultBarConfig, show: 'always' };
   return {
-    width: bar.width ?? 20,
+    width: Math.max(1, Math.floor(bar.width ?? 20)),
     filled: bar.filled ?? '█',
     empty: bar.empty ?? '░',
     animation: bar.animation ?? 'bounce',
@@ -74,8 +74,9 @@ function formatIndeterminate(cfg: ResolvedBarConfig, frame: number): string {
     return `${pad} ${pulseGradient[idx]!.repeat(width)}`;
   }
 
-  const seg = Math.max(2, Math.round(width * SEGMENT_RATIO));
+  const seg = Math.min(width, Math.max(2, Math.round(width * SEGMENT_RATIO)));
   const travel = width - seg;
+  if (travel === 0) return `${pad} ${filled.repeat(width)}`;
 
   if (animation === 'slide') {
     const offset = frame % (travel + 1);
@@ -92,7 +93,7 @@ function formatIndeterminate(cfg: ResolvedBarConfig, frame: number): string {
 function formatBar(progress: number | undefined, cfg: ResolvedBarConfig, frame: number): string {
   if (progress === undefined) return formatIndeterminate(cfg, frame);
   const { width, filled, empty } = cfg;
-  const clamped = Math.max(0, Math.min(1, progress));
+  const clamped = Number.isNaN(progress) ? 0 : Math.max(0, Math.min(1, progress));
   const filledCount = Math.round(clamped * width);
   const pct = `${Math.round(clamped * 100)}%`.padStart(4);
   return `${pct} ${filled.repeat(filledCount)}${empty.repeat(width - filledCount)}`;
@@ -143,7 +144,7 @@ export type PadroneProgressRenderer = (message: string, options?: PadroneProgres
 
 /**
  * Creates a terminal progress indicator (spinner, bar, or both).
- * Returns a no-op indicator in non-TTY/CI environments.
+ * When stderr is not a TTY, nothing is animated and only the final success/error line is printed.
  */
 export function createTerminalProgress(message: string, options?: PadroneProgressOptions): PadroneProgress {
   const spinnerCfg = resolveSpinnerConfig(options?.spinner);
@@ -153,22 +154,28 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
 
   const formatFinal = (icon: string, msg: string) => (icon ? `${icon} ${msg}\n` : `${msg}\n`);
 
-  if (typeof process === 'undefined' || !process.stderr?.isTTY) {
-    const noopEta = { start() {}, stop() {}, reset() {} };
+  const proc = globalThis.process as NodeJS.Process | undefined;
+  if (!proc?.stderr?.isTTY) {
+    // No animation: only the final status line is printed, using the latest message.
+    let text = message;
+    let done = false;
+    const finish = (msg: string | null | undefined, icon: string) => {
+      if (done) return;
+      done = true;
+      const finalMsg = msg === null ? '' : (msg ?? text);
+      if (finalMsg) proc?.stderr?.write?.(formatFinal(icon, finalMsg));
+    };
     return {
-      update() {},
-      eta: noopEta,
-      succeed(msg, opts) {
-        if (msg === null) return;
-        const icon = opts?.indicator ?? successIcon;
-        if (msg || message) process?.stderr?.write?.(formatFinal(icon, msg || message));
+      update(value) {
+        const { message: msg } = parseUpdate(value);
+        if (msg !== undefined) text = msg;
       },
-      fail(msg, opts) {
-        if (msg === null) return;
-        const icon = opts?.indicator ?? errorIcon;
-        if (msg || message) process?.stderr?.write?.(formatFinal(icon, msg || message));
+      eta: { start() {}, stop() {}, reset() {} },
+      succeed: (msg, opts) => finish(msg, opts?.indicator ?? successIcon),
+      fail: (msg, opts) => finish(msg, opts?.indicator ?? errorIcon),
+      stop() {
+        done = true;
       },
-      stop() {},
       pause() {},
       resume() {},
     };
@@ -177,14 +184,10 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
   // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape stripping requires matching ESC
   const ansiPattern = /\x1b\[[0-9;]*m/g;
 
-  if (spinnerCfg.show === 'never' && (!barCfg || barCfg.show === 'never') && !message) {
-    return { update() {}, eta: { start() {}, stop() {}, reset() {} }, succeed() {}, fail() {}, stop() {}, pause() {}, resume() {} };
-  }
-
   const showTime = options?.time ?? false;
   let etaEnabled = options?.eta ?? false;
 
-  let spinnerFrame = 0;
+  const createdAt = Date.now();
   let barFrame = 0;
   let text = message;
   let progress: number | undefined;
@@ -197,8 +200,8 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
   let etaMs: number | undefined;
   let etaCalculatedAt = 0;
 
-  const writeStderr = process.stderr.write.bind(process.stderr);
-  const writeStdout = process.stdout.write.bind(process.stdout);
+  const stderr = proc.stderr;
+  const writeStderr = stderr.write.bind(stderr);
   let prevLineCount = 0;
 
   const clearLines = () => {
@@ -212,7 +215,7 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
 
   /** Count how many terminal rows `str` occupies, accounting for line wrapping. */
   const lineCount = (str: string): number => {
-    const cols = process.stderr.columns || 80;
+    const cols = stderr.columns || 80;
     // Strip ANSI escape sequences for accurate width measurement
     const visible = str.replace(ansiPattern, '');
     return Math.max(1, Math.ceil(visible.length / cols));
@@ -239,6 +242,8 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
     }
     if (spinnerVisible) {
       if (line) line += ' ';
+      // Derived from elapsed time so the spinner keeps its own speed when the bar ticks faster
+      const spinnerFrame = Math.floor((Date.now() - createdAt) / spinnerCfg.interval) % (frames.length || 1);
       line += frames[spinnerFrame] ?? '';
     }
     if (text) {
@@ -256,20 +261,22 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
   };
 
   const { frames } = spinnerCfg;
-  const needsAnimation = spinnerCfg.show !== 'never' || (barCfg && barCfg.show !== 'never');
-  const tickInterval = barCfg && barCfg.show !== 'never' ? Math.min(80, spinnerCfg.interval) : spinnerCfg.interval;
+  const barAnimated = !!barCfg && barCfg.show !== 'never';
+  const tickInterval = barAnimated ? Math.min(80, spinnerCfg.interval) : spinnerCfg.interval;
 
-  const timer = needsAnimation
-    ? setInterval(() => {
-        spinnerFrame = (spinnerFrame + 1) % (frames.length || 1);
-        barFrame++;
-        render();
-      }, tickInterval)
-    : undefined;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  /** Starts the redraw loop. Also needed without spinner/bar so elapsed time and ETA keep counting. */
+  const ensureTimer = () => {
+    if (timer || stopped) return;
+    timer = setInterval(() => {
+      barFrame++;
+      render();
+    }, tickInterval);
+    // Prevent the timer from keeping the process alive on uncaught errors
+    if (typeof timer === 'object' && 'unref' in timer) timer.unref();
+  };
 
-  // Prevent the spinner timer from keeping the process alive on uncaught errors
-  if (timer && typeof timer === 'object' && 'unref' in timer) (timer as NodeJS.Timeout).unref();
-
+  if (spinnerCfg.show !== 'never' || barAnimated || timeEnabled || etaEnabled) ensureTimer();
   render();
 
   const clear = () => {
@@ -277,6 +284,7 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
     stopped = true;
     paused = false;
     if (timer) clearInterval(timer);
+    timer = undefined;
     clearLines();
   };
 
@@ -284,6 +292,7 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
     start() {
       if (stopped) return;
       etaEnabled = true;
+      ensureTimer();
       render();
     },
     stop() {
@@ -310,6 +319,8 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
         progress = parsed.progress;
         if (etaEnabled) {
           const now = Date.now();
+          // Progress moved backwards (a new phase started): estimate from scratch
+          if (parsed.progress < (etaSamples[etaSamples.length - 1]?.progress ?? 0)) etaSamples.length = 0;
           etaSamples.push({ time: now, progress: parsed.progress });
           const estimated = estimateEta(etaSamples);
           if (estimated !== undefined) {
@@ -326,6 +337,7 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
         if (parsed.time && !timeEnabled) {
           timeEnabled = true;
           startTime = Date.now();
+          ensureTimer();
         } else if (!parsed.time) {
           timeEnabled = false;
         }
@@ -334,6 +346,7 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
     },
     eta,
     succeed(msg, opts) {
+      if (stopped) return;
       clear();
       if (msg === null) return;
       const finalMsg = msg ?? text;
@@ -341,6 +354,7 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
       if (finalMsg) writeStderr(formatFinal(icon, finalMsg));
     },
     fail(msg, opts) {
+      if (stopped) return;
       clear();
       if (msg === null) return;
       const finalMsg = msg ?? text;
@@ -354,7 +368,6 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
       if (stopped || paused) return;
       paused = true;
       clearLines();
-      writeStdout('\x1b[2K\r');
     },
     resume() {
       if (stopped || !paused) return;

@@ -2,7 +2,7 @@ import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { applyValues } from '../core/args.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
-import type { AnyPadroneBuilder, CommandTypesBase, InterceptorValidateContext } from '../types/index.ts';
+import type { AnyPadroneBuilder, CommandTypesBase, InterceptorValidateContext, InterceptorValidateResult } from '../types/index.ts';
 import type { LoadEnvFilesOptions } from '../util/dotenv.ts';
 import { loadEnvFiles } from '../util/dotenv.ts';
 import type { WithAsync } from '../util/type-utils.ts';
@@ -77,7 +77,22 @@ export function padroneEnv(
         if (schema) {
           const envValidated = schema['~standard'].validate(rawEnv);
           return thenMaybe(envValidated, (result) => {
-            if (result.issues || !result.value) return next();
+            if (result.issues) {
+              // A variable that is set but invalid is an error; a missing one leaves the arg to the CLI or its default.
+              const invalid = result.issues.filter((issue) => {
+                const name = issue.path?.[0];
+                const key = typeof name === 'object' ? name.key : name;
+                return key !== undefined && rawEnv[String(key)] !== undefined;
+              });
+              if (invalid.length === 0) return next();
+              return {
+                args: undefined,
+                argsResult: {
+                  issues: invalid.map((issue) => ({ ...issue, message: `Invalid environment variable: ${issue.message}` })),
+                },
+              } as InterceptorValidateResult;
+            }
+            if (!result.value) return next();
             return next({ rawArgs: applyValues(ctx.rawArgs, result.value as Record<string, unknown>) });
           });
         }

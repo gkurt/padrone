@@ -525,3 +525,16 @@ test.skip('Types - defineCommand().requires()', () => {
   const badProgram = createPadrone('test').command('admin', adminCommand);
   expectTypeOf(badProgram).toHaveProperty('~error');
 });
+
+test('function-form arguments infer the extended schema, with meta', () => {
+  createPadrone('app')
+    .arguments(z.object({ verbose: z.boolean().optional() }))
+    .command('rm', (c) =>
+      c
+        .arguments((parent) => parent.extend({ file: z.string() }), { positional: ['file'] })
+        .action((args) => {
+          expectTypeOf(args).toEqualTypeOf<{ verbose?: boolean; file: string }>();
+          return args.file;
+        }),
+    );
+});

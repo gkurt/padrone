@@ -189,6 +189,27 @@ db migrate down --steps 3
 db migrate status
 ```
 
+### Sharing Options With Subcommands
+
+Pass a function to `.arguments()` to extend the parent command's schema. The subcommand then accepts the parent's options too, before or after its own name:
+
+```typescript
+const program = createPadrone('app')
+  .arguments(z.object({ verbose: z.boolean().optional().meta({ flags: 'v' }) }))
+  .command('rm', (c) =>
+    c
+      .arguments((parent) => parent.extend({ file: z.string() }), { positional: ['file'] })
+      .action((args) => args), // { verbose?: boolean; file: string }
+  );
+```
+
+```bash
+app rm x.txt -v
+app -v rm x.txt
+```
+
+Define the parent's schema before its subcommands so the parameter is typed.
+
 ## Environment Variables
 
 Bind arguments to environment variables using the `padroneEnv` extension:
@@ -224,6 +245,8 @@ const program = createPadrone('app')
 ```
 
 The env schema validates `process.env` and transforms env var names into argument names. `padroneEnv` can be applied at the program level (inherited by all commands) or at the command level.
+
+A variable that is set but invalid (e.g. `APP_PORT=abc`) is reported as a validation error. A variable that isn't set is skipped, leaving the argument to the CLI or its default, so keep env fields `.optional()`.
 
 Priority order: CLI argument > Stdin > Environment variable > Config file > Interactive prompt > Default value
 

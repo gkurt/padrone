@@ -113,7 +113,7 @@ Defines the arguments schema for a command. Accepts any Standard Schema-compatib
   count: z.coerce.number().default(1),
 }))
 
-// Function-based (extends parent args)
+// Function-based: extends the parent command's schema (define the parent's schema first for types)
 .arguments((parentSchema) => parentSchema.extend({
   verbose: z.boolean().default(false),
 }))

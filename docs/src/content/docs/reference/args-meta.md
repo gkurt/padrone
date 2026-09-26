@@ -242,7 +242,7 @@ const program = createPadrone('app')
   );
 ```
 
-The env schema validates `process.env` and transforms env var names into argument names. Only provided env values are used — undefined values are skipped. `padroneEnv` can be applied at the program level (inherited by all commands) or at the command level.
+The env schema validates `process.env` and transforms env var names into argument names. Only provided env values are used — undefined values are skipped, and a set but invalid value is reported as a validation error. `padroneEnv` can be applied at the program level (inherited by all commands) or at the command level.
 
 **Resolution priority:**
 1. CLI argument (highest)

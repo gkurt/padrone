@@ -145,8 +145,10 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
       const composed = existing ? (ctx: unknown) => transform(existing(ctx)) : transform;
       return createPadroneBuilder({ ...existingCommand, contextTransform: composed }) as any;
     },
-    arguments(schema, meta) {
-      const resolvedArgs = typeof schema === 'function' ? schema(existingCommand.argsSchema as any) : schema;
+    arguments(schema?: unknown, meta?: AnyPadroneCommand['meta']) {
+      // A subcommand extends its parent's schema; the root extends its own earlier schema.
+      const baseSchema = existingCommand.parent ? existingCommand.parent.argsSchema : existingCommand.argsSchema;
+      const resolvedArgs = (typeof schema === 'function' ? schema(baseSchema) : schema) as PadroneSchema | undefined;
       const isAsync = existingCommand.isAsync || isAsyncBranded(resolvedArgs) || hasInteractiveConfig(meta);
       return createPadroneBuilder({ ...existingCommand, argsSchema: resolvedArgs, meta, isAsync }) as any;
     },

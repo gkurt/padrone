@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { createPadrone, padroneConfig, padroneLogger } from 'padrone';
+import { createPadrone, padroneConfig, padroneEnv, padroneLogger } from 'padrone';
 import * as z from 'zod/v4';
 
 const issuesOf = (result: { argsResult?: { issues?: readonly { path?: readonly unknown[]; message: string }[] } }) =>
@@ -357,5 +357,66 @@ describe('parser fuzzing', () => {
       expect(Object.keys(Object.prototype)).toEqual([]);
       expect(({} as Record<string, unknown>).x).toBeUndefined();
     }
+  });
+});
+
+describe('schema inheritance', () => {
+  const rootSchema = z.object({ verbose: z.boolean().optional().meta({ flags: 'v' }), profile: z.string().optional() });
+
+  it('passes the parent schema to a subcommand extending it', () => {
+    const program = createPadrone('app')
+      .arguments(rootSchema)
+      .command('rm', (c) => c.arguments((parent) => parent.extend({ file: z.string() }), { positional: ['file'] }).action((args) => args));
+    expect(program.eval(['rm', 'x', '-v']).args).toEqual({ file: 'x', verbose: true });
+    expect(program.eval(['-v', 'rm', 'x']).args).toEqual({ file: 'x', verbose: true });
+    expect(program.eval(['--profile', 'dev', 'rm', 'x']).args).toEqual({ file: 'x', profile: 'dev' });
+  });
+
+  it('uses the final parent schema even when it is defined after the subcommand', () => {
+    // Types follow definition order, so the parent schema isn't typed yet here; the runtime still resolves it
+    const program = createPadrone('app')
+      .command('rm', (c) =>
+        c
+          .arguments((parent) => (parent as unknown as typeof rootSchema).extend({ file: z.string() }), { positional: ['file'] })
+          .action((args) => args),
+      )
+      .arguments(rootSchema);
+    expect(program.eval(['rm', '-v', 'x']).args).toEqual({ file: 'x', verbose: true });
+  });
+});
+
+describe('env extension', () => {
+  const envProgram = (env: Record<string, string>) =>
+    createPadrone('app')
+      .runtime({ env: () => env })
+      .extend(
+        padroneEnv(
+          z.object({ PORT: z.coerce.number().optional(), HOST: z.string().optional(), TOKEN: z.string() }).transform((e) => ({
+            port: e.PORT,
+            host: e.HOST,
+            token: e.TOKEN,
+          })),
+        ),
+      )
+      .command('serve', (c) =>
+        c
+          .arguments(z.object({ port: z.number().default(3000), host: z.string().default('localhost'), token: z.string().optional() }))
+          .action((args) => args),
+      );
+
+  it('reports a set but invalid variable instead of silently ignoring all of them', async () => {
+    const result = await envProgram({ PORT: 'abc', HOST: 'h.example', TOKEN: 't' }).eval('serve');
+    expect(result.args).toBeUndefined();
+    expect(issuesOf(result)?.[0]).toStartWith('PORT: Invalid environment variable:');
+  });
+
+  it('applies valid variables', async () => {
+    const result = await envProgram({ PORT: '8080', HOST: 'h.example', TOKEN: 't' }).eval('serve');
+    expect(result.args).toEqual({ port: 8080, host: 'h.example', token: 't' });
+  });
+
+  it('leaves a missing required variable to the CLI or defaults', async () => {
+    const result = await envProgram({ PORT: '8080' }).eval('serve --token cli');
+    expect(result.args).toEqual({ port: 3000, host: 'localhost', token: 'cli' });
   });
 });

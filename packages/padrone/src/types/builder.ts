@@ -21,6 +21,7 @@ import type {
   ReplaceOrAppendCommand,
   SafeString,
 } from '../util/type-utils.ts';
+import type { PadroneArgsSchemaMeta } from './args-meta.ts';
 import type {
   AnyPadroneCommand,
   CommandTypesBase,
@@ -285,23 +286,47 @@ export type PadroneBuilderMethods<
     >;
   };
 
-  /** Define the argument/option schema for this command. Accepts a Standard Schema or a function that extends the parent schema. @category Builder */
-  arguments: <TNewArgs extends PadroneSchema = PadroneSchema<void>, TMeta extends GetArgsMeta<TNewArgs> = GetArgsMeta<TNewArgs>>(
-    schema?: TNewArgs | ((parentSchema: TParentArgs) => TNewArgs),
-    meta?: TMeta,
-  ) => BuilderOrProgram<
-    TReturn,
-    TProgramName,
-    TName,
-    TParentName,
-    TNewArgs,
-    TRes,
-    TCommands,
-    TParentArgs,
-    OrAsyncMeta<OrAsync<TAsync, TNewArgs>, TMeta>,
-    TContext,
-    TContextProvided
-  >;
+  /**
+   * Define the argument/option schema for this command. Accepts a Standard Schema, or a function that receives
+   * the parent command's schema to extend it: `.arguments((parent) => parent.extend({ file: z.string() }))`.
+   * @category Builder
+   */
+  arguments: {
+    // The function form is a separate overload whose `meta` doesn't depend on the schema type: otherwise `meta`
+    // would fix the schema type before the function's return type is inferred.
+    <TNewArgs extends PadroneSchema, const TMeta extends PadroneArgsSchemaMeta = PadroneArgsSchemaMeta>(
+      schema: (parentSchema: TParentArgs) => TNewArgs,
+      meta?: TMeta,
+    ): BuilderOrProgram<
+      TReturn,
+      TProgramName,
+      TName,
+      TParentName,
+      TNewArgs,
+      TRes,
+      TCommands,
+      TParentArgs,
+      OrAsyncMeta<OrAsync<TAsync, TNewArgs>, TMeta>,
+      TContext,
+      TContextProvided
+    >;
+    <TNewArgs extends PadroneSchema = PadroneSchema<void>, TMeta extends GetArgsMeta<TNewArgs> = GetArgsMeta<TNewArgs>>(
+      schema?: TNewArgs,
+      meta?: TMeta,
+    ): BuilderOrProgram<
+      TReturn,
+      TProgramName,
+      TName,
+      TParentName,
+      TNewArgs,
+      TRes,
+      TCommands,
+      TParentArgs,
+      OrAsyncMeta<OrAsync<TAsync, TNewArgs>, TMeta>,
+      TContext,
+      TContextProvided
+    >;
+  };
 
   /** Set the handler function that runs when this command is executed. @category Builder */
   action: <TNewRes>(

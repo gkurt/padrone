@@ -1,4 +1,5 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
+import type { OptionArity } from '../core/parse.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import type { AnyPadroneProgram } from './builder.ts';
 import type { AnyPadroneCommand, PadroneActionContext } from './command.ts';
@@ -167,6 +168,12 @@ export type InterceptorMeta = {
    * and is not inherited by subcommands. Defaults to `true`.
    */
   inherit?: boolean;
+  /**
+   * Options this interceptor reads from `rawArgs` that aren't part of the command's schema (e.g. `--help`, `--config`),
+   * keyed by long name or single-character flag. Tells the parser whether each one takes a value, so that
+   * `--help build` keeps `build` as a command. The command's own schema takes precedence on conflicts.
+   */
+  options?: Record<string, OptionArity>;
 };
 
 /**

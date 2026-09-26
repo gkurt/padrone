@@ -38,6 +38,16 @@ Padrone supports these Zod types:
 | `z.boolean()` | `--verbose` or `--no-verbose` (customizable via `negative` meta) |
 | `z.enum(['a', 'b'])` | `--level high` |
 | `z.array(z.string())` | `--tags foo --tags bar` or `--tags=[foo,bar]` |
+| `z.union([z.boolean(), z.string()])` | `--cache` (→ `true`) or `--cache dir` (→ `"dir"`) |
+
+Parsing follows the schema, so each option consumes values according to its type:
+
+- A boolean never takes the next argument, so `build --verbose file.txt` keeps `file.txt` as a positional. An explicit boolean word is still accepted: `--verbose false` or `--verbose=off`.
+- An option that needs a value takes the next argument even if it starts with `-`: `--offset -5`, `--pattern -foo`. A missing value is reported as `Option "--name" requires a value`.
+- An option whose type allows both a boolean and a value (`--cache [dir]`) takes the next argument only when it doesn't look like an option or a subcommand.
+- A repeated option keeps the last value (`--name a --name b` → `"b"`); array options collect every value.
+- The `[a,b]` bracket syntax only applies to array options — `--title=[WIP]` stays a string.
+- `--` ends option parsing; everything after it is positional. A lone `-` is a positional (commonly stdin).
 
 ### Argument Flags
 
@@ -50,7 +60,7 @@ z.object({
 })
 ```
 
-Users can now use `-p 8080` instead of `--port 8080`. Short flags are single-character and stackable: `-vp 8080` = `-v -p 8080`.
+Users can now use `-p 8080` instead of `--port 8080`. Short flags are single-character and stackable: `-vp 8080` = `-v -p 8080`. A flag that takes a value can have it attached: `-p8080`, `-p=8080`, or `-vp8080`.
 
 ### Argument Metadata
 

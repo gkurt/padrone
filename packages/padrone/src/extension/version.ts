@@ -14,29 +14,32 @@ export type WithVersion<T> = WithCommand<T, 'version', VersionCommand>;
 
 // ── Interceptor ─────────────────────────────────────────────────────────
 
-const versionInterceptor = defineInterceptor({ id: 'padrone:version', name: 'padrone:version', order: -1000 }, () => ({
-  parse(_ctx, next) {
-    return thenMaybe(next(), (res) => {
-      const hasVersionFlag = res.rawArgs.version || res.rawArgs.v || res.rawArgs.V;
+const versionInterceptor = defineInterceptor(
+  { id: 'padrone:version', name: 'padrone:version', order: -1000, options: { version: 'flag', v: 'flag', V: 'flag' } },
+  () => ({
+    parse(_ctx, next) {
+      return thenMaybe(next(), (res) => {
+        const hasVersionFlag = res.rawArgs.version || res.rawArgs.v || res.rawArgs.V;
 
-      // Only show version for root command (no subcommand matched)
-      if (hasVersionFlag && !res.command.parent) {
-        delete res.rawArgs.version;
-        delete res.rawArgs.v;
-        delete res.rawArgs.V;
+        // Only show version for root command (no subcommand matched)
+        if (hasVersionFlag && !res.command.parent) {
+          delete res.rawArgs.version;
+          delete res.rawArgs.v;
+          delete res.rawArgs.V;
 
-        // Route to the version command so its action handles the rest
-        const versionCmd = res.command.commands?.find((c) => c.name === 'version');
-        if (versionCmd) {
-          resolveCommand(versionCmd);
-          return { ...res, command: versionCmd, rawArgs: {}, positionalArgs: [] };
+          // Route to the version command so its action handles the rest
+          const versionCmd = res.command.commands?.find((c) => c.name === 'version');
+          if (versionCmd) {
+            resolveCommand(versionCmd);
+            return { ...res, command: versionCmd, rawArgs: {}, positionalArgs: [] };
+          }
         }
-      }
 
-      return res;
-    });
-  },
-}));
+        return res;
+      });
+    },
+  }),
+);
 
 // ── Extension ────────────────────────────────────────────────────────────
 

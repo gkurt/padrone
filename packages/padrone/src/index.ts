@@ -4,6 +4,7 @@ export { createPadrone, defineCommand } from './core/create.ts';
 export type { PadroneErrorOptions } from './core/errors.ts';
 export { ActionError, ConfigError, PadroneError, RoutingError, SignalError, ValidationError } from './core/errors.ts';
 export { defineInterceptor } from './core/interceptors.ts';
+export type { OptionArity } from './core/parse.ts';
 export { asyncSchema } from './core/results.ts';
 export type {
   InteractiveMode,

@@ -188,7 +188,11 @@ function createLogger(
 type ResolvedLoggerConfig = { level: PadroneLogLevel; prefix: string; timestamps: boolean };
 
 function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
-  return defineInterceptor({ id: 'padrone:logger', name: 'padrone:logger' })
+  return defineInterceptor({
+    id: 'padrone:logger',
+    name: 'padrone:logger',
+    options: { trace: 'flag', verbose: 'flag', debug: 'flag', silent: 'flag', quiet: 'flag', 'log-level': 'value' },
+  })
     .requires<{ tracing?: PadroneTracer; loggerConfig?: PadroneLoggerConfig }>()
     .factory(() => {
       let cliLevel: PadroneLogLevel | undefined;

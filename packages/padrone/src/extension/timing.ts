@@ -1,6 +1,6 @@
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
-import type { AnyPadroneBuilder, CommandTypesBase } from '../types/index.ts';
+import type { AnyPadroneBuilder, CommandTypesBase, InterceptorMeta } from '../types/index.ts';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -14,7 +14,12 @@ function formatDuration(ms: number): string {
 
 // ── Interceptor ─────────────────────────────────────────────────────────
 
-const timingMeta = { id: 'padrone:timing', name: 'padrone:timing', order: -1002 } as const;
+const timingMeta: InterceptorMeta = {
+  id: 'padrone:timing',
+  name: 'padrone:timing',
+  order: -1002,
+  options: { timing: 'flag', time: 'flag' },
+};
 
 function createTimingInterceptor(enabledByDefault: boolean) {
   return defineInterceptor(timingMeta, () => {

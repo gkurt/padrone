@@ -4,19 +4,22 @@ import type { AnyPadroneBuilder, CommandTypesBase } from '../types/index.ts';
 
 // ── Interceptor ─────────────────────────────────────────────────────────
 
-const colorInterceptor = defineInterceptor({ id: 'padrone:color', name: 'padrone:color', order: -1001 }, () => ({
-  parse(ctx, next) {
-    return thenMaybe(next(), (res) => {
-      if ('color' in res.rawArgs) {
-        const color = res.rawArgs.color;
-        delete res.rawArgs.color;
+const colorInterceptor = defineInterceptor(
+  { id: 'padrone:color', name: 'padrone:color', order: -1001, options: { color: 'optional' } },
+  () => ({
+    parse(ctx, next) {
+      return thenMaybe(next(), (res) => {
+        if ('color' in res.rawArgs) {
+          const color = res.rawArgs.color;
+          delete res.rawArgs.color;
 
-        ctx.runtime.theme = color as any;
-      }
-      return res;
-    });
-  },
-}));
+          ctx.runtime.theme = color as any;
+        }
+        return res;
+      });
+    },
+  }),
+);
 
 // ── Extension ────────────────────────────────────────────────────────────
 

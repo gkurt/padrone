@@ -1,38 +1,126 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { AnyPadroneCommand, InterceptorValidateResult, PadroneInput } from '../types/index.ts';
-import { coerceArgs, detectUnknownArgs, extractSchemaMetadata, getJsonSchema, parsePositionalConfig, preprocessArgs } from './args.ts';
+import {
+  coerceArgs,
+  createOptionArityLookup,
+  detectUnknownArgs,
+  extractSchemaMetadata,
+  getJsonSchema,
+  getOptionArity,
+  parsePositionalConfig,
+  preprocessArgs,
+} from './args.ts';
 import { getCommandRuntime } from './commands.ts';
+import type { OptionArity, ParseResolver } from './parse.ts';
 import { getNestedValue, parseCliInputToParts, setNestedValue } from './parse.ts';
 import { thenMaybe } from './results.ts';
+
+/** Options the command's interceptors (and its ancestors') read from `rawArgs`, keyed by name or flag. */
+function collectInterceptorOptions(command: AnyPadroneCommand): Record<string, OptionArity> {
+  const options: Record<string, OptionArity> = {};
+  for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
+    for (const { meta } of current.interceptors ?? []) {
+      if (meta.disabled || !meta.options) continue;
+      for (const [key, arity] of Object.entries(meta.options)) options[key] ??= arity;
+    }
+  }
+  return options;
+}
+
+type CommandOptionInfo = ReturnType<typeof extractSchemaMetadata> & {
+  arity: (key: string[], short: boolean) => OptionArity | undefined;
+  arrayArguments: Set<string>;
+};
+
+function getCommandOptionInfo(command: AnyPadroneCommand): CommandOptionInfo {
+  const metadata = command.argsSchema
+    ? extractSchemaMetadata(command.argsSchema, command.meta?.fields, command.meta?.autoAlias)
+    : { flags: {}, aliases: {}, negatives: {}, customNegation: new Set<string>() };
+  const schemaArity = createOptionArityLookup(command.argsSchema, metadata);
+  const interceptorOptions = collectInterceptorOptions(command);
+
+  const arrayArguments = new Set<string>();
+  if (command.argsSchema) {
+    try {
+      const jsonSchema = getJsonSchema(command.argsSchema) as Record<string, any>;
+      if (jsonSchema.type === 'object' && jsonSchema.properties) {
+        for (const [key, prop] of Object.entries(jsonSchema.properties as Record<string, any>)) {
+          if (getOptionArity(prop) === 'array') arrayArguments.add(key);
+        }
+      }
+    } catch {
+      // Ignore schema parsing errors
+    }
+  }
+
+  return {
+    ...metadata,
+    arrayArguments,
+    arity: (key, short) => schemaArity(key, short) ?? (key.length === 1 ? interceptorOptions[key[0]!] : undefined),
+  };
+}
+
+/**
+ * A resolver that follows routing while tokenizing, so each option's arity is looked up
+ * on the command it appears under.
+ */
+export function createParseResolver(
+  rootCommand: AnyPadroneCommand,
+  findCommandByName: FindCommandFn,
+  skipRootName: boolean,
+): ParseResolver {
+  let current = rootCommand;
+  let routing = true;
+  let first = true;
+  const cache = new Map<AnyPadroneCommand, CommandOptionInfo>();
+  const info = (command: AnyPadroneCommand) => {
+    let entry = cache.get(command);
+    if (!entry) cache.set(command, (entry = getCommandOptionInfo(command)));
+    return entry;
+  };
+
+  return {
+    arity: (key, short) => info(current).arity(key, short),
+    isCommand: (term) => routing && !!findCommandByName(term, current.commands),
+    enter(term) {
+      const isFirst = first;
+      first = false;
+      if (!routing) return;
+      if (isFirst && skipRootName && term === rootCommand.name) return;
+      const found = findCommandByName(term, current.commands);
+      if (found) current = found;
+      else routing = false;
+    },
+  };
+}
 
 /**
  * Parses CLI input to find the command and extract raw arguments without validation.
  * A string is tokenized; an array (argv) is taken as already tokenized. Without input, reads the runtime's argv.
+ *
+ * A string input may start with the program name (`eval('my-cli build')`); argv never does.
  */
 export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPadroneCommand, findCommandByName: FindCommandFn) {
   input ??= getCommandRuntime(rootCommand).argv();
+  const empty = { rawArgs: {} as Record<string, unknown>, args: [] as string[], unmatchedTerms: [] as string[], issues: undefined };
   if (!input.length) {
     const defaultCommand = findCommandByName('', rootCommand.commands);
-    if (defaultCommand) {
-      return { command: defaultCommand, rawArgs: {} as Record<string, unknown>, args: [] as string[], unmatchedTerms: [] as string[] };
-    }
-    return { command: rootCommand, rawArgs: {} as Record<string, unknown>, args: [] as string[], unmatchedTerms: [] as string[] };
+    return { command: defaultCommand ?? rootCommand, ...empty };
   }
 
-  const parts = parseCliInputToParts(input);
+  const skipRootName = typeof input === 'string';
+  const parts = parseCliInputToParts(input, createParseResolver(rootCommand, findCommandByName, skipRootName));
 
   const terms = parts.filter((p) => p.type === 'term').map((p) => p.value);
   const argTokens = parts.filter((p) => p.type === 'arg').map((p) => p.value);
 
-  let curCommand: AnyPadroneCommand | undefined = rootCommand;
+  let curCommand: AnyPadroneCommand = rootCommand;
   let unmatchedTerms: string[] = [];
 
-  if (terms[0] === rootCommand.name) terms.shift();
+  if (skipRootName && terms[0] === rootCommand.name) terms.shift();
 
   for (let i = 0; i < terms.length; i++) {
-    const term = terms[i] || '';
-    const found = findCommandByName(term, curCommand.commands);
-
+    const found = findCommandByName(terms[i]!, curCommand.commands);
     if (found) {
       curCommand = found;
     } else {
@@ -47,46 +135,36 @@ export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPa
     if (defaultCommand) curCommand = defaultCommand;
   }
 
-  if (!curCommand) return { command: rootCommand, rawArgs: {} as Record<string, unknown>, args: argTokens, unmatchedTerms };
+  const { flags, aliases, negatives, customNegation, arrayArguments } = getCommandOptionInfo(curCommand);
 
-  const argsMeta = curCommand.meta?.fields;
-  const schemaMetadata = curCommand.argsSchema
-    ? extractSchemaMetadata(curCommand.argsSchema, argsMeta, curCommand.meta?.autoAlias)
-    : { flags: {}, aliases: {}, negatives: {}, customNegation: new Set<string>() };
-  const { flags, aliases, negatives, customNegation } = schemaMetadata;
-
-  const arrayArguments = new Set<string>();
-  if (curCommand.argsSchema) {
-    try {
-      const jsonSchema = getJsonSchema(curCommand.argsSchema) as Record<string, any>;
-      if (jsonSchema.type === 'object' && jsonSchema.properties) {
-        for (const [key, prop] of Object.entries(jsonSchema.properties as Record<string, any>)) {
-          if (prop?.type === 'array') arrayArguments.add(key);
-        }
-      }
-    } catch {
-      // Ignore schema parsing errors
-    }
-  }
-
-  const argParts = parts.filter((p) => p.type === 'named' || p.type === 'alias');
   const rawArgs: Record<string, unknown> = {};
+  let issues: StandardSchemaV1.Issue[] | undefined;
 
-  for (const arg of argParts) {
+  for (const arg of parts) {
+    if (arg.type !== 'named' && arg.type !== 'alias') continue;
+
     let key: string[];
-    if (arg.type === 'alias' && arg.key.length === 1 && flags[arg.key[0]!]) {
-      key = [flags[arg.key[0]!]!];
-    } else if (arg.type === 'named' && arg.key.length === 1 && aliases[arg.key[0]!]) {
-      key = [aliases[arg.key[0]!]!];
-    } else if (arg.type === 'named' && arg.key.length === 1 && negatives[arg.key[0]!]) {
+    const [head] = arg.key;
+    const single = arg.key.length === 1 ? head! : undefined;
+    if (arg.type === 'alias' && single !== undefined && Object.hasOwn(flags, single)) {
+      key = [flags[single]!];
+    } else if (arg.type === 'named' && head !== undefined && Object.hasOwn(aliases, head)) {
+      key = [aliases[head]!, ...arg.key.slice(1)];
+    } else if (arg.type === 'named' && !arg.negated && single !== undefined && Object.hasOwn(negatives, single)) {
       // Negative keyword: --remote sets local to false
-      setNestedValue(rawArgs, [negatives[arg.key[0]!]!], false);
+      setNestedValue(rawArgs, [negatives[single]!], false);
       continue;
     } else {
       key = arg.key;
     }
 
     const rootKey = key[0]!;
+
+    if (arg.missing) {
+      const display = arg.type === 'alias' ? `-${arg.key[0]}` : `--${arg.key.join('.')}`;
+      (issues ??= []).push({ path: key, message: `Option "${display}" requires a value` });
+      continue;
+    }
 
     if (arg.type === 'named' && arg.negated) {
       // Skip --no- prefix negation for args with custom negation
@@ -102,35 +180,20 @@ export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPa
     const value = arg.value ?? true;
 
     if (arrayArguments.has(rootKey)) {
+      // Array options accumulate across repeats: --tag a --tag b. A single value stays as given;
+      // coercion wraps it when the schema only accepts arrays.
       const existing = getNestedValue(rawArgs, key);
-      if (existing !== undefined) {
-        if (Array.isArray(existing)) {
-          if (Array.isArray(value)) existing.push(...value);
-          else existing.push(value);
-        } else {
-          if (Array.isArray(value)) setNestedValue(rawArgs, key, [existing, ...value]);
-          else setNestedValue(rawArgs, key, [existing, value]);
-        }
-      } else {
-        setNestedValue(rawArgs, key, Array.isArray(value) ? value : [value]);
-      }
+      const values = Array.isArray(value) ? value : [value];
+      if (existing === undefined) setNestedValue(rawArgs, key, value);
+      else if (Array.isArray(existing)) existing.push(...values);
+      else setNestedValue(rawArgs, key, [existing, ...values]);
     } else {
-      const existing = getNestedValue(rawArgs, key);
-      if (existing !== undefined) {
-        if (Array.isArray(existing)) {
-          if (Array.isArray(value)) existing.push(...value);
-          else existing.push(value);
-        } else {
-          if (Array.isArray(value)) setNestedValue(rawArgs, key, [existing, ...value]);
-          else setNestedValue(rawArgs, key, [existing, value]);
-        }
-      } else {
-        setNestedValue(rawArgs, key, value);
-      }
+      // Other options take the last value given, like most CLIs: --name a --name b → "b"
+      setNestedValue(rawArgs, key, value);
     }
   }
 
-  return { command: curCommand, rawArgs, args: argTokens, unmatchedTerms };
+  return { command: curCommand, rawArgs, args: argTokens, unmatchedTerms, issues };
 }
 
 type FindCommandFn = (name: string, commands?: AnyPadroneCommand[]) => AnyPadroneCommand | undefined;

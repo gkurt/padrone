@@ -1,6 +1,8 @@
+import { findCommandByName } from '../core/commands.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { parseCliInputToParts } from '../core/parse.ts';
 import { withDrain } from '../core/results.ts';
+import { createParseResolver } from '../core/validate.ts';
 import type {
   AnyPadroneBuilder,
   AnyPadroneCommand,
@@ -56,7 +58,7 @@ export function padroneRepl(
 }
 
 function createReplInterceptor(defaults?: PadroneReplPreferences, disabled?: boolean) {
-  return defineInterceptor({ id: 'padrone:repl', name: 'padrone:repl', order: -1000, disabled }, () => ({
+  return defineInterceptor({ id: 'padrone:repl', name: 'padrone:repl', order: -1000, disabled, options: { repl: 'flag' } }, () => ({
     start(ctx: InterceptorStartContext, next: () => unknown) {
       const replInfo = checkReplFlag(ctx.input, ctx.command);
       if (!replInfo) return next();
@@ -79,16 +81,14 @@ function createReplInterceptor(defaults?: PadroneReplPreferences, disabled?: boo
 function checkReplFlag(input: PadroneInput | undefined, rootCommand: AnyPadroneCommand): { scope?: string } | null {
   if (!input) return null;
 
-  const parts = parseCliInputToParts(input);
+  const skipRootName = typeof input === 'string';
+  const parts = parseCliInputToParts(input, createParseResolver(rootCommand, findCommandByName, skipRootName));
   const terms = parts.filter((p) => p.type === 'term').map((p) => p.value);
-  const args = parts.filter((p) => p.type === 'named');
-  const keyIs = (key: string[], name: string) => key.length === 1 && key[0] === name;
-
-  const hasReplFlag = args.some((p) => p.type === 'named' && keyIs(p.key, 'repl'));
+  const hasReplFlag = parts.some((p) => p.type === 'named' && p.key.length === 1 && p.key[0] === 'repl');
   if (!hasReplFlag) return null;
 
   const normalizedTerms = [...terms];
-  if (normalizedTerms[0] === rootCommand.name) normalizedTerms.shift();
+  if (skipRootName && normalizedTerms[0] === rootCommand.name) normalizedTerms.shift();
 
   const scope = normalizedTerms.length > 0 ? normalizedTerms.join(' ') : undefined;
   return { scope };

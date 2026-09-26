@@ -673,9 +673,12 @@ export type PadroneProgram<
     prefs?: ContextParam<TContext>,
   ) => PadroneCommandResult<PickCommandByName<[PadroneCommand<'', '', TArgs, TRes, TCommands>], TCommand>>;
 
-  /** Parse and execute a string input through the full interceptor pipeline. @category Execution */
+  /**
+   * Parse and execute input through the full interceptor pipeline. A string is tokenized (honoring quotes);
+   * an array is taken as already-tokenized argv, one entry per argument. @category Execution
+   */
   eval: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], true, true>>(
-    input: TCommand | SafeString,
+    input: TCommand | SafeString | readonly string[],
     prefs?: PadroneEvalPreferences & ContextParam<TContext>,
   ) => MaybePromiseCommandResult<
     PickCommandByPossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], TCommand>,
@@ -687,9 +690,9 @@ export type PadroneProgram<
     prefs?: PadroneCliPreferences & ContextParam<TContext>,
   ) => MaybePromiseCommandResult<FlattenCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>]>, TAsync>;
 
-  /** Parse and validate input without executing the action. @category Execution */
+  /** Parse and validate input (a string, or argv as an array) without executing the action. @category Execution */
   parse: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], true, false>>(
-    input?: TCommand | SafeString,
+    input?: TCommand | SafeString | readonly string[],
   ) => MaybePromise<
     PadroneParseResult<PickCommandByPossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], TCommand>>,
     PickCommandByPossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], TCommand>['~types']['async']

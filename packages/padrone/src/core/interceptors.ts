@@ -27,6 +27,7 @@ function buildInterceptorFn(meta: InterceptorMeta, factory: InterceptorFactory<a
   if (meta.order !== undefined) (factory as any).order = meta.order;
   if (meta.disabled !== undefined) (factory as any).disabled = meta.disabled;
   if (meta.inherit !== undefined) (factory as any).inherit = meta.inherit;
+  if (meta.options !== undefined) (factory as any).options = meta.options;
   (factory as any).provides = () => factory;
   (factory as any).requires = () => factory;
   return factory as PadroneInterceptorFn<any, any, any>;
@@ -90,7 +91,14 @@ export function toRegisteredInterceptor(
   if (typeof metaOrFn === 'function') {
     // Single-value form: PadroneInterceptorFn (factory with meta as own properties)
     return {
-      meta: { name: metaOrFn.name, id: metaOrFn.id, order: metaOrFn.order, disabled: metaOrFn.disabled, inherit: metaOrFn.inherit },
+      meta: {
+        name: metaOrFn.name,
+        id: metaOrFn.id,
+        order: metaOrFn.order,
+        disabled: metaOrFn.disabled,
+        inherit: metaOrFn.inherit,
+        options: metaOrFn.options,
+      },
       factory: metaOrFn,
     };
   }

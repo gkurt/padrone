@@ -30,6 +30,7 @@ export type ExecContext = {
     rawArgs: Record<string, unknown>;
     args: string[];
     unmatchedTerms: string[];
+    issues?: StandardSchemaV1.Issue[];
   };
   collectInterceptorsFn: (cmd: AnyPadroneCommand) => RegisteredInterceptor[];
 };
@@ -171,8 +172,13 @@ export function execCommand(
       caller,
     };
 
-    const coreParse = (parseCtx: InterceptorParseContext): InterceptorParseResult =>
-      validateParseResult(parseCommandFn(parseCtx.input), rootCommand);
+    // Tokenizer issues (e.g. an option missing its value) surface as validation issues of the parsed command.
+    let parseIssues: { command: AnyPadroneCommand; issues: StandardSchemaV1.Issue[] } | undefined;
+    const coreParse = (parseCtx: InterceptorParseContext): InterceptorParseResult => {
+      const parseResult = parseCommandFn(parseCtx.input);
+      if (parseResult.issues) parseIssues = { command: parseResult.command, issues: parseResult.issues };
+      return validateParseResult(parseResult, rootCommand);
+    };
 
     const parsedOrPromise = runInterceptorChain('parse', rootInterceptors, parseCtx, coreParse);
 
@@ -213,6 +219,7 @@ export function execCommand(
           const coreValidate = (
             validateCtx: InterceptorValidateContext,
           ): InterceptorValidateResult | Promise<InterceptorValidateResult> => {
+            if (parseIssues?.command === validateCtx.command) return { args: undefined, argsResult: { issues: parseIssues.issues } as any };
             const { args: preprocessedArgs, issues } = buildCommandArgs(
               validateCtx.command,
               validateCtx.rawArgs,

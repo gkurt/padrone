@@ -120,11 +120,11 @@ describe('parseCliInputToParts', () => {
     });
 
     it('should not treat negative numbers as aliases', () => {
-      // -5 fails the alias regex (/^-\d/), falls through to term (alphanumeric)
+      // -5 is a negative number, so it is a positional arg rather than a flag or a command term
       const result = parseCliInputToParts('cmd -5');
       expect(result).toEqual([
         { type: 'term', value: 'cmd' },
-        { type: 'term', value: '-5' },
+        { type: 'arg', value: '-5' },
       ]);
     });
 
@@ -317,9 +317,9 @@ describe('parseCliInputToParts', () => {
     });
 
     it('should handle bare -', () => {
-      // `-` is length 1, fails the alias check (length > 1), falls through to term match
+      // `-` (conventionally stdin) is a positional arg, never a flag or a command term
       const result = parseCliInputToParts('-');
-      expect(result).toEqual([{ type: 'term', value: '-' }]);
+      expect(result).toEqual([{ type: 'arg', value: '-' }]);
     });
   });
 });

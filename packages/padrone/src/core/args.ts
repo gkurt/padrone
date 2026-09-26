@@ -2,6 +2,7 @@ import type { StandardJSONSchemaV1, StandardSchemaV1 } from '@standard-schema/sp
 import type { PadroneFieldMeta } from '../types/args-meta.ts';
 import { camelToKebab } from '../util/shell-utils.ts';
 import { asyncStreamRegistry } from '../util/stream.ts';
+import type { OptionArity } from './parse.ts';
 
 export type { PadroneArgsSchemaMeta, PadroneFieldMeta, SingleChar, StdinConfig } from '../types/args-meta.ts';
 
@@ -232,6 +233,59 @@ function collectAllowedTypes(prop: Record<string, any> | undefined, types: Set<s
   }
 }
 
+/** Resolves the JSON schema of a (possibly nested) property path, e.g. `['user', 'id']`. */
+function getPropertySchema(properties: Record<string, any>, path: readonly string[]): Record<string, any> | undefined {
+  let prop: Record<string, any> | undefined = properties[path[0]!];
+  for (const segment of path.slice(1)) {
+    if (!prop) return undefined;
+    const nested: Record<string, any> | undefined =
+      prop.properties?.[segment] ?? (prop.anyOf ?? prop.oneOf)?.find((v: any) => v?.properties?.[segment])?.properties[segment];
+    prop = nested ?? (prop.additionalProperties && typeof prop.additionalProperties === 'object' ? prop.additionalProperties : undefined);
+  }
+  return prop;
+}
+
+/** How a schema property consumes CLI values, derived from its allowed types. */
+export function getOptionArity(prop: Record<string, any> | undefined): OptionArity | undefined {
+  if (!prop) return undefined;
+  const types = new Set<string>();
+  collectAllowedTypes(prop, types, new Set());
+  types.delete('null');
+  if (types.has('array')) return 'array';
+  if (types.has('boolean')) return types.size === 1 ? 'flag' : 'optional';
+  if (types.size === 0) return 'optional';
+  return 'value';
+}
+
+/**
+ * Builds the option lookup for a command: maps a long name, alias, negative keyword or short flag
+ * to its arity, following nested paths (`--user.id`).
+ */
+export function createOptionArityLookup(
+  schema: StandardJSONSchemaV1 | undefined,
+  metadata: Pick<SchemaMetadataResult, 'flags' | 'aliases' | 'negatives'>,
+): (key: string[], short: boolean) => OptionArity | undefined {
+  let properties: Record<string, any> = {};
+  if (schema) {
+    try {
+      const jsonSchema = getJsonSchema(schema);
+      if (jsonSchema.type === 'object' && jsonSchema.properties) properties = jsonSchema.properties;
+    } catch {}
+  }
+
+  return (key, short) => {
+    const [head, ...rest] = key;
+    if (head === undefined) return undefined;
+    if (short) {
+      const target = metadata.flags[head];
+      return target ? getOptionArity(properties[target]) : undefined;
+    }
+    if (rest.length === 0 && metadata.negatives[head]) return 'flag';
+    const target = Object.hasOwn(properties, head) ? head : metadata.aliases[head];
+    return target ? getOptionArity(getPropertySchema(properties, [target, ...rest])) : undefined;
+  };
+}
+
 /** Coerce a single CLI string to a primitive based on the set of allowed types. */
 function coerceScalar(value: unknown, allowedTypes: Set<string>): unknown {
   if (typeof value !== 'string') return value;
@@ -271,11 +325,25 @@ export function coerceArgs(data: Record<string, unknown>, schema: StandardJSONSc
     return data;
   }
 
+  return coerceProperties(data, properties);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+/** Coerces each value against its property schema, descending into nested objects (`--user.id=7`). */
+function coerceProperties(data: Record<string, unknown>, properties: Record<string, any>): Record<string, unknown> {
   const result = { ...data };
 
   for (const [key, value] of Object.entries(result)) {
     const prop = properties[key];
     if (!prop) continue;
+
+    if (isPlainObject(value)) {
+      if (prop.properties) result[key] = coerceProperties(value, prop.properties);
+      continue;
+    }
 
     const types = new Set<string>();
     const itemTypes = new Set<string>();

@@ -204,7 +204,13 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
   const configLoader = options?.loadConfig ?? loadConfig;
 
   const interceptor = defineInterceptor(
-    { id: 'padrone:config', name: 'padrone:config', order: -999, ...(inherit === false && { inherit: false }) },
+    {
+      id: 'padrone:config',
+      name: 'padrone:config',
+      order: -999,
+      ...(flagEnabled && { options: { config: 'value', c: 'value' } }),
+      ...(inherit === false && { inherit: false }),
+    },
     () => ({
       validate(ctx: InterceptorValidateContext, next) {
         // Extract --config / -c from rawArgs

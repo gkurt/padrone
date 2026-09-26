@@ -1,7 +1,14 @@
 import { defineInterceptor } from '#src/core/interceptors.ts';
 import { thenMaybe } from '#src/core/results.ts';
-import type { AnyPadroneBuilder, CommandTypesBase } from '#src/types/index.ts';
+import type {
+  AnyPadroneBuilder,
+  AnyPadroneCommand,
+  CommandTypesBase,
+  InterceptorExecuteResult,
+  InterceptorRouteContext,
+} from '#src/types/index.ts';
 import type { WithInterceptor } from '#src/util/type-utils.ts';
+import { getRootCommand } from '#src/util/utils.ts';
 
 // ---------------------------------------------------------------------------
 // Types — minimal OTEL-compatible interfaces so we don't hard-depend on
@@ -65,23 +72,36 @@ type ResolvedTracingConfig = { provider: OtelTracerProvider; serviceName: string
 
 function tracingInterceptor(config: ResolvedTracingConfig) {
   return defineInterceptor({ id: 'padrone:tracing', name: 'padrone:tracing', order: -1 }, () => {
-    let rootSpan: OtelSpan;
-    let tracer: OtelTracer;
+    let rootSpan: OtelSpan | undefined;
+    let tracer: OtelTracer | undefined;
+
+    const getTracer = (command: AnyPadroneCommand) =>
+      (tracer ??= config.provider.getTracer(config.serviceName ?? getRootCommand(command).name));
+
+    // Started once the command is known: in the route phase, or right before the action for `run()`
+    const startRootSpan = (ctx: InterceptorRouteContext) => {
+      if (rootSpan) return rootSpan;
+      rootSpan = getTracer(ctx.command).startSpan(`cli ${ctx.command.path || ctx.command.name}`);
+      rootSpan.setAttribute('padrone.command', ctx.command.path || ctx.command.name);
+      rootSpan.setAttribute('padrone.caller', ctx.caller);
+      return rootSpan;
+    };
 
     return {
-      start(ctx, next) {
-        tracer = config.provider.getTracer(config.serviceName ?? ctx.command.name);
+      route(ctx, next) {
+        startRootSpan(ctx);
         return next();
       },
 
       execute(ctx, next) {
-        rootSpan = tracer.startSpan(`cli ${ctx.command.name}`);
+        const span = startRootSpan(ctx);
+        const activeTracer = getTracer(ctx.command);
 
         const padroneTracer: PadroneTracer = {
-          tracer,
-          rootSpan,
+          tracer: activeTracer,
+          rootSpan: span,
           span(name, fn) {
-            const child = tracer.startSpan(name);
+            const child = activeTracer.startSpan(name);
             try {
               const result = fn(child);
               if (result != null && typeof (result as any).then === 'function') {
@@ -109,7 +129,34 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
           },
         };
 
-        return next({ context: { tracing: padroneTracer } });
+        if (ctx.caller !== 'run') return next({ context: { tracing: padroneTracer } });
+
+        // `run()` has no error/shutdown phases: settle the root span here
+        const fail = (err: unknown): never => {
+          span.recordException(err);
+          span.setStatus({ code: OTEL_ERROR });
+          span.end();
+          throw err;
+        };
+        const settle = (r: InterceptorExecuteResult): InterceptorExecuteResult => {
+          if (!(r.result instanceof Promise)) {
+            span.end();
+            return r;
+          }
+          return {
+            result: r.result.then((value: unknown) => {
+              span.end();
+              return value;
+            }, fail),
+          };
+        };
+        let result: InterceptorExecuteResult | Promise<InterceptorExecuteResult>;
+        try {
+          result = next({ context: { tracing: padroneTracer } });
+        } catch (err) {
+          return fail(err);
+        }
+        return result instanceof Promise ? result.then(settle, fail) : settle(result);
       },
 
       error(ctx, next) {

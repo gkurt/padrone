@@ -73,6 +73,12 @@ export type PadroneEvalPreferences = {
    */
   context?: unknown;
 
+  /**
+   * Cancels the execution when aborted. Actions and interceptors see it through `ctx.signal`,
+   * together with process signals (SIGINT, SIGTERM, SIGHUP) handled by the signal extension.
+   */
+  signal?: AbortSignal;
+
   /** @internal Which API entry point triggered this execution. */
   caller?: PadroneActionContext['caller'];
 };

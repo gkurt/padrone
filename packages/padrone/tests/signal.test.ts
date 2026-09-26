@@ -253,3 +253,37 @@ describe('signal handling', () => {
     });
   });
 });
+
+describe('caller signal', () => {
+  it('aborts the action signal when the eval() signal aborts', async () => {
+    const controller = new AbortController();
+    let actionSignal: AbortSignal | undefined;
+    const program = createPadrone('test').command('wait', (c) =>
+      c.async().action(async (_args, ctx) => {
+        actionSignal = ctx.signal;
+        controller.abort('stop');
+        return ctx.signal.aborted;
+      }),
+    );
+
+    const result = await program.eval('wait', { signal: controller.signal, runtime: { output: () => {} } });
+    expect(await result.result).toBe(true);
+    expect(actionSignal!.reason).toBe('stop');
+  });
+
+  it('starts aborted when the signal already is', () => {
+    const program = createPadrone('test').command('check', (c) => c.action((_args, ctx) => ctx.signal.aborted));
+    expect(program.eval('check', { signal: AbortSignal.abort(), runtime: { output: () => {} } }).result).toBe(true);
+  });
+
+  it('is passed to run()', () => {
+    const program = createPadrone('test').command('check', (c) => c.action((_args, ctx) => ctx.signal.aborted));
+    expect(program.run('check', undefined, { signal: AbortSignal.abort() }).result).toBe(true);
+  });
+
+  it('is used as is when the signal builtin is disabled', () => {
+    const signal = AbortSignal.abort();
+    const program = createPadrone('test', { builtins: { signal: false } }).command('check', (c) => c.action((_args, ctx) => ctx.signal));
+    expect(program.eval('check', { signal, runtime: { output: () => {} } }).result).toBe(signal);
+  });
+});

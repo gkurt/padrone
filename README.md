@@ -135,7 +135,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.intercept(interceptor)` | Register middleware interceptor (use `defineInterceptor()`) |
 | `.extend(extension)` | Apply a build-time extension (bundle of config, commands, interceptors) |
 | `.runtime(runtime)` | Custom I/O (for non-terminal use) |
-| `.updateCheck(config?)` | Background version check |
+| `.extend(padroneUpdateCheck(config?))` | Background version check (extension) |
 | `.async()` | Mark as async validation |
 
 ### Program (run commands)

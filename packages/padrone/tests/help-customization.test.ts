@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { createPadrone, type HelpInfo } from 'padrone';
 import * as z from 'zod/v4';
+import { shouldUseAnsi } from '../src/output/styling.ts';
 
 const deploy = z.object({ env: z.string(), force: z.boolean().optional() });
 
@@ -128,5 +129,51 @@ describe('renamed help and version flags', () => {
       .action((args) => args);
     expect(program.eval('--version').result as unknown).toBe('1.2.3');
     expect(program.eval('-V').argsResult?.issues?.[0]?.message).toBe('Unknown option: "V"');
+  });
+});
+
+describe('reverse help syntax', () => {
+  const program = createPadrone('app')
+    .command('db', (c) => c.command('seed', (s) => s.action(() => 'seeded')))
+    .command('echo', (c) =>
+      c.arguments(z.object({ words: z.array(z.string()) }), { positional: ['...words'] }).action((a) => a.words.join(' ')),
+    );
+
+  it('shows help for `<cmd> help`', () => {
+    expect(program.eval('db help').result).toStartWith('Usage: app db');
+    expect(program.eval(['db', 'seed', 'help']).result).toStartWith('Usage: app db seed');
+  });
+
+  it('keeps `help` as a positional value', () => {
+    expect(program.eval('echo say help').result).toBe('say help');
+  });
+
+  it('still reports unknown commands', () => {
+    expect((program.eval('nope help').error as Error).message).toStartWith('Unknown command: nope');
+  });
+});
+
+describe('color flags', () => {
+  const program = createPadrone('app').action((_args, ctx) => `${ctx.runtime.format} ${ctx.runtime.theme ?? '-'}`);
+  const run = (input: string, format?: 'json'): unknown => program.eval(input, { runtime: { output: () => {}, format } }).result;
+
+  it('disables colors with --no-color and --color=false', () => {
+    expect(run('--no-color')).toBe('text -');
+    expect(run('--color=false')).toBe('text -');
+  });
+
+  it('forces colors with --color, optionally with a theme', () => {
+    expect(run('--color')).toBe('ansi -');
+    expect(run('--color=ocean')).toBe('ansi ocean');
+  });
+
+  it('honors FORCE_COLOR over NO_COLOR, CI and a non-TTY', () => {
+    expect(shouldUseAnsi({ FORCE_COLOR: '1', NO_COLOR: '1', CI: 'true' }, false)).toBe(true);
+    expect(shouldUseAnsi({ FORCE_COLOR: '' }, false)).toBe(true);
+    expect(shouldUseAnsi({ FORCE_COLOR: '0' }, true)).toBe(false);
+  });
+
+  it('keeps an explicit non-ANSI format', () => {
+    expect(run('--color', 'json')).toBe('json -');
   });
 });

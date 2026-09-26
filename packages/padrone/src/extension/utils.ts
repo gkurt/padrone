@@ -65,3 +65,15 @@ export function findCommandInTree(name: string, rootCommand: AnyPadroneCommand):
   }
   return current;
 }
+
+const reportedErrors = new WeakSet<object>();
+
+/** Marks an error as already printed, so later error handlers (e.g. auto-output) don't print it again. */
+export function markErrorReported(error: unknown): void {
+  if (error && typeof error === 'object') reportedErrors.add(error);
+}
+
+/** Whether an error was already printed by an extension. */
+export function isErrorReported(error: unknown): boolean {
+  return !!error && typeof error === 'object' && reportedErrors.has(error);
+}

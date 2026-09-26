@@ -9,6 +9,10 @@ import type { WithAsync } from '../util/type-utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
+/**
+ * `.env` files are loaded when any of `modes`, `local`, `dir`, `override` or `base` is set
+ * (e.g. `{ dir: '.' }` or `{ modes: [] }` loads just `.env` and `.env.local`).
+ */
 export type PadroneEnvOptions = {
   /** Env modes to load (e.g. `['production']`). Loads `.env.{mode}` files. */
   modes?: string[];
@@ -79,7 +83,8 @@ export function padroneEnv(
 ): <T extends CommandTypesBase>(builder: T) => WithAsync<T> {
   const schema = isSchema(schemaOrOptions) ? schemaOrOptions : undefined;
   const options = isSchema(schemaOrOptions) ? maybeOptions : schemaOrOptions;
-  const hasFiles = options?.modes !== undefined;
+  // Any file option opts into loading `.env` files
+  const hasFiles = (options?.modes ?? options?.local ?? options?.dir ?? options?.override ?? options?.base) !== undefined;
   const fileOptions: LoadEnvFilesOptions | undefined = hasFiles ? options : undefined;
   const override = options?.override ?? false;
 

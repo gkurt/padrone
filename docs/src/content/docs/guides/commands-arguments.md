@@ -275,6 +275,8 @@ For a simple one-to-one mapping, skip the schema and use `vars`. Values are coer
 .extend(padroneEnv({ vars: { port: 'APP_PORT', apiKey: ['API_KEY', 'APP_API_KEY'] } }))
 ```
 
+To also read `.env` files, pass any file option: `modes` (loads `.env.{mode}` files too), `dir`, `local`, `base` or `override`. `padroneEnv({ dir: '.', vars })` loads `.env` and `.env.local` from the current directory; values already in the environment win unless `override: true`.
+
 A variable that is set but invalid (e.g. `APP_PORT=abc`) is reported as a validation error. A variable that isn't set is skipped, leaving the argument to the CLI or its default, so keep env fields `.optional()`.
 
 Priority order: CLI argument > Stdin > Environment variable > Config file > Interactive prompt > Default value
@@ -311,7 +313,7 @@ const program = createPadrone('app')
   );
 ```
 
-Multiple config file paths can be provided in the `files` array — the first existing file is used. If no schema is provided, config values are matched against the argument schema directly. `padroneConfig` can be applied at the program level (inherited by all commands) or at the command level.
+Multiple config file paths can be provided in the `files` array — the first existing file is used. The `--config <path>` / `-c <path>` flag picks a file explicitly; a missing or unparsable file is a `ConfigError`. JSON (with comments and trailing commas), JavaScript and TypeScript modules work everywhere; YAML and TOML need Bun, or a custom `loadConfig`. If no schema is provided, config values are matched against the argument schema directly. `padroneConfig` can be applied at the program level (inherited by all commands) or at the command level.
 
 Priority order: CLI argument > Stdin > Environment variable > Config file > Interactive prompt > Default value
 

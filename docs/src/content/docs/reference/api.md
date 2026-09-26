@@ -432,16 +432,16 @@ The `.wrap()` method maintains full type safety:
 
 ---
 
-### .progress(config?)
+### padroneProgress(config?)
 
-Configure an auto-managed progress indicator for the command. The indicator starts before validation and is automatically stopped on success or failure. See the [Progress Indicators guide](/padrone/guides/progress-indicators/) for full details.
+Extension that adds an auto-managed progress indicator to the command (`import { padroneProgress } from 'padrone'`, applied with `.extend(padroneProgress(...))`). The indicator starts before validation and is automatically stopped on success or failure. See the [Progress Indicators guide](/padrone/guides/progress-indicators/) for full details.
 
 ```typescript
 // Simple message
-.progress('Deploying...')
+.extend(padroneProgress('Deploying...'))
 
 // Full config
-.progress({
+.extend(padroneProgress({
   message: {
     validation: 'Validating...',
     progress: 'Deploying...',
@@ -452,15 +452,15 @@ Configure an auto-managed progress indicator for the command. The indicator star
   bar: true,
   time: true,
   eta: true,
-})
+}))
 
 // Dynamic indicator icons
-.progress({
+.extend(padroneProgress({
   message: {
     progress: 'Running...',
     success: (result) => ({ message: 'All passed', indicator: '🎉' }),
   },
-})
+}))
 ```
 
 **Parameters:**
@@ -480,7 +480,7 @@ Configure an auto-managed progress indicator for the command. The indicator star
 
 `PadroneProgressMessages` fields: `validation` (string), `progress` (string), `success` (string/null/callback), `error` (string/null/callback). Callbacks can return a string, `null` (suppress), or `{ message, indicator }` for per-call icon customization. Messages can also be provided from context via `progressConfig.message` — command-level fields take precedence.
 
-**Returns:** The program builder (chainable)
+The indicator is available in actions as `ctx.context.progress`.
 
 ---
 
@@ -538,16 +538,19 @@ Extensions compose naturally — chain multiple `.extend()` calls to layer funct
 
 ---
 
-### .updateCheck(config?)
+### padroneUpdateCheck(config?)
 
-Enable background version checking against a package registry. When enabled, the program checks for a newer version in the background and displays a notification after command output.
+Extension that enables background version checking against a package registry in `cli()`. The program checks for a newer version in the background and displays a notification after command output.
 
 ```typescript
-program.updateCheck({
+import { padroneUpdateCheck } from 'padrone';
+
+program.extend(padroneUpdateCheck({
   registry: 'npm',       // or custom URL
   interval: '1d',        // check at most once per day
   cache: '~/.myapp-update',
-});
+  updateCommand: (name, latest) => `bun add -g ${name}@${latest}`,
+}));
 ```
 
 **Configuration:**
@@ -558,10 +561,9 @@ program.updateCheck({
 | `interval` | `string` | `'1d'` | Check interval (e.g., `'1d'`, `'12h'`, `'30m'`, `'1w'`) |
 | `cache` | `string` | auto | Path to cache file for last check timestamp |
 | `disableEnvVar` | `string` | auto | Env var name that disables update checking |
+| `updateCommand` | `string \| (packageName, latestVersion) => string` | `npm update -g <name>` | Command suggested in the notice |
 
-Non-blocking, respects CI environments, and caches check timestamps.
-
-**Returns:** The program builder (chainable)
+Non-blocking (the registry request times out after 3 seconds) and caches check timestamps. Skipped in CI, when stdout isn't a TTY, when `NO_UPDATE_NOTIFIER` or the `disableEnvVar` variable is set, and with `--no-update-check`.
 
 ---
 
@@ -629,10 +631,13 @@ program.cli({ context: { db, logger } });
 **Parameters:**
 - `prefs` (optional): `PadroneCliPreferences`
   - `interactive`: Override interactive prompting (`true` = force, `false` = suppress, `undefined` = inherit from runtime)
-  - `runtime`: Override runtime configuration
+  - `runtime`: Override runtime configuration (including `argv`)
   - `context`: User-defined context object. Required when the program has a non-`unknown` context type.
+  - `signal`: `AbortSignal` that cancels the run. Actions and interceptors see it through `ctx.signal`, together with process signals.
 
 **Returns:** `PadroneCommandResult` with `command`, `args`, `argsResult`, and `result`. Returns a `Promise` when the matched command is async.
+
+**Errors:** Routing and validation errors are printed with a `--help` hint (by the help extension); any other error, from whichever phase threw it (an interceptor's `route`, a config file, the action), is printed by the auto-output extension.
 
 **Exit code:** When the run ends with an error (routing, validation, or a thrown action — including one that only surfaces on `drain()`), `cli()` sets the exit code through `runtime.setExitCode` to the error's `exitCode` (`PadroneError` carries one; 130 for SIGINT), or `1`. It uses `process.exitCode` rather than `process.exit()`, so output still flushes. Successful runs, `--help` and `--version` leave it at `0`.
 
@@ -657,7 +662,7 @@ if (result.argsResult?.issues) {
 
 **Parameters:**
 - `input`: Command string to parse and execute
-- `preferences` (optional): `{ interactive?: boolean, context?: TContext }` — override interactive prompting and provide context
+- `preferences` (optional): `{ interactive?: boolean, context?: TContext, runtime?: PadroneRuntime, signal?: AbortSignal }` — override interactive prompting and the runtime, provide context, and cancel the run with `signal` (e.g. `AbortSignal.timeout(5000)`)
 
 **Returns:** `PadroneCommandResult` with `command`, `args`, `argsResult`, and `result`. Returns a `Promise` when the matched command is async.
 
@@ -682,7 +687,7 @@ const result = program.run('serve', { port: 8080 }, { context: { db } });
 **Parameters:**
 - `command`: Command path (e.g., `'serve'` or `'db migrate up'`)
 - `args`: Arguments object matching the command's schema
-- `prefs` (optional): `{ context?: TContext }` — provide context
+- `prefs` (optional): `{ context?: TContext, signal?: AbortSignal }` — provide context and a cancellation signal
 
 **Returns:** The action handler's return value
 
@@ -1044,15 +1049,23 @@ Each role accepts an array of styles: `'bold'`, `'dim'`, `'italic'`, `'underline
 
 ### Disabling Colors
 
-Use the `--color` global flag or `NO_COLOR` environment variable:
+Use the `--color` global flag, or the `NO_COLOR` / `FORCE_COLOR` environment variables:
 
 ```bash
 # Disable colors
+myapp --help --no-color
 myapp --help --color=false
 
-# Or via environment
+# Force colors, e.g. when piping to a pager
+myapp --help --color | less -R
+myapp --help --color=ocean
+
+# Or via environment (FORCE_COLOR wins over NO_COLOR; FORCE_COLOR=0 disables)
 NO_COLOR=1 myapp --help
+FORCE_COLOR=1 myapp --help
 ```
+
+The flag switches the `auto` format to `text` or `ansi`; an explicit non-ANSI `format` (such as `json`) is kept.
 
 ---
 
@@ -1226,7 +1239,7 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneEnv(schema?, options?)` | Parse environment variables into args (`vars` maps args to variables and shows them in help) |
 | `padroneConfig(options)` | Load args from config files |
 | `padroneProgress(config)` | Auto-managed progress indicators |
-| `padroneLogger(options)` | Structured logging with levels |
+| `padroneLogger(options)` | Structured logging with levels (`--verbose`, `--quiet`, `--log-level`; `env` reads the level from a variable, `stderr: true` keeps stdout for results) |
 | `padroneTiming()` | Execution timing |
 | `padroneUpdateCheck(config)` | Background version checking |
 

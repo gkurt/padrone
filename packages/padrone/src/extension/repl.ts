@@ -2,7 +2,7 @@ import { findCommandByName } from '../core/commands.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { parseCliInputToParts } from '../core/parse.ts';
 import { withDrain } from '../core/results.ts';
-import { createParseResolver } from '../core/validate.ts';
+import { createParseResolver, getKnownOptionNames } from '../core/validate.ts';
 import type {
   AnyPadroneBuilder,
   AnyPadroneCommand,
@@ -77,19 +77,27 @@ function createReplInterceptor(defaults?: PadroneReplPreferences, disabled?: boo
   }));
 }
 
-/** Check for --repl flag in input. */
+/** Check for --repl flag in input. The scope is the command path it follows; a command's own `--repl` option wins. */
 function checkReplFlag(input: PadroneInput | undefined, rootCommand: AnyPadroneCommand): { scope?: string } | null {
   if (!input) return null;
 
   const skipRootName = typeof input === 'string';
   const parts = parseCliInputToParts(input, createParseResolver(rootCommand, findCommandByName, skipRootName));
-  const terms = parts.filter((p) => p.type === 'term').map((p) => p.value);
   const hasReplFlag = parts.some((p) => p.type === 'named' && p.key.length === 1 && p.key[0] === 'repl');
   if (!hasReplFlag) return null;
 
-  const normalizedTerms = [...terms];
-  if (skipRootName && normalizedTerms[0] === rootCommand.name) normalizedTerms.shift();
+  const terms = parts.filter((p) => p.type === 'term').map((p) => p.value);
+  if (skipRootName && terms[0] === rootCommand.name) terms.shift();
 
-  const scope = normalizedTerms.length > 0 ? normalizedTerms.join(' ') : undefined;
-  return { scope };
+  let command = rootCommand;
+  const path: string[] = [];
+  for (const term of terms) {
+    const subcommand = findCommandByName(term, command.commands);
+    if (!subcommand) break;
+    command = subcommand;
+    path.push(term);
+  }
+  if (getKnownOptionNames(command).includes('repl')) return null;
+
+  return { scope: path.length > 0 ? path.join(' ') : undefined };
 }

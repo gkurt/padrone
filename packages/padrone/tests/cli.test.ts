@@ -1,4 +1,7 @@
 import { describe, expect, it, mock } from 'bun:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { asyncSchema, createPadrone, padroneConfig, padroneEnv } from 'padrone';
 import * as z from 'zod/v4';
 import { createTasksProgram } from './common.ts';
@@ -2250,5 +2253,59 @@ describe('CLI', () => {
         console.error = originalError;
       }
     });
+  });
+});
+
+describe('padroneConfig file loader', () => {
+  const program = createPadrone('test')
+    .extend(padroneConfig())
+    .arguments(z.object({ port: z.number().optional(), url: z.string().optional() }))
+    .action((args) => args);
+  const writeConfig = (name: string, content: string) => {
+    const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'padrone-config-')), name);
+    fs.writeFileSync(file, content);
+    return file;
+  };
+
+  it('reads JSON with comments and trailing commas', async () => {
+    const file = writeConfig('app.jsonc', '{\n  // port\n  "port": 8080, /* url */ "url": "http://a//b",\n}');
+    const result = await program.eval(['--config', file]);
+    expect(result.args).toEqual({ port: 8080, url: 'http://a//b' });
+  });
+
+  it('fails when the --config file does not exist', async () => {
+    const result = await program.eval(['--config', '/does/not/exist.json']);
+    expect((result.error as Error).name).toBe('ConfigError');
+    expect((result.error as Error).message).toBe('Config file not found: /does/not/exist.json');
+  });
+
+  it('fails on a config file that cannot be parsed', async () => {
+    const file = writeConfig('app.json', '{ "port": ');
+    const result = await program.eval(['--config', file]);
+    expect((result.error as Error).name).toBe('ConfigError');
+    expect((result.error as Error).message).toStartWith(`Invalid config file ${file}:`);
+  });
+
+  it('prints config errors in cli()', async () => {
+    const errors: string[] = [];
+    await program.cli({
+      runtime: {
+        argv: () => ['--config', '/does/not/exist.json'],
+        output: () => {},
+        error: (text) => errors.push(text),
+        setExitCode: () => {},
+      },
+    });
+    expect(errors).toEqual(['Config file not found: /does/not/exist.json']);
+  });
+});
+
+describe('cli() runtime override', () => {
+  it('reads argv from the cli() runtime', () => {
+    const program = createPadrone('test')
+      .runtime({ argv: () => ['a'], output: () => {} })
+      .command('a', (c) => c.action(() => 'a'))
+      .command('b', (c) => c.action(() => 'b'));
+    expect(program.cli({ runtime: { argv: () => ['b'] } }).result).toBe('b');
   });
 });

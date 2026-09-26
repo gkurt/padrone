@@ -201,3 +201,23 @@ describe('stdin', () => {
     });
   });
 });
+
+describe('stdin field given positionally', () => {
+  const program = createPadrone('test').command('cat', (c) =>
+    c
+      .arguments(z.object({ input: z.string().optional() }), { positional: ['input'], stdin: 'input' })
+      .async()
+      .action((args) => args.input),
+  );
+
+  it('uses the positional value instead of piped stdin', async () => {
+    const result = await testCli(program).stdin('piped').run('cat file.txt');
+    expect(result.error).toBeUndefined();
+    expect(result.result).toBe('file.txt');
+  });
+
+  it('reads stdin when the positional is omitted', async () => {
+    const result = await testCli(program).stdin('piped').run('cat');
+    expect(result.result).toBe('piped');
+  });
+});

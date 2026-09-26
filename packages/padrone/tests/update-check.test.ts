@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'bun:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createPadrone, padroneUpdateCheck } from 'padrone';
 import { formatUpdateMessage, isNewerVersion, parseInterval } from '../src/feature/update-check.ts';
 
@@ -64,6 +67,10 @@ describe('update-check', () => {
 
     it('should not notify about pre-release if current is stable', () => {
       expect(isNewerVersion('1.0.0', '2.0.0-beta.1')).toBe(false);
+    });
+
+    it('should treat a release as newer than its pre-releases', () => {
+      expect(isNewerVersion('1.0.0-beta.1', '1.0.0')).toBe(true);
     });
 
     it('should notify about pre-release if current is also pre-release', () => {
@@ -156,6 +163,39 @@ describe('update-check', () => {
 
       program.cli();
       expect(errors.filter((e) => e.includes('Update available'))).toHaveLength(0);
+    });
+  });
+
+  describe('notification', () => {
+    const setup = (env: Record<string, string> = {}, argv: string[] = ['hello']) => {
+      const cache = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'padrone-update-')), 'cache.json');
+      fs.writeFileSync(cache, JSON.stringify({ lastCheck: Date.now(), latestVersion: '2.0.0' }));
+      const errors: string[] = [];
+      const program = createPadrone('test')
+        .configure({ version: '1.0.0' })
+        .extend(padroneUpdateCheck({ cache, updateCommand: (name, latest) => `bun add -g ${name}@${latest}` }))
+        .runtime({ output: () => {}, error: (text) => errors.push(text), env: () => env, terminal: { isTTY: true } })
+        .command('hello', (c) => c.action(() => 'hello'));
+      return { errors, run: () => program.cli({ runtime: { argv: () => argv } }) };
+    };
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+    it('prints the notice after a sync command', async () => {
+      const { errors, run } = setup();
+      run();
+      await settle();
+      expect(errors.join('')).toContain('Update available: 1.0.0 → 2.0.0');
+      expect(errors.join('')).toContain('bun add -g test@2.0.0');
+    });
+
+    it('is skipped with --no-update-check and NO_UPDATE_NOTIFIER', async () => {
+      const flagged = setup({}, ['hello', '--no-update-check']);
+      flagged.run();
+      const env = setup({ NO_UPDATE_NOTIFIER: '1' });
+      env.run();
+      await settle();
+      expect(flagged.errors).toEqual([]);
+      expect(env.errors).toEqual([]);
     });
   });
 });

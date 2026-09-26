@@ -155,6 +155,8 @@ export function createHtmlLayout(): LayoutConfig {
 // ── Format Detection ────────────────────────────────────────────────────
 
 export function shouldUseAnsi(env?: Record<string, string | undefined>, isTTY?: boolean): boolean {
+  const force = env?.FORCE_COLOR;
+  if (force !== undefined) return force !== '0' && force !== 'false';
   if (env?.NO_COLOR) return false;
   if (env?.CI) return false;
   if (typeof isTTY === 'boolean') return isTTY;

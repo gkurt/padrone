@@ -646,3 +646,44 @@ describe('logger', () => {
     });
   });
 });
+
+describe('padroneLogger value formatting', () => {
+  const run = async (log: (logger: any) => void, config?: Parameters<typeof padroneLogger>[0], env: Record<string, string> = {}) => {
+    const output: string[] = [];
+    const errors: string[] = [];
+    const program = createPadrone('test')
+      .extend(padroneLogger(config))
+      .command('x', (c) => c.action((_args, ctx) => log(ctx.context.logger)));
+    await program.eval('x', { runtime: { output: (...a) => output.push(a.join(' ')), error: (t) => errors.push(t), env: () => env } });
+    return { output, errors };
+  };
+
+  it('prints errors with their stack instead of {}', async () => {
+    const { errors } = await run((logger) => logger.error(new Error('boom')));
+    expect(errors[0]).toStartWith('[ERROR] Error: boom');
+  });
+
+  it('does not throw on bigints or circular objects', async () => {
+    const value: Record<string, unknown> = { n: 1n };
+    value.self = value;
+    const { output } = await run((logger) => logger.info(value));
+    expect(output).toEqual(['[INFO] {"n":"1n","self":"[Circular]"}']);
+  });
+
+  it('keeps repeated references that are not circular', async () => {
+    const shared = { a: 1 };
+    const { output } = await run((logger) => logger.info({ x: shared, y: shared }));
+    expect(output).toEqual(['[INFO] {"x":{"a":1},"y":{"a":1}}']);
+  });
+
+  it('reads the level from the env variable', async () => {
+    const { output } = await run((logger) => logger.debug('hidden?'), { env: 'TEST_LOG_LEVEL' }, { TEST_LOG_LEVEL: 'DEBUG' });
+    expect(output).toEqual(['[DEBUG] hidden?']);
+  });
+
+  it('writes every level to stderr with stderr: true', async () => {
+    const { output, errors } = await run((logger) => logger.info('to stderr'), { stderr: true });
+    expect(output).toEqual([]);
+    expect(errors).toEqual(['[INFO] to stderr']);
+  });
+});

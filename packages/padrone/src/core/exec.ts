@@ -143,8 +143,9 @@ export function execCommand(
     ? Object.assign({}, baseRuntime, Object.fromEntries(Object.entries(evalOptions.runtime).filter(([, v]) => v !== undefined)))
     : baseRuntime;
 
-  // Inert signal — the signal extension overrides this via next({ signal }) in the start phase.
-  const inertSignal = new AbortController().signal;
+  // The caller's signal, or an inert one. The signal extension replaces it via next({ signal }) in the start phase,
+  // with a signal that also follows this one.
+  const baseSignal = evalOptions?.signal ?? new AbortController().signal;
 
   // Pipeline state accumulated as phases complete — propagated to error/shutdown contexts.
   const pipelineState: { phase: InterceptorPipelinePhase; rawArgs?: Record<string, unknown>; positionalArgs?: string[]; args?: unknown } = {
@@ -309,7 +310,7 @@ export function execCommand(
     resolvedInput,
     runPipeline,
     (result) => withDrain({ command: rootCommand, args: undefined, argsResult: undefined, result }),
-    inertSignal,
+    baseSignal,
     initialContext,
     runtime,
     ctx.builder,

@@ -996,3 +996,34 @@ describe('REPL', () => {
     });
   });
 });
+
+describe('--repl flag ownership', () => {
+  it("leaves a command's own --repl option to the command", async () => {
+    const readLine = mock(async () => null);
+    const program = createPadrone('test')
+      .runtime({ readLine, output: () => {}, error: () => {} })
+      .command('build', (c) => c.arguments(z.object({ repl: z.boolean().optional() })).action((args) => `repl=${args.repl}`));
+
+    const result = await program.eval('build --repl');
+    expect(result.result).toBe('repl=true');
+    expect(readLine).not.toHaveBeenCalled();
+  });
+
+  it('scopes the REPL to the command path, not its positional values', async () => {
+    const prompts: string[] = [];
+    const readLine = mock(async (prompt: string) => {
+      prompts.push(prompt);
+      return null;
+    });
+    const program = createPadrone('test')
+      .extend(padroneRepl({ greeting: false, hint: false }))
+      .runtime({ readLine, argv: () => ['db', 'seed', 'users', '--repl'], output: () => {}, error: () => {} })
+      .command('db', (c) =>
+        c.command('seed', (s) => s.arguments(z.object({ table: z.string() }), { positional: ['table'] }).action((args) => args.table)),
+      );
+
+    const result = await program.cli();
+    expect(result.error).toBeUndefined();
+    expect(prompts[0]).toBe('test/db/seed ❯ ');
+  });
+});

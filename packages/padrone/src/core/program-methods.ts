@@ -138,7 +138,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
     return resolved;
   };
 
-  const run: AnyPadroneProgram['run'] = (command, args, prefs?: { context?: unknown }) => {
+  const run: AnyPadroneProgram['run'] = (command, args, prefs?: { context?: unknown; signal?: AbortSignal }) => {
     try {
       const commandObj = typeof command === 'string' ? findCommandByName(command, rootCommand.commands) : (command as AnyPadroneCommand);
       if (!commandObj) throw new RoutingError(`Command "${command ?? ''}" not found`);
@@ -152,7 +152,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
         rawArgs: {},
         positionalArgs: [],
         args,
-        signal: inertSignal,
+        signal: prefs?.signal ?? inertSignal,
         context: resolvedCtx as object,
         runtime: commandRuntime,
         program: ctx.builder as any,
@@ -164,7 +164,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
           runtime: executeCtx.runtime,
           command: executeCtx.command,
           program: ctx.builder as any,
-          signal: inertSignal,
+          signal: executeCtx.signal,
           context: executeCtx.context,
           caller: 'run',
         };
@@ -246,7 +246,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
     const withExitCode = (result: any) => reportExitCode(result, setExitCode);
     try {
       // argv is already tokenized by the shell: pass it through as is, one token per entry.
-      const argv = runtime.argv();
+      const argv = (cliOptions?.runtime?.argv ?? runtime.argv)();
       const result = execCommand(argv.length ? argv : undefined, ctx, cliOptions, 'hard', 'cli');
 
       if (result instanceof Promise)

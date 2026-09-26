@@ -189,3 +189,47 @@ describe('autoOutput', () => {
     });
   });
 });
+
+describe('cli error output', () => {
+  const capture = () => {
+    const errors: string[] = [];
+    return { errors, runtime: { output: () => {}, error: (text: string) => errors.push(text), setExitCode: () => {} } };
+  };
+
+  it('prints errors thrown outside the execute phase', async () => {
+    const { errors, runtime } = capture();
+    const program = createPadrone('test')
+      .intercept({ name: 'auth' }, () => ({
+        route() {
+          throw new Error('Not authenticated');
+        },
+      }))
+      .command('deploy', (c) => c.action(() => 'ok'));
+
+    await program.cli({ runtime: { ...runtime, argv: () => ['deploy'] } });
+    expect(errors).toEqual(['Not authenticated']);
+  });
+
+  it('prints an error once when auto-output is also applied to the command', async () => {
+    const { errors, runtime } = capture();
+    const program = createPadrone('test').command('deploy', (c) =>
+      c.extend(padroneAutoOutput({ output: 'json' })).action(() => {
+        throw new Error('boom');
+      }),
+    );
+
+    await program.cli({ runtime: { ...runtime, argv: () => ['deploy'] } });
+    expect(errors).toEqual(['boom']);
+  });
+
+  it('prints validation errors when the help builtin is disabled', async () => {
+    const { errors, runtime } = capture();
+    const program = createPadrone('test', { builtins: { help: false } }).command('deploy', (c) =>
+      c.arguments(z.object({ env: z.string() })).action(() => 'ok'),
+    );
+
+    await program.cli({ runtime: { ...runtime, argv: () => ['deploy'] } });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toStartWith('Validation error:');
+  });
+});

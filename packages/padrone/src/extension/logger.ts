@@ -34,6 +34,16 @@ export type PadroneLoggerConfig = {
   prefix?: string;
   /** Include timestamps in log output. Defaults to `false`. */
   timestamps?: boolean;
+  /**
+   * Environment variable that sets the level (e.g. `'MYAPP_LOG_LEVEL'`). CLI flags take precedence over it,
+   * and it takes precedence over `level`. Invalid values are ignored.
+   */
+  env?: string;
+  /**
+   * Write every level to the runtime's `error` stream (stderr), keeping `output` (stdout) for command results.
+   * Defaults to `false`: `trace`, `debug` and `info` go to `output`; `warn` and `error` to `error`.
+   */
+  stderr?: boolean;
 };
 
 /** Builder/program type after applying `padroneLogger()`. Adds `{ logger: PadroneLogger }` to the command context. */
@@ -56,6 +66,30 @@ const VALID_LEVELS = new Set<string>(Object.keys(LEVEL_ORDER));
 /** Format specifier pattern: matches %s, %d, %i, %f, %o, %O, %j, %% */
 const FORMAT_PATTERN = /%%|%[sdifjoO]/g;
 
+/** Renders a value for a log line: errors by stack, and values JSON can't serialize (cycles, bigints) without throwing. */
+function stringifyValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value instanceof Error) return value.stack ?? `${value.name}: ${value.message}`;
+  if (typeof value === 'bigint') return `${value}n`;
+  if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return String(value);
+  const ancestors: unknown[] = [];
+  try {
+    const json = JSON.stringify(value, function (this: unknown, _key, v: unknown) {
+      if (typeof v === 'bigint') return `${v}n`;
+      if (v instanceof Error) return { name: v.name, message: v.message };
+      if (!v || typeof v !== 'object') return v;
+      // `this` is the object holding `v`: drop the ancestors that aren't on its path
+      while (ancestors.length > 0 && ancestors.at(-1) !== this) ancestors.pop();
+      if (ancestors.includes(v)) return '[Circular]';
+      ancestors.push(v);
+      return v;
+    });
+    return json ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
 /**
  * Applies printf-style format specifiers to args, following the WHATWG Console Standard
  * and Node.js `util.format` conventions. Remaining args are appended space-separated.
@@ -63,7 +97,7 @@ const FORMAT_PATTERN = /%%|%[sdifjoO]/g;
 function formatArgs(args: unknown[]): string {
   if (args.length === 0) return '';
   if (typeof args[0] !== 'string' || !FORMAT_PATTERN.test(args[0])) {
-    return args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+    return args.map(stringifyValue).join(' ');
   }
 
   const template = args[0];
@@ -81,14 +115,10 @@ function formatArgs(args: unknown[]): string {
       case '%f':
         return String(Number(val));
       case '%j':
-        try {
-          return JSON.stringify(val);
-        } catch {
-          return '[Circular]';
-        }
+        return typeof val === 'string' ? JSON.stringify(val) : stringifyValue(val);
       case '%o':
       case '%O':
-        return typeof val === 'string' ? val : JSON.stringify(val);
+        return stringifyValue(val);
       default:
         return token;
     }
@@ -97,7 +127,7 @@ function formatArgs(args: unknown[]): string {
   // Append remaining args that weren't consumed by specifiers
   const remaining = args.slice(argIndex);
   if (remaining.length === 0) return result;
-  const tail = remaining.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ');
+  const tail = remaining.map(stringifyValue).join(' ');
   return `${result} ${tail}`;
 }
 
@@ -152,9 +182,9 @@ function createLogger(
       const message = format(lvl, prefix, args);
       tracing?.rootSpan.addEvent('log', {
         'log.level': lvl,
-        'log.message': args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '),
+        'log.message': formatArgs(args),
       });
-      if (lvl === 'error' || lvl === 'warn') runtime.error(message);
+      if (config.stderr || lvl === 'error' || lvl === 'warn') runtime.error(message);
       else runtime.output(message);
     };
 
@@ -176,7 +206,7 @@ function createLogger(
 // Interceptor
 // ---------------------------------------------------------------------------
 
-type ResolvedLoggerConfig = { level: PadroneLogLevel; prefix: string; timestamps: boolean };
+type ResolvedLoggerConfig = { level: PadroneLogLevel; prefix: string; timestamps: boolean; stderr: boolean };
 
 function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
   return defineInterceptor({
@@ -198,10 +228,18 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
 
         execute(ctx, next) {
           const ctxCfg = (ctx.context as Record<string, unknown> | undefined)?.loggerConfig as PadroneLoggerConfig | undefined;
+          const envName = rawConfig?.env ?? ctxCfg?.env;
+          const envLevel = envName ? ctx.runtime.env()[envName]?.toLowerCase() : undefined;
           const resolved: ResolvedLoggerConfig = {
-            level: cliLevel ?? rawConfig?.level ?? ctxCfg?.level ?? 'info',
+            level:
+              cliLevel ??
+              (envLevel && VALID_LEVELS.has(envLevel) ? (envLevel as PadroneLogLevel) : undefined) ??
+              rawConfig?.level ??
+              ctxCfg?.level ??
+              'info',
             prefix: rawConfig?.prefix ?? '',
             timestamps: rawConfig?.timestamps ?? ctxCfg?.timestamps ?? false,
+            stderr: rawConfig?.stderr ?? ctxCfg?.stderr ?? false,
           };
           const logger = createLogger(ctx.runtime, resolved.level, resolved, ctx.context?.tracing);
           return next({ context: { logger } });
@@ -227,7 +265,7 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
  * - `--silent` or `--quiet` → sets level to `silent`
  * - `--log-level=<level>` → sets an explicit level (`trace`, `debug`, `info`, `warn`, `error`, `silent`)
  *
- * CLI flags take precedence over the programmatic config.
+ * CLI flags take precedence over the `env` variable, which takes precedence over the programmatic config.
  *
  * Provides `{ logger: PadroneLogger }` on the command context.
  * Access it in action handlers as `ctx.context.logger`.

@@ -326,21 +326,24 @@ Custom I/O adapter for non-terminal environments.
 })
 ```
 
-### `.updateCheck(config?)`
+### `padroneUpdateCheck(config?)` extension
 
-Enables background update checking.
+Enables background update checking in `cli()`.
 
 ```ts
-.updateCheck({
+import { padroneUpdateCheck } from 'padrone';
+
+.extend(padroneUpdateCheck({
   packageName?: string,     // defaults to program name
   registry?: 'npm' | string,
   interval?: string,        // '1d', '12h', '30m' (default: '1d')
   cache?: string,           // cache file path
   disableEnvVar?: string,   // env var to disable (default: <NAME>_NO_UPDATE_CHECK)
-})
+  updateCommand?: string | ((packageName, latestVersion) => string), // default: `npm update -g <name>`
+}))
 ```
 
-Non-blocking. Respects CI and TTY. Shows notice after command output.
+Non-blocking. Skipped in CI, when stdout isn't a TTY, with `NO_UPDATE_NOTIFIER` or `--no-update-check`. Shows the notice after command output.
 
 ### `.async()`
 

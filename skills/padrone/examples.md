@@ -533,7 +533,7 @@ const { text } = await generateText({
 ```ts
 createPadrone('myapp')
   .configure({ version: '1.2.3' })
-  .updateCheck()  // uses defaults: npm registry, 1 day interval
+  .extend(padroneUpdateCheck())  // uses defaults: npm registry, 1 day interval
   .command('run', (c) => c.action(() => 'running'))
   .cli();
 

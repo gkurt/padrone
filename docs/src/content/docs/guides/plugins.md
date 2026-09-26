@@ -16,13 +16,13 @@ When you call `createPadrone('myapp')`, built-in extensions are automatically ap
 
 | Extension | What it does | Interceptor Order |
 |-----------|-------------|-------------------|
-| **help** | `--help`/`-h` flag, `help` command, error-phase help display | -1000 |
+| **help** | `--help`/`-h` flag, `help` command and `<cmd> help`, error-phase help display | -1000 |
 | **version** | `--version`/`-v` flag, `version` command | -1000 |
 | **repl** | `--repl` flag, `repl` command | -1000 |
 | **color** | `--color`/`--no-color` flag, theme override | -1001 |
 | **suggestions** | "Did you mean?" for unknown commands/options | -500 |
 | **signal** | SIGINT/SIGTERM handling, double-tap force-exit, AbortSignal propagation | -2000 |
-| **autoOutput** | Auto-print results (strings, promises, iterators) | -1100 |
+| **autoOutput** | Auto-print results (strings, promises, iterators) and, in `cli()`, errors the help extension didn't print | -1100 |
 | **stdin** | Pipe stdin into argument fields (text, lines, or stream) | -1001 |
 | **interactive** | `--interactive`/`-i` flag, auto-prompting for missing fields | -999 |
 
@@ -41,7 +41,7 @@ Additional opt-in extensions are available for advanced features:
 | `padroneEnv(schema)` | `'padrone'` | Parse environment variables into args |
 | `padroneConfig(options)` | `'padrone'` | Load args from config files |
 | `padroneProgress(config)` | `'padrone'` | Auto-managed progress indicators |
-| `padroneLogger(options)` | `'padrone'` | Structured logging with levels |
+| `padroneLogger(options)` | `'padrone'` | Structured logging with levels (`env`, `stderr` options) |
 | `padroneTiming()` | `'padrone'` | Execution timing |
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking |
 | `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support |
@@ -597,9 +597,9 @@ const asyncInterceptor = defineInterceptor({ name: 'async' }, () => ({
 
 Understanding how built-in features are implemented helps illustrate the interceptor model:
 
-**Signal handling** (`padroneSignalHandling`, order: -2000) — The outermost interceptor. In the start phase, creates an `AbortController` and subscribes to OS signals via `runtime.onSignal()`. Passes the signal to all downstream phases via `next({ signal })`. In the error phase, wraps errors with signal info. In shutdown, cleans up subscriptions. Implements double-tap SIGINT force-exit using closure state shared across phases.
+**Signal handling** (`padroneSignalHandling`, order: -2000) — The outermost interceptor. In the start phase, creates an `AbortController` and subscribes to OS signals via `runtime.onSignal()`; it also aborts when the caller's `signal` (`eval(input, { signal })`) does. Passes the signal to all downstream phases via `next({ signal })`. In the error phase, wraps errors with signal info. In shutdown, cleans up subscriptions. Implements double-tap SIGINT force-exit using closure state shared across phases.
 
-**Auto-output** (`padroneAutoOutput`, order: -1100) — In the execute phase, intercepts the action result and writes it to `runtime.output()`. Handles promises (awaits), iterators (consumes and outputs each value), and plain values.
+**Auto-output** (`padroneAutoOutput`, order: -1100) — In the execute phase, intercepts the action result and writes it to `runtime.output()`. Handles promises (awaits), iterators (consumes and outputs each value), and plain values. In the error phase of `cli()`, prints the message of any error that no inner extension printed (help prints routing and validation errors), whichever phase threw it. Extensions that print an error themselves call `markErrorReported(error)` so it isn't printed twice.
 
 **Help** (`padroneHelp`, order: -1000) — Adds a `help` command and registers an interceptor with parse, execute, and error phases. The parse phase detects `--help` flags and reroutes to the help command. The error phase formats routing/validation errors with help text in CLI mode.
 

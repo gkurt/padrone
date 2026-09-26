@@ -5,11 +5,19 @@ import { thenMaybe } from '../core/results.ts';
 import { formatIssueMessages } from '../core/validate.ts';
 import type { HelpDetail, HelpFormat } from '../output/formatter.ts';
 import { generateHelp } from '../output/help.ts';
-import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneCommand, PadroneCommandConfig } from '../types/index.ts';
+import type {
+  AnyPadroneBuilder,
+  AnyPadroneCommand,
+  CommandTypesBase,
+  InterceptorParseResult,
+  PadroneCommand,
+  PadroneCommandConfig,
+  PadroneInput,
+} from '../types/index.ts';
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
-import { findCommandInTree, frameworkFlags, passthroughSchema } from './utils.ts';
+import { findCommandInTree, frameworkFlags, markErrorReported, passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -35,6 +43,12 @@ export type PadroneHelpOptions = {
 };
 
 const DEFAULT_HELP_FLAGS = ['help', 'h'] as const;
+
+/** The input without a trailing `help` token, or `undefined` when it doesn't end with one after a command. */
+function withoutTrailingHelp(input: PadroneInput | undefined): PadroneInput | undefined {
+  if (Array.isArray(input)) return input.length > 1 && input.at(-1) === 'help' ? input.slice(0, -1) : undefined;
+  return input?.match(/^(.*\S)\s+help\s*$/s)?.[1];
+}
 
 /** Formats a flag name as typed: `help` → `--help`, `h` → `-h`. */
 export function flagDisplay(name: string): string {
@@ -71,11 +85,9 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
 
       return {
         parse(ctx, next) {
-          return thenMaybe(next(), (res) => {
+          const handle = (res: InterceptorParseResult, reverseHelp = false) => {
             const flags = frameworkFlags(res.rawArgs, res.command);
             const hasHelpFlag = helpFlags.some((flag) => flags.get(flag));
-            const reverseHelp =
-              !hasHelpFlag && res.positionalArgs?.length > 0 && res.positionalArgs[res.positionalArgs.length - 1] === 'help';
 
             if (hasHelpFlag || reverseHelp) {
               const detail = flags.get('detail') as HelpDetail | undefined;
@@ -109,7 +121,22 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
             }
 
             return res;
-          });
+          };
+
+          // `<cmd> help`: a trailing `help` the command can't take as a positional shows the command's help
+          const retryAsHelp = (err: unknown) => {
+            const input = err instanceof RoutingError ? withoutTrailingHelp(ctx.input) : undefined;
+            if (input === undefined) throw err;
+            return thenMaybe(next({ input }), (res) => handle(res, true));
+          };
+
+          let parsed: InterceptorParseResult | Promise<InterceptorParseResult>;
+          try {
+            parsed = next();
+          } catch (err) {
+            return retryAsHelp(err);
+          }
+          return parsed instanceof Promise ? parsed.then((res) => handle(res), retryAsHelp) : handle(parsed);
         },
         validate(_ctx, next) {
           if (helpText !== undefined) return { args: undefined as any, argsResult: { value: undefined } as any };
@@ -165,6 +192,7 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
               ctx.runtime.error(`\n${helpHint(rootCommand, sourceCmd, helpFlags)}`);
             }
 
+            markErrorReported(er.error);
             return er;
           });
         },

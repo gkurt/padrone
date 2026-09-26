@@ -385,3 +385,45 @@ describe('tracing', () => {
     });
   });
 });
+
+describe('padroneTracing with run() and nested commands', () => {
+  it('traces run(), which has no start or shutdown phase', async () => {
+    const { provider, spans, getTracerName } = createMockProvider();
+    const program = createPadrone('test-cli')
+      .extend(padroneTracing({ provider }))
+      .command('deploy', (c) => c.action(() => 'done'));
+
+    const result = await program.run('deploy', undefined);
+    expect(result.result).toBe('done');
+    expect(getTracerName()).toBe('test-cli');
+    expect(spans[0]!._name).toBe('cli deploy');
+    expect(spans[0]!._ended).toBe(true);
+  });
+
+  it('records a failing run() on the root span', async () => {
+    const { provider, spans } = createMockProvider();
+    const program = createPadrone('test-cli')
+      .extend(padroneTracing({ provider }))
+      .command('deploy', (c) =>
+        c.action(() => {
+          throw new Error('nope');
+        }),
+      );
+
+    const result = await program.run('deploy', undefined);
+    expect((result.error as Error).message).toBe('nope');
+    expect(spans[0]!._status).toEqual({ code: 2 });
+    expect(spans[0]!._ended).toBe(true);
+  });
+
+  it('names the root span by the command path', async () => {
+    const { provider, spans } = createMockProvider();
+    const program = createPadrone('test-cli')
+      .extend(padroneTracing({ provider }))
+      .command('db', (c) => c.command('migrate', (m) => m.action(() => 'ok')));
+
+    await program.eval('db migrate');
+    expect(spans[0]!._name).toBe('cli db migrate');
+    expect(spans[0]!._attributes).toEqual({ 'padrone.command': 'db migrate', 'padrone.caller': 'eval' });
+  });
+});

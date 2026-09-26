@@ -400,3 +400,18 @@ describe('padroneEnv with .env files', () => {
     expect(result.args?.val).toBeUndefined();
   });
 });
+
+describe('padroneEnv file options', () => {
+  it('loads .env when only dir is given', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'padrone-env-dir-'));
+    fs.writeFileSync(path.join(dir, '.env'), 'PORT=1234\n');
+    const program = createPadrone('test')
+      .extend(padroneEnv({ dir, vars: { port: 'PORT' } }))
+      .arguments(z.object({ port: z.coerce.number().optional() }))
+      .action((args) => args.port);
+
+    const result = await program.eval('', { runtime: { env: () => ({}), output: () => {} } });
+    expect(result.result).toBe(1234);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

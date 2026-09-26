@@ -85,13 +85,17 @@ function getUserConfigDir(path: typeof import('node:path'), appName: string): st
   return path.join(home, '.config', appName);
 }
 
-function resolveConfigPath(fs: any, path: any, cwd: string, files: string | string[], xdgAppName?: string): string | undefined {
+function resolveConfigPath(
+  fs: typeof import('node:fs'),
+  path: typeof import('node:path'),
+  cwd: string,
+  files: string | string[],
+  xdgAppName?: string,
+): string | undefined {
+  // A single path comes from `--config`: it must exist
   if (typeof files === 'string') {
     const abs = path.isAbsolute(files) ? files : path.resolve(cwd, files);
-    if (!fs.existsSync(abs)) {
-      console.error(`Config file not found: ${abs}`);
-      return undefined;
-    }
+    if (!fs.existsSync(abs)) throw new ConfigError(`Config file not found: ${abs}`);
     return abs;
   }
 
@@ -115,59 +119,91 @@ function resolveConfigPath(fs: any, path: any, cwd: string, files: string | stri
   return undefined;
 }
 
+/** Removes comments and trailing commas so JSONC parses with `JSON.parse` (runtimes without a native JSONC parser). */
+function stripJsonc(text: string): string {
+  let out = '';
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === '"') {
+      const startIndex = i;
+      for (i++; i < text.length && text[i] !== '"'; i++) if (text[i] === '\\') i++;
+      out += text.slice(startIndex, i + 1);
+    } else if (ch === '/' && text[i + 1] === '/') {
+      while (i < text.length && text[i] !== '\n') i++;
+      out += '\n';
+    } else if (ch === '/' && text[i + 1] === '*') {
+      const close = text.indexOf('*/', i + 2);
+      i = close === -1 ? text.length : close + 1;
+    } else if (ch === ',' && /^\s*(?:\/\/[^\n]*\s*|\/\*[\s\S]*?\*\/\s*)*[}\]]/.test(text.slice(i + 1))) {
+      // trailing comma
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+type BunParsers = {
+  YAML?: { parse(text: string): unknown };
+  TOML?: { parse(text: string): unknown };
+  JSONC?: { parse(text: string): unknown };
+};
+
+function parseConfigText(text: string, ext: string, file: string): Record<string, unknown> {
+  const bun = (globalThis as { Bun?: BunParsers }).Bun;
+  const parser =
+    ext === '.yaml' || ext === '.yml'
+      ? bun?.YAML
+      : ext === '.toml'
+        ? bun?.TOML
+        : ext === '.json' || ext === '.jsonc'
+          ? bun?.JSONC
+          : undefined;
+  if (!parser && (ext === '.yaml' || ext === '.yml' || ext === '.toml')) {
+    throw new ConfigError(`Cannot read ${file}: ${ext.slice(1).toUpperCase()} config files need Bun, or a custom \`loadConfig\``);
+  }
+  try {
+    return (parser ? parser.parse(text) : JSON.parse(ext === '.jsonc' || ext === '.json' ? stripJsonc(text) : text)) as Record<
+      string,
+      unknown
+    >;
+  } catch (err) {
+    throw new ConfigError(`Invalid config file ${file}: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
+  }
+}
+
 function loadConfigSync(
   fs: typeof import('node:fs'),
   path: typeof import('node:path'),
   files: string | string[],
   xdgAppName?: string,
 ): Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined> {
-  const cwd = process.cwd();
-  const absolutePath = resolveConfigPath(fs, path, cwd, files, xdgAppName);
+  const absolutePath = resolveConfigPath(fs, path, process.cwd(), files, xdgAppName);
   if (!absolutePath) return undefined;
 
-  const getContent = () => fs.readFileSync(absolutePath, 'utf-8');
   const ext = path.extname(absolutePath).toLowerCase();
-
-  if (ext === '.yaml' || ext === '.yml') return Bun.YAML.parse(getContent()) as any;
-  if (ext === '.toml') return Bun.TOML.parse(getContent()) as any;
-  if (ext === '.jsonc') return Bun.JSONC.parse(getContent()) as any;
-  if (ext === '.json') {
-    if (Bun.JSONC) return Bun.JSONC.parse(getContent()) as any;
-    try {
-      return JSON.parse(getContent());
-    } catch {
-      return Bun.JSONC.parse(getContent()) as any;
-    }
-  }
   if (ext === '.js' || ext === '.cjs' || ext === '.mjs' || ext === '.ts' || ext === '.cts' || ext === '.mts') {
     return import(/* @vite-ignore */ absolutePath).then((mod) => mod.default ?? mod);
   }
-
-  // Unknown extension — try JSON
-  try {
-    return JSON.parse(getContent());
-  } catch {
-    console.error(`Unable to parse config file: ${absolutePath}`);
-    return undefined;
-  }
+  // Unknown extensions are read as JSON
+  return parseConfigText(fs.readFileSync(absolutePath, 'utf-8'), ext, absolutePath);
 }
 
 /**
  * Built-in config file loader. Directly accesses the file system.
  * Returns `undefined` in non-CLI environments where `node:fs` is unavailable.
+ * Throws a `ConfigError` when an explicit `--config` file is missing or a config file can't be parsed.
  */
 function loadConfig(
   files: string | string[],
   xdgAppName?: string,
 ): Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined> {
   if (typeof process === 'undefined') return undefined;
-
-  try {
-    if (_fs && _path) return loadConfigSync(_fs, _path, files, xdgAppName);
-    return initNodeModules().then(() => loadConfigSync(_fs!, _path!, files, xdgAppName));
-  } catch {
-    return undefined;
-  }
+  if (_fs && _path) return loadConfigSync(_fs, _path, files, xdgAppName);
+  return initNodeModules().then(
+    () => loadConfigSync(_fs!, _path!, files, xdgAppName),
+    () => undefined,
+  );
 }
 
 // ── Extension ────────────────────────────────────────────────────────────

@@ -44,6 +44,7 @@ export type {
 } from './extension/index.ts';
 export {
   createTerminalProgress,
+  markErrorReported,
   padroneAutoOutput,
   padroneColor,
   padroneConfig,

@@ -72,7 +72,7 @@ program.cli();
 | `.wrap(config)` | Wrap an external CLI tool *(experimental)* |
 | `.extend(padroneProgress(config?))` | Auto-managed progress indicator (import `padroneProgress` from `'padrone'`) |
 | `.runtime(runtime)` | Custom I/O adapter (output, error, env, prompt) |
-| `.updateCheck(config?)` | Enable background update notifications |
+| `.extend(padroneUpdateCheck(config?))` | Enable background update notifications (import `padroneUpdateCheck` from `'padrone'`) |
 | `.async()` | Mark command as using async validation |
 
 ## Program API Summary (after builder methods)

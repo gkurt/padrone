@@ -11,50 +11,34 @@ function createUpdateCheckInterceptor(config: UpdateCheckConfig) {
   return defineInterceptor(
     { id: 'padrone:update-check', name: 'padrone:update-check', order: 1000, options: { 'update-check': 'flag' } },
     () => {
-      let checkPromise: Promise<(() => void) | undefined> | undefined;
-      let suppressed = false;
+      let check: Promise<(() => void) | undefined> | undefined;
 
       return {
-        start(ctx, next) {
-          const rootCommand = ctx.command;
-          const runtime = ctx.runtime;
-
-          checkPromise = Promise.resolve(getVersion(rootCommand.version)).then((currentVersion) =>
-            import('../feature/update-check.ts').then(({ createUpdateChecker }) =>
-              createUpdateChecker(rootCommand.name, currentVersion, config, runtime),
-            ),
-          );
-
-          return next();
-        },
-        parse(_ctx, next) {
+        parse(ctx, next) {
           return thenMaybe(next(), (res) => {
             const flags = frameworkFlags(res.rawArgs, res.command);
-            if (flags.get('update-check') === false) suppressed = true;
+            const suppressed = flags.get('update-check') === false;
             flags.delete('update-check');
+            // Only people running the CLI see the notice; `--no-update-check` skips the request too
+            if (suppressed || ctx.caller !== 'cli') return res;
+
+            const rootCommand = ctx.command;
+            const runtime = ctx.runtime;
+            check = Promise.resolve(getVersion(rootCommand.version))
+              .then((currentVersion) =>
+                import('../feature/update-check.ts').then(({ createUpdateChecker }) =>
+                  createUpdateChecker(rootCommand.name, currentVersion, config, runtime),
+                ),
+              )
+              .catch(() => undefined);
             return res;
           });
         },
         shutdown(_ctx, next) {
-          const result = next();
-          if (suppressed || !checkPromise) return result;
-
-          // Try to show notification synchronously if the check already resolved
-          let resolved: (() => void) | undefined | null = null;
-          checkPromise.then(
-            (fn) => {
-              resolved = fn;
-            },
-            () => {
-              resolved = undefined;
-            },
-          );
-
-          if (resolved !== null) {
-            (resolved as (() => void) | undefined)?.();
-          }
-
-          return result;
+          // Printed once the check settles, after the command's own output, without holding up the result
+          return thenMaybe(next(), () => {
+            check?.then((notify) => notify?.());
+          });
         },
       };
     },

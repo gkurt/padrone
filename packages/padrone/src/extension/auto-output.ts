@@ -11,6 +11,7 @@ import type {
   InterceptorExecuteContext,
   InterceptorExecuteResult,
 } from '../types/index.ts';
+import { isErrorReported, markErrorReported } from './utils.ts';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -65,9 +66,9 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
   return defineInterceptor(autoOutputMeta, () => ({
     error(ctx: InterceptorErrorContext, next: () => InterceptorErrorResult | Promise<InterceptorErrorResult>) {
       const handleResult = (er: InterceptorErrorResult): InterceptorErrorResult => {
-        if (!er.error || errorOutput === false || ctx.caller !== 'cli' || ctx.phase !== 'execute') return er;
-        const message = er.error instanceof Error ? er.error.message : String(er.error);
-        ctx.runtime.error(message);
+        if (!er.error || errorOutput === false || ctx.caller !== 'cli' || isErrorReported(er.error)) return er;
+        ctx.runtime.error(er.error instanceof Error ? er.error.message : String(er.error));
+        markErrorReported(er.error);
         return er;
       };
 
@@ -135,8 +136,8 @@ export type PadroneAutoOutputOptions = {
    */
   output?: OutputConfig;
   /**
-   * Automatically print unhandled errors to stderr in CLI mode.
-   * Skips errors already handled by other extensions (routing, validation, signal).
+   * Automatically print errors to stderr in CLI mode, whichever phase threw them.
+   * Skips errors another extension already printed (routing and validation errors are printed by help).
    * @default true
    */
   errorOutput?: boolean;

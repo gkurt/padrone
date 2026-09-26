@@ -31,7 +31,12 @@ const signalInterceptor = defineInterceptor(signalMeta, () => {
   return {
     start(ctx, next) {
       const runtimeExit = ctx.runtime.exit;
-      unsubscribe = ctx.runtime.onSignal?.((sig) => {
+      // Follow the caller's signal (`eval(input, { signal })`) as well as process signals
+      const upstream = ctx.signal;
+      const onUpstreamAbort = () => abortController.abort(upstream.reason);
+      if (upstream.aborted) onUpstreamAbort();
+      else upstream.addEventListener('abort', onUpstreamAbort, { once: true });
+      const unsubscribeProcess = ctx.runtime.onSignal?.((sig) => {
         if (abortController.signal.aborted) {
           if (sig === 'SIGINT') {
             const elapsed = Date.now() - lastSigintTime;
@@ -46,6 +51,10 @@ const signalInterceptor = defineInterceptor(signalMeta, () => {
         receivedSignal = sig;
         abortController.abort(sig);
       });
+      unsubscribe = () => {
+        unsubscribeProcess?.();
+        upstream.removeEventListener('abort', onUpstreamAbort);
+      };
 
       const result = next({ signal: abortController.signal });
       return thenMaybe(result, (r) => {
@@ -74,6 +83,7 @@ const signalInterceptor = defineInterceptor(signalMeta, () => {
  * Extension that wires process signal handling (SIGINT, SIGTERM, SIGHUP) into the interceptor lifecycle.
  *
  * - Creates an `AbortController` whose signal is propagated to all downstream phases.
+ * - Follows the caller's `signal` (`eval()`/`cli()` preferences), aborting when it aborts.
  * - Subscribes to `runtime.onSignal` to forward OS signals to the abort controller.
  * - Implements SIGINT double-tap: two SIGINTs within 2 seconds force-exits the process.
  * - Attaches `signal` and `exitCode` to results and errors when interrupted.

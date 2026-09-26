@@ -30,6 +30,11 @@ export type UpdateCheckConfig = {
    * Defaults to `'<PROGRAM_NAME>_NO_UPDATE_CHECK'` (uppercased, hyphens to underscores).
    */
   disableEnvVar?: string;
+  /**
+   * Command suggested in the notification. Defaults to `npm update -g <packageName>`.
+   * Pass a function to build it from the package name and the latest version.
+   */
+  updateCommand?: string | ((packageName: string, latestVersion: string) => string);
 };
 
 type CacheData = {
@@ -86,7 +91,8 @@ export function isNewerVersion(current: string, latest: string): boolean {
   if (l.major !== c.major) return l.major > c.major;
   if (l.minor !== c.minor) return l.minor > c.minor;
   if (l.patch !== c.patch) return l.patch > c.patch;
-  return false;
+  // The release is newer than its own pre-releases
+  return !!c.prerelease && !l.prerelease;
 }
 
 /**
@@ -135,6 +141,8 @@ async function resolveCachePath(cachePath: string): Promise<string> {
   return resolve(cachePath);
 }
 
+const FETCH_TIMEOUT_MS = 3000;
+
 /**
  * Fetches the latest version from the registry.
  */
@@ -142,7 +150,8 @@ async function fetchLatestVersion(packageName: string, registry: string): Promis
   const url = registry === 'npm' ? `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest` : registry;
 
   try {
-    const response = await fetch(url);
+    // A slow registry must not keep the CLI from exiting
+    const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!response.ok) return undefined;
     const data = (await response.json()) as Record<string, unknown>;
 
@@ -161,17 +170,19 @@ async function fetchLatestVersion(packageName: string, registry: string): Promis
 /**
  * Formats the update notification message.
  */
-export function formatUpdateMessage(currentVersion: string, latestVersion: string, packageName: string): string {
-  const updateCommand = `npm update -g ${packageName}`;
+export function formatUpdateMessage(
+  currentVersion: string,
+  latestVersion: string,
+  packageName: string,
+  command?: UpdateCheckConfig['updateCommand'],
+): string {
+  const updateCommand = typeof command === 'function' ? command(packageName, latestVersion) : (command ?? `npm update -g ${packageName}`);
   return `\n  Update available: ${currentVersion} \u2192 ${latestVersion}\n  Run "${updateCommand}" to update\n`;
 }
 
 /**
- * Checks for updates in the background. Returns a function that, when called,
- * prints the update notification if a newer version was found.
- *
- * This is designed to be non-blocking: the check starts immediately but the
- * result is only consumed after command execution completes.
+ * Checks for updates. Resolves to a function that prints the update notification
+ * when a newer version is available (from the cache when it is fresh, otherwise from the registry).
  */
 export async function createUpdateChecker(
   programName: string,
@@ -184,61 +195,26 @@ export async function createUpdateChecker(
   const intervalMs = parseInterval(config.interval ?? '1d');
   const disableEnvVar = config.disableEnvVar ?? `${programName.toUpperCase().replace(/-/g, '_')}_NO_UPDATE_CHECK`;
 
-  const defaultCachePath = `~/.config/${programName}-update-check.json`;
-  const cachePath = await resolveCachePath(config.cache ?? defaultCachePath);
-
   // Check if disabled
   const env = runtime.env();
-  if (env.CI || env.CONTINUOUS_INTEGRATION) return noop;
+  if (env.CI || env.CONTINUOUS_INTEGRATION || env.NO_UPDATE_NOTIFIER) return noop;
   if (env[disableEnvVar]) return noop;
   if (runtime.terminal && !runtime.terminal.isTTY) return noop;
 
-  // Check cache — if we checked recently, use cached result
+  const defaultCachePath = `~/.config/${programName}-update-check.json`;
+  const cachePath = await resolveCachePath(config.cache ?? defaultCachePath);
+  const notifier = (latestVersion: string | undefined) =>
+    latestVersion && isNewerVersion(currentVersion, latestVersion)
+      ? () => runtime.error(formatUpdateMessage(currentVersion, latestVersion, packageName, config.updateCommand))
+      : noop;
+
+  // Checked recently: use the cached version
   const cached = await readCache(cachePath);
-  if (cached && Date.now() - cached.lastCheck < intervalMs) {
-    // Use cached version for display
-    if (isNewerVersion(currentVersion, cached.latestVersion)) {
-      return () => {
-        runtime.error(formatUpdateMessage(currentVersion, cached.latestVersion, packageName));
-      };
-    }
-    return noop;
-  }
+  if (cached && Date.now() - cached.lastCheck < intervalMs) return notifier(cached.latestVersion);
 
-  // Start background fetch
-  const fetchPromise = fetchLatestVersion(packageName, registry).then(async (latestVersion) => {
-    if (latestVersion) {
-      await writeCache(cachePath, { lastCheck: Date.now(), latestVersion });
-      if (isNewerVersion(currentVersion, latestVersion)) {
-        return latestVersion;
-      }
-    }
-    return undefined;
-  });
-
-  // Return a function that blocks on the result (briefly — the fetch should be done by now)
-  let resolved: string | undefined | null = null; // null = not yet resolved
-  fetchPromise.then(
-    (v) => {
-      resolved = v;
-    },
-    () => {
-      resolved = undefined;
-    },
-  );
-
-  return () => {
-    // If the fetch already resolved, use the result synchronously
-    if (resolved !== null) {
-      if (resolved) {
-        runtime.error(formatUpdateMessage(currentVersion, resolved, packageName));
-      }
-      return;
-    }
-
-    // Otherwise, we can't block — just skip this time.
-    // The cache will be written when the promise resolves, so next invocation will show the message.
-  };
+  const latestVersion = await fetchLatestVersion(packageName, registry);
+  if (latestVersion) await writeCache(cachePath, { lastCheck: Date.now(), latestVersion });
+  return notifier(latestVersion);
 }
 
 function noop() {}

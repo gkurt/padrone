@@ -893,7 +893,7 @@ export type PadroneProgram<
     args: NoInfer<
       GetArguments<'in', PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>
     >,
-    prefs?: ContextParam<TContext>,
+    prefs?: ContextParam<TContext> & { signal?: AbortSignal },
   ) => PadroneCommandResult<PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>;
 
   /**

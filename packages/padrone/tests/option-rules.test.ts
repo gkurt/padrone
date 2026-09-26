@@ -100,3 +100,59 @@ describe('help', () => {
     expect(help).toContain('(implies --no-color, --level=high)');
   });
 });
+
+describe('variadic options', () => {
+  const program = () =>
+    createPadrone('app').command('tag', (c) =>
+      c
+        .arguments(
+          z.object({
+            files: z.string().array().default([]),
+            tags: z.string().array().optional().meta({ flags: 't', variadic: true }),
+            ports: z.number().array().optional().meta({ variadic: true }),
+            label: z.string().array().optional(),
+            force: z.boolean().optional(),
+          }),
+          { positional: ['...files'] },
+        )
+        .action((args) => args),
+    );
+
+  it('takes every value up to the next option', () => {
+    expect(argsOf(program().eval(['tag', '--tags', 'a', 'b', 'c', '--force']))).toMatchObject({ tags: ['a', 'b', 'c'], force: true });
+  });
+
+  it('works with short flags and coerces item types', () => {
+    expect(argsOf(program().eval(['tag', '-t', 'a', 'b', '--ports', '80', '443']))).toMatchObject({ tags: ['a', 'b'], ports: [80, 443] });
+  });
+
+  it('stops at -- so positionals can follow', () => {
+    expect(argsOf(program().eval(['tag', '--tags', 'a', 'b', '--', 'x.txt', 'y.txt']))).toMatchObject({
+      tags: ['a', 'b'],
+      files: ['x.txt', 'y.txt'],
+    });
+  });
+
+  it('keeps positionals given before it', () => {
+    expect(argsOf(program().eval(['tag', 'x.txt', '--tags', 'a']))).toMatchObject({ tags: ['a'], files: ['x.txt'] });
+  });
+
+  it('accumulates repeats and keeps = to one value', () => {
+    expect(argsOf(program().eval(['tag', '--tags=a', 'x.txt', '--tags', 'b', 'c']))).toMatchObject({
+      tags: ['a', 'b', 'c'],
+      files: ['x.txt'],
+    });
+  });
+
+  it('reports a missing value', () => {
+    expect(issuesOf(program().eval(['tag', '--tags']))).toEqual(['Option "--tags" requires a value']);
+  });
+
+  it('leaves non-variadic array options at one value per flag', () => {
+    expect(argsOf(program().eval(['tag', '--label', 'a', 'b']))).toMatchObject({ label: ['a'], files: ['b'] });
+  });
+
+  it('is marked in help', () => {
+    expect(program().help('tag')).toContain('(takes multiple values)');
+  });
+});

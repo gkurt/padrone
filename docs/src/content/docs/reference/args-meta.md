@@ -33,6 +33,7 @@ z.object({
 | `hidden` | `boolean` | Hide from help output |
 | `group` | `string` | Group name for organizing under a labeled section in help output |
 | `count` | `boolean` | Count repeated flags into a number (`-vvv` → `3`) |
+| `variadic` | `boolean` | Array option that takes every following value up to the next option (`--tag a b c`) |
 | `conflicts` | `string \| string[]` | Options that can't be used together with this one |
 | `implies` | `Record<string, unknown>` | Values for other options when this one is used |
 
@@ -102,7 +103,7 @@ Per-argument configuration that supplements or overrides `.meta()`:
 }
 ```
 
-This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `conflicts`, `implies`.
+This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `variadic`, `conflicts`, `implies`.
 
 ### autoAlias
 
@@ -504,6 +505,21 @@ z.object({
 ```
 
 `-vvv` and `-v -v --verbose` give `3`. `--verbose=5` sets the count directly and `--no-verbose` resets it to `0`. A counting flag never takes the next argument as its value. Help marks it `(repeatable)`.
+
+---
+
+## Variadic Options
+
+By default an array option takes one value per flag (`--tag a --tag b`). With `variadic: true` it takes every following value up to the next option, `--`, or the end of input:
+
+```typescript
+z.object({
+  tags: z.string().array().optional().meta({ flags: 't', variadic: true }),
+  files: z.string().array().default([]),
+}) // with { positional: ['...files'] }
+```
+
+`--tags a b c --force` gives `tags: ['a', 'b', 'c']`. Positionals after a variadic option need `--` (`--tags a b -- x.txt`) or can come first (`x.txt --tags a b`). `--tags=a` takes a single value, and repeated flags keep accumulating. Help marks it `(takes multiple values)`.
 
 ---
 

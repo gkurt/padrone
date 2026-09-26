@@ -58,7 +58,7 @@ function getSchemaOptionInfo(schema: PadroneSchema | undefined, meta: PadroneGlo
     ? extractSchemaMetadata(schema, meta?.fields, meta?.autoAlias)
     : { flags: {}, aliases: {}, negatives: {}, customNegation: new Set<string>() };
   const rules = extractFieldRules(schema, meta?.fields);
-  const schemaArity = createOptionArityLookup(schema, metadata, rules.counts);
+  const schemaArity = createOptionArityLookup(schema, metadata, rules);
 
   const arrayArguments = new Set<string>();
   if (schema) {
@@ -82,6 +82,7 @@ function mergeFieldRules(own: FieldRules, globals: FieldRules, globalOnly: (key:
   const pick = <T>(entries: Record<string, T>) => Object.fromEntries(Object.entries(entries).filter(([key]) => globalOnly(key)));
   return {
     counts: new Set([...own.counts, ...[...globals.counts].filter(globalOnly)]),
+    variadic: new Set([...own.variadic, ...[...globals.variadic].filter(globalOnly)]),
     conflicts: { ...pick(globals.conflicts), ...own.conflicts },
     implies: { ...pick(globals.implies), ...own.implies },
   };

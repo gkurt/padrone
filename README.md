@@ -168,6 +168,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `hidden` | `true` | Hide from help |
 | `group` | `'Advanced'` | Group in help output |
 | `count` | `true` | Count repeated flags into a number (`-vvv` → 3) |
+| `variadic` | `true` | Array option taking all following values (`--tag a b c`) |
 | `conflicts` | `'json'` | Options that can't be used together with this one |
 | `implies` | `{ color: false }` | Values for other options when this one is used |
 

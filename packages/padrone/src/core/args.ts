@@ -164,6 +164,8 @@ export function extractSchemaMetadata(
 export interface FieldRules {
   /** Fields that count repeated flags (`-vvv` → 3). */
   counts: Set<string>;
+  /** Array fields that take every following value up to the next option (`--tag a b c`). */
+  variadic: Set<string>;
   /** Field → the fields it can't be combined with. */
   conflicts: Record<string, string[]>;
   /** Field → the values it implies for other fields. */
@@ -174,7 +176,7 @@ export function extractFieldRules(
   schema: StandardJSONSchemaV1 | undefined,
   fields?: Record<string, PadroneFieldMeta | undefined>,
 ): FieldRules {
-  const rules: FieldRules = { counts: new Set(), conflicts: {}, implies: {} };
+  const rules: FieldRules = { counts: new Set(), variadic: new Set(), conflicts: {}, implies: {} };
   let properties: Record<string, any> = {};
   if (schema) {
     try {
@@ -187,6 +189,7 @@ export function extractFieldRules(
     const meta = fields?.[key];
     const prop = properties[key];
     if (meta?.count ?? prop?.count) rules.counts.add(key);
+    if (meta?.variadic ?? prop?.variadic) rules.variadic.add(key);
     const conflicts = meta?.conflicts ?? prop?.conflicts;
     if (conflicts) rules.conflicts[key] = typeof conflicts === 'string' ? [conflicts] : [...conflicts];
     const implies = meta?.implies ?? prop?.implies;
@@ -333,8 +336,14 @@ export function getOptionArity(prop: Record<string, any> | undefined): OptionAri
 export function createOptionArityLookup(
   schema: StandardJSONSchemaV1 | undefined,
   metadata: Pick<SchemaMetadataResult, 'flags' | 'aliases' | 'negatives'>,
-  counts: ReadonlySet<string> = new Set(),
+  rules: Pick<FieldRules, 'counts' | 'variadic'> = { counts: new Set(), variadic: new Set() },
 ): (key: string[], short: boolean) => OptionArity | undefined {
+  const fieldArity = (target: string, prop: Record<string, any> | undefined): OptionArity | undefined => {
+    if (rules.counts.has(target)) return 'count';
+    const arity = getOptionArity(prop);
+    return arity === 'array' && rules.variadic.has(target) ? 'variadic' : arity;
+  };
+
   let properties: Record<string, any> = {};
   if (schema) {
     try {
@@ -348,13 +357,12 @@ export function createOptionArityLookup(
     if (head === undefined) return undefined;
     if (short) {
       const target = metadata.flags[head];
-      if (!target) return undefined;
-      return counts.has(target) ? 'count' : getOptionArity(properties[target]);
+      return target ? fieldArity(target, properties[target]) : undefined;
     }
     if (rest.length === 0 && metadata.negatives[head]) return 'flag';
     const target = Object.hasOwn(properties, head) ? head : metadata.aliases[head];
     if (!target) return undefined;
-    if (rest.length === 0 && counts.has(target)) return 'count';
+    if (rest.length === 0) return fieldArity(target, properties[target]);
     return getOptionArity(getPropertySchema(properties, [target, ...rest]));
   };
 }

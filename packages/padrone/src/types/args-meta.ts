@@ -55,6 +55,11 @@ export interface PadroneFieldMeta {
    * `--verbose=5` sets the count directly and `--no-verbose` resets it to `0`.
    */
   count?: boolean;
+  /**
+   * For array options: take every following value up to the next option, `--tag a b c`, instead of one value per flag.
+   * Positionals after it need `--` (or come first). `--tag=a` still takes a single value; repeats keep accumulating.
+   */
+  variadic?: boolean;
   /** Options (by field name) that can't be used together with this one. Only options the user provided are checked. */
   conflicts?: readonly string[] | string;
   /**

@@ -37,7 +37,7 @@ Padrone supports these Zod types:
 | `z.number()` | `--port 3000` |
 | `z.boolean()` | `--verbose` or `--no-verbose` (customizable via `negative` meta) |
 | `z.enum(['a', 'b'])` | `--level high` |
-| `z.array(z.string())` | `--tags foo --tags bar` or `--tags=[foo,bar]` |
+| `z.array(z.string())` | `--tags foo --tags bar` or `--tags=[foo,bar]`; with `.meta({ variadic: true })` also `--tags foo bar` |
 | `z.union([z.boolean(), z.string()])` | `--cache` (→ `true`) or `--cache dir` (→ `"dir"`) |
 
 Parsing follows the schema, so each option consumes values according to its type:

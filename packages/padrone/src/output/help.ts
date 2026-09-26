@@ -154,8 +154,10 @@ function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSc
         const rawConflicts = optMeta?.conflicts ?? prop?.conflicts;
         const conflicts: string[] = rawConflicts ? (typeof rawConflicts === 'string' ? [rawConflicts] : [...rawConflicts]) : [];
         const implies = (optMeta?.implies ?? prop?.implies) as Record<string, unknown> | undefined;
+        const isVariadic = propType === 'array' && !!(optMeta?.variadic ?? prop?.variadic);
         const notes = [
           ...(isCount ? ['repeatable'] : []),
+          ...(isVariadic ? ['takes multiple values'] : []),
           ...(conflicts.length ? [`conflicts with ${conflicts.map((c) => `--${optionDisplayName(c)}`).join(', ')}`] : []),
           ...(implies
             ? [

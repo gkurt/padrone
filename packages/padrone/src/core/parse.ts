@@ -5,8 +5,9 @@
  * - `optional`: takes the next token only when it doesn't look like an option (e.g. `z.union([z.boolean(), z.string()])`).
  * - `array`: like `value`, and also accepts the `--tags=[a,b]` bracket syntax.
  * - `count`: never takes a value from the next token; each occurrence increments (`-vvv` → 3).
+ * - `variadic`: like `array`, and also takes every following token up to the next option (`--tag a b c`).
  */
-export type OptionArity = 'flag' | 'value' | 'optional' | 'array' | 'count';
+export type OptionArity = 'flag' | 'value' | 'optional' | 'array' | 'count' | 'variadic';
 
 /**
  * Supplies the command-aware knowledge the tokenizer needs. Without one, every option is treated
@@ -166,7 +167,7 @@ export function parseCliInputToParts(input: string | readonly string[], resolver
     const next = tokens[i + 1];
     if (next === undefined || next === '--' || arity === 'count') return undefined;
     if (arity === 'flag' && !BOOLEAN_WORD.test(next)) return undefined;
-    if (arity !== 'value' && arity !== 'array') {
+    if (arity !== 'value' && arity !== 'array' && arity !== 'variadic') {
       if (looksLikeOption(next) || resolver?.isCommand(next)) return undefined;
     }
     i++;
@@ -178,8 +179,19 @@ export function parseCliInputToParts(input: string | readonly string[], resolver
       part.value = parseInlineValue(inline, literal, arity);
       return;
     }
-    part.value = takeNext(arity);
-    if (part.value === undefined && (arity === 'value' || arity === 'array')) part.missing = true;
+    const first = takeNext(arity);
+    if (first === undefined && (arity === 'value' || arity === 'array' || arity === 'variadic')) part.missing = true;
+    if (arity !== 'variadic' || first === undefined) {
+      part.value = first;
+      return;
+    }
+    // Variadic: keep taking values until the next option, `--`, or the end of input
+    const values = [first];
+    for (let next = tokens[i + 1]; next !== undefined && next !== '--' && !looksLikeOption(next); next = tokens[i + 1]) {
+      values.push(next);
+      i++;
+    }
+    part.value = values;
   };
 
   for (; i < tokens.length; i++) {
@@ -225,7 +237,7 @@ export function parseCliInputToParts(input: string | readonly string[], resolver
         result.push(part);
 
         const rest = chars.slice(ci + 1);
-        if (rest && (arity === 'value' || arity === 'optional' || arity === 'array')) {
+        if (rest && (arity === 'value' || arity === 'optional' || arity === 'array' || arity === 'variadic')) {
           part.value = inline === undefined ? rest : `${rest}=${inline}`;
           break;
         }
@@ -268,7 +280,7 @@ function parseInlineValue(value: string, literal: boolean, arity: OptionArity | 
     return value.slice(1, -1);
   }
 
-  if ((arity === 'array' || arity === undefined) && value.startsWith('[') && value.endsWith(']')) {
+  if ((arity === 'array' || arity === 'variadic' || arity === undefined) && value.startsWith('[') && value.endsWith(']')) {
     const inner = value.slice(1, -1);
     if (inner === '') return [];
     return splitQuoteAware(inner, ',', { trim: true });

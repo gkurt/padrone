@@ -137,6 +137,7 @@ type ArgsMeta = {
     examples?: unknown[];
     group?: string;
     count?: boolean;                  // -vvv → 3 (number fields)
+    variadic?: boolean;               // array: --tag a b c (up to the next option or --)
     conflicts?: string | string[];    // options that can't be combined with this one
     implies?: Record<string, unknown>; // values for other options when this one is used
   }>;

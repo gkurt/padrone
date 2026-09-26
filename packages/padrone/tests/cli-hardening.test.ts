@@ -420,3 +420,25 @@ describe('env extension', () => {
     expect(result.args).toEqual({ port: 3000, host: 'localhost', token: 'cli' });
   });
 });
+
+describe('command options named like built-in flags', () => {
+  it('keeps a root --version option for the command', () => {
+    const program = createPadrone('rel')
+      .configure({ version: '1.0.0' })
+      .arguments(z.object({ version: z.string().optional() }))
+      .action((args) => args);
+    expect(program.eval(['--version', '2.0.0']).args).toEqual({ version: '2.0.0' });
+  });
+
+  it('keeps a --color option for the command', () => {
+    const program = createPadrone('app').command('paint', (c) => c.arguments(z.object({ color: z.string() })).action((args) => args));
+    expect(program.eval(['paint', '--color', 'red']).args).toEqual({ color: 'red' });
+  });
+
+  it('still handles the built-in flags when the command has no such option', () => {
+    const program = createPadrone('app')
+      .configure({ version: '1.0.0' })
+      .command('x', (c) => c.action(() => 'x'));
+    expect(program.eval(['--version']).result).toBe('1.0.0');
+  });
+});

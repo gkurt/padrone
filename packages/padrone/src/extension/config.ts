@@ -7,6 +7,7 @@ import { formatIssueMessages } from '../core/validate.ts';
 import type { AnyPadroneBuilder, CommandTypesBase, InterceptorValidateContext } from '../types/index.ts';
 import type { WithAsync } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
+import { frameworkFlags } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -217,11 +218,9 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
         // Extract --config / -c from rawArgs
         let explicitConfigPath: string | undefined;
         if (flagEnabled) {
-          explicitConfigPath = (ctx.rawArgs.config ?? ctx.rawArgs.c) as string | undefined;
-          if (typeof explicitConfigPath === 'string') {
-            delete ctx.rawArgs.config;
-            delete ctx.rawArgs.c;
-          }
+          const flags = frameworkFlags(ctx.rawArgs, ctx.command);
+          explicitConfigPath = (flags.get('config') ?? flags.get('c')) as string | undefined;
+          if (typeof explicitConfigPath === 'string') flags.delete('config', 'c');
         }
 
         // Skip entirely when there's nothing to load

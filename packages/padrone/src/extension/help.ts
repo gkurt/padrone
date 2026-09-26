@@ -9,7 +9,7 @@ import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneCom
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
-import { findCommandInTree, passthroughSchema } from './utils.ts';
+import { findCommandInTree, frameworkFlags, passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -50,22 +50,16 @@ const createHelpInterceptor = (options: PadroneHelpOptions) =>
       return {
         parse(ctx, next) {
           return thenMaybe(next(), (res) => {
-            const hasHelpFlag = res.rawArgs.help || res.rawArgs.h;
+            const flags = frameworkFlags(res.rawArgs, res.command);
+            const hasHelpFlag = flags.get('help') || flags.get('h');
             const reverseHelp =
               !hasHelpFlag && res.positionalArgs?.length > 0 && res.positionalArgs[res.positionalArgs.length - 1] === 'help';
 
             if (hasHelpFlag || reverseHelp) {
-              delete res.rawArgs.help;
-              delete res.rawArgs.h;
-
-              const detail = res.rawArgs.detail as HelpDetail | undefined;
-              const format = res.rawArgs.format as HelpFormat | undefined;
-              const all = res.rawArgs.all as boolean | undefined;
-              delete res.rawArgs.detail;
-              delete res.rawArgs.format;
-              delete res.rawArgs.all;
-              delete res.rawArgs.d;
-              delete res.rawArgs.f;
+              const detail = flags.get('detail') as HelpDetail | undefined;
+              const format = flags.get('format') as HelpFormat | undefined;
+              const all = flags.get('all') as boolean | undefined;
+              flags.delete('help', 'h', 'detail', 'format', 'all', 'd', 'f');
 
               const rootCommand = getRootCommand(res.command);
               resolveAllCommands(rootCommand);

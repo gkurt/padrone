@@ -100,6 +100,8 @@ Keep entries concise — short sentences covering only user-facing changes, no i
 
 **Global args**: `.globalArgs(schema, meta?)` stores `globalArgsSchema`/`globalArgsMeta` on a command; `getGlobalArgs(cmd)` (`src/core/commands.ts`) returns the nearest self-or-ancestor definition (the function form extends the inherited one). Parsing merges global flags/aliases/arity under the command's own; `splitGlobalArgs` in `validate.ts` routes keys the command doesn't define itself to the global schema, validates both, and merges (`{ ...globals, ...own }`). Types: `TGlobals` is the 11th builder/program param; `WithGlobalArgs<TArgs, TGlobals>` gives the merged args type used by `action` and the command's `'~types'`.
 
+**Field rules**: `count`, `conflicts` and `implies` field meta are read by `extractFieldRules` (`src/core/args.ts`). Count fields get the `count` arity and accumulate in `parseCommand`; `applyFieldRules` runs in `buildCommandArgs` on user-provided values (conflicts first, then implies, before coercion and defaults). Extensions that read framework flags from `rawArgs` go through `frameworkFlags()` (`src/extension/utils.ts`), which skips keys the command defines itself.
+
 **Flags vs aliases vs negatives**: `flags` = single-char short flags (`-v`), stackable. `alias` = multi-char alternative long names (`--dry-run`). `autoAlias` (default: true) auto-generates kebab-case aliases for camelCase option names. `negative` = custom negation keyword(s) for booleans (`negative: 'remote'` makes `--remote` set the arg to `false` and disables `--no-` prefix). Set to `''` or `[]` to only disable the prefix.
 
 **Execution paths**: `eval()`/`cli()` runs all 7 interceptor phases; `parse()` runs parse + validate; `run()` runs execute only (no validation).

@@ -4,8 +4,9 @@
  * - `value`: always takes a value — attached (`--out=x`, `-ox`) or the next token, even one starting with `-`.
  * - `optional`: takes the next token only when it doesn't look like an option (e.g. `z.union([z.boolean(), z.string()])`).
  * - `array`: like `value`, and also accepts the `--tags=[a,b]` bracket syntax.
+ * - `count`: never takes a value from the next token; each occurrence increments (`-vvv` → 3).
  */
-export type OptionArity = 'flag' | 'value' | 'optional' | 'array';
+export type OptionArity = 'flag' | 'value' | 'optional' | 'array' | 'count';
 
 /**
  * Supplies the command-aware knowledge the tokenizer needs. Without one, every option is treated
@@ -163,7 +164,7 @@ export function parseCliInputToParts(input: string | readonly string[], resolver
   /** Takes the next token as the value of an option with the given arity, if it should. */
   const takeNext = (arity: OptionArity | undefined): string | undefined => {
     const next = tokens[i + 1];
-    if (next === undefined || next === '--') return undefined;
+    if (next === undefined || next === '--' || arity === 'count') return undefined;
     if (arity === 'flag' && !BOOLEAN_WORD.test(next)) return undefined;
     if (arity !== 'value' && arity !== 'array') {
       if (looksLikeOption(next) || resolver?.isCommand(next)) return undefined;
@@ -224,7 +225,7 @@ export function parseCliInputToParts(input: string | readonly string[], resolver
         result.push(part);
 
         const rest = chars.slice(ci + 1);
-        if (rest && arity !== undefined && arity !== 'flag') {
+        if (rest && (arity === 'value' || arity === 'optional' || arity === 'array')) {
           part.value = inline === undefined ? rest : `${rest}=${inline}`;
           break;
         }

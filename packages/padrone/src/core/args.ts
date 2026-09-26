@@ -160,6 +160,75 @@ export function extractSchemaMetadata(
   return { flags, aliases, negatives, customNegation };
 }
 
+/** Behavioral rules declared per field, via `.meta()` or the `fields` config (which takes precedence). */
+export interface FieldRules {
+  /** Fields that count repeated flags (`-vvv` → 3). */
+  counts: Set<string>;
+  /** Field → the fields it can't be combined with. */
+  conflicts: Record<string, string[]>;
+  /** Field → the values it implies for other fields. */
+  implies: Record<string, Record<string, unknown>>;
+}
+
+export function extractFieldRules(
+  schema: StandardJSONSchemaV1 | undefined,
+  fields?: Record<string, PadroneFieldMeta | undefined>,
+): FieldRules {
+  const rules: FieldRules = { counts: new Set(), conflicts: {}, implies: {} };
+  let properties: Record<string, any> = {};
+  if (schema) {
+    try {
+      const jsonSchema = getJsonSchema(schema);
+      if (jsonSchema.type === 'object' && jsonSchema.properties) properties = jsonSchema.properties;
+    } catch {}
+  }
+
+  for (const key of new Set([...Object.keys(properties), ...Object.keys(fields ?? {})])) {
+    const meta = fields?.[key];
+    const prop = properties[key];
+    if (meta?.count ?? prop?.count) rules.counts.add(key);
+    const conflicts = meta?.conflicts ?? prop?.conflicts;
+    if (conflicts) rules.conflicts[key] = typeof conflicts === 'string' ? [conflicts] : [...conflicts];
+    const implies = meta?.implies ?? prop?.implies;
+    if (implies && typeof implies === 'object') rules.implies[key] = implies;
+  }
+  return rules;
+}
+
+/**
+ * Applies `implies` and checks `conflicts` on the args the user provided (before defaults).
+ * Conflicts are checked first, so implied values never conflict.
+ */
+export function applyFieldRules(data: Record<string, unknown>, rules: FieldRules): { args: Record<string, unknown>; issues: string[] } {
+  const provided = (key: string) => data[key] !== undefined;
+  const issues: string[] = [];
+  const reported = new Set<string>();
+
+  for (const [key, others] of Object.entries(rules.conflicts)) {
+    if (!provided(key)) continue;
+    for (const other of others) {
+      const pair = [key, other].sort().join('\0');
+      if (!provided(other) || reported.has(pair)) continue;
+      reported.add(pair);
+      issues.push(`Option "--${optionDisplayName(key)}" cannot be used with "--${optionDisplayName(other)}"`);
+    }
+  }
+
+  const args = { ...data };
+  for (const [key, implied] of Object.entries(rules.implies)) {
+    if (!provided(key) || data[key] === false) continue;
+    for (const [target, value] of Object.entries(implied)) {
+      if (args[target] === undefined) args[target] = value;
+    }
+  }
+  return { args, issues };
+}
+
+/** The kebab-case form users type for a field name (`dryRun` → `dry-run`). */
+export function optionDisplayName(key: string): string {
+  return camelToKebab(key) ?? key;
+}
+
 function preprocessMappings(data: Record<string, unknown>, mappings: Record<string, string>): Record<string, unknown> {
   const result = { ...data };
 
@@ -264,6 +333,7 @@ export function getOptionArity(prop: Record<string, any> | undefined): OptionAri
 export function createOptionArityLookup(
   schema: StandardJSONSchemaV1 | undefined,
   metadata: Pick<SchemaMetadataResult, 'flags' | 'aliases' | 'negatives'>,
+  counts: ReadonlySet<string> = new Set(),
 ): (key: string[], short: boolean) => OptionArity | undefined {
   let properties: Record<string, any> = {};
   if (schema) {
@@ -278,11 +348,14 @@ export function createOptionArityLookup(
     if (head === undefined) return undefined;
     if (short) {
       const target = metadata.flags[head];
-      return target ? getOptionArity(properties[target]) : undefined;
+      if (!target) return undefined;
+      return counts.has(target) ? 'count' : getOptionArity(properties[target]);
     }
     if (rest.length === 0 && metadata.negatives[head]) return 'flag';
     const target = Object.hasOwn(properties, head) ? head : metadata.aliases[head];
-    return target ? getOptionArity(getPropertySchema(properties, [target, ...rest])) : undefined;
+    if (!target) return undefined;
+    if (rest.length === 0 && counts.has(target)) return 'count';
+    return getOptionArity(getPropertySchema(properties, [target, ...rest]));
   };
 }
 

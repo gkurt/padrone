@@ -5,6 +5,7 @@ import type { AnyPadroneBuilder, CommandTypesBase, PadroneCommand } from '../typ
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
 import { getRootCommand, getVersion } from '../util/utils.ts';
+import { frameworkFlags } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -19,13 +20,12 @@ const versionInterceptor = defineInterceptor(
   () => ({
     parse(_ctx, next) {
       return thenMaybe(next(), (res) => {
-        const hasVersionFlag = res.rawArgs.version || res.rawArgs.v || res.rawArgs.V;
+        const flags = frameworkFlags(res.rawArgs, res.command);
+        const hasVersionFlag = flags.get('version') || flags.get('v') || flags.get('V');
 
         // Only show version for root command (no subcommand matched)
         if (hasVersionFlag && !res.command.parent) {
-          delete res.rawArgs.version;
-          delete res.rawArgs.v;
-          delete res.rawArgs.V;
+          flags.delete('version', 'v', 'V');
 
           // Route to the version command so its action handles the rest
           const versionCmd = res.command.commands?.find((c) => c.name === 'version');

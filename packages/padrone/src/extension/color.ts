@@ -1,6 +1,7 @@
 import { thenMaybe } from '#src/core/results.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { AnyPadroneBuilder, CommandTypesBase } from '../types/index.ts';
+import { frameworkFlags } from './utils.ts';
 
 // ── Interceptor ─────────────────────────────────────────────────────────
 
@@ -9,9 +10,10 @@ const colorInterceptor = defineInterceptor(
   () => ({
     parse(ctx, next) {
       return thenMaybe(next(), (res) => {
-        if ('color' in res.rawArgs) {
-          const color = res.rawArgs.color;
-          delete res.rawArgs.color;
+        const flags = frameworkFlags(res.rawArgs, res.command);
+        if (flags.has('color')) {
+          const color = flags.get('color');
+          flags.delete('color');
 
           ctx.runtime.theme = color as any;
         }

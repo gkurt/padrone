@@ -1,6 +1,7 @@
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
 import type { AnyPadroneBuilder, CommandTypesBase, InterceptorMeta } from '../types/index.ts';
+import { frameworkFlags } from './utils.ts';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -29,14 +30,10 @@ function createTimingInterceptor(enabledByDefault: boolean) {
     return {
       parse(_ctx, next) {
         return thenMaybe(next(), (res) => {
-          if ('timing' in res.rawArgs) {
-            enabled = res.rawArgs.timing !== false;
-            delete res.rawArgs.timing;
-          }
-          if ('time' in res.rawArgs) {
-            enabled = res.rawArgs.time !== false;
-            delete res.rawArgs.time;
-          }
+          const flags = frameworkFlags(res.rawArgs, res.command);
+          if (flags.has('timing')) enabled = flags.get('timing') !== false;
+          if (flags.has('time')) enabled = flags.get('time') !== false;
+          flags.delete('timing', 'time');
           return res;
         });
       },

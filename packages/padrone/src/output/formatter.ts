@@ -64,6 +64,8 @@ export type HelpArgumentInfo = {
   configKey?: string;
   /** Group name for organizing this option under a labeled section in help output */
   group?: string;
+  /** Short notes shown after the description, e.g. `repeatable` or `conflicts with --json` */
+  notes?: string[];
 };
 
 /**
@@ -384,6 +386,10 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
           const text = `(choices: ${arg.enum.join(', ')})`;
           inlineMeta.push(text);
           styledInlineMeta.push(styler.meta(text));
+        }
+        for (const note of arg.notes ?? []) {
+          inlineMeta.push(`(${note})`);
+          styledInlineMeta.push(styler.meta(`(${note})`));
         }
 
         const descPlain = arg.description ?? '';

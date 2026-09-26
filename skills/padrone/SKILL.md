@@ -109,6 +109,8 @@ The second parameter to `.arguments()` configures positional args, interactive p
     dryRun: { alias: 'dry' },             // multi-char long alias (--dry)
     local: { negative: 'remote' },        // --remote sets local to false, disables --no-local
     old: { deprecated: 'Use --new instead', group: 'Legacy' },
+    level: { flags: 'v', count: true },   // -vvv → 3
+    json: { conflicts: 'table', implies: { color: false } },
   },
 })
 ```

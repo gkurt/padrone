@@ -136,6 +136,9 @@ type ArgsMeta = {
     hidden?: boolean;
     examples?: unknown[];
     group?: string;
+    count?: boolean;                  // -vvv → 3 (number fields)
+    conflicts?: string | string[];    // options that can't be combined with this one
+    implies?: Record<string, unknown>; // values for other options when this one is used
   }>;
 };
 ```

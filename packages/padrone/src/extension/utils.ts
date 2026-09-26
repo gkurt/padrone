@@ -1,4 +1,20 @@
+import { getKnownOptionNames } from '../core/validate.ts';
 import type { AnyPadroneCommand, PadroneSchema } from '../types/index.ts';
+
+/**
+ * Access to the framework flags an extension reads from `rawArgs` (`--color`, `--version`, …).
+ * A command's own option of the same name always wins: such keys read as absent and are never deleted.
+ */
+export function frameworkFlags(rawArgs: Record<string, unknown>, command: AnyPadroneCommand) {
+  const owned = new Set(getKnownOptionNames(command));
+  return {
+    has: (key: string) => !owned.has(key) && key in rawArgs,
+    get: (key: string) => (owned.has(key) ? undefined : rawArgs[key]),
+    delete: (...keys: string[]) => {
+      for (const key of keys) if (!owned.has(key)) delete rawArgs[key];
+    },
+  };
+}
 
 type SchemaShape = Record<string, 'string' | 'string[]' | 'boolean'>;
 

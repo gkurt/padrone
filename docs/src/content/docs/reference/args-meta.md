@@ -32,6 +32,9 @@ z.object({
 | `deprecated` | `string \| boolean` | Mark as deprecated with optional message |
 | `hidden` | `boolean` | Hide from help output |
 | `group` | `string` | Group name for organizing under a labeled section in help output |
+| `count` | `boolean` | Count repeated flags into a number (`-vvv` → `3`) |
+| `conflicts` | `string \| string[]` | Options that can't be used together with this one |
+| `implies` | `Record<string, unknown>` | Values for other options when this one is used |
 
 :::note
 Single-character short flags use `flags`, not `alias`. The `alias` field is for multi-character long alternatives like `--dry-run` for `--dryRun`.
@@ -99,7 +102,7 @@ Per-argument configuration that supplements or overrides `.meta()`:
 }
 ```
 
-This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`.
+This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `conflicts`, `implies`.
 
 ### autoAlias
 
@@ -487,3 +490,38 @@ z.object({
 ```
 
 Arguments with the same group name are displayed together under a labeled section in help output.
+
+---
+
+## Counting Flags
+
+`count: true` on a number option counts how often a flag is given instead of taking a value:
+
+```typescript
+z.object({
+  verbose: z.number().default(0).meta({ flags: 'v', count: true }),
+})
+```
+
+`-vvv` and `-v -v --verbose` give `3`. `--verbose=5` sets the count directly and `--no-verbose` resets it to `0`. A counting flag never takes the next argument as its value. Help marks it `(repeatable)`.
+
+---
+
+## Conflicting and Implied Options
+
+`conflicts` rejects options used together, and `implies` fills in other options when one is used:
+
+```typescript
+z.object({
+  json: z.boolean().optional().meta({ conflicts: ['table'], implies: { color: false } }),
+  table: z.boolean().optional(),
+  color: z.boolean().optional(),
+})
+```
+
+- `--json --table` fails with `Option "--json" cannot be used with "--table"`. Declaring the conflict on either side is enough.
+- `--json` sets `color` to `false` unless `--color` is given explicitly. An option set to `false` (e.g. `--no-json`) implies nothing.
+- Only options the user provided count: from the command line, stdin, env or config — not schema defaults or implied values.
+
+Help shows `(conflicts with --table)` and `(implies --no-color)`.
+

@@ -167,6 +167,9 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `deprecated` | `'Use --debug'` | Deprecation warning |
 | `hidden` | `true` | Hide from help |
 | `group` | `'Advanced'` | Group in help output |
+| `count` | `true` | Count repeated flags into a number (`-vvv` → 3) |
+| `conflicts` | `'json'` | Options that can't be used together with this one |
+| `implies` | `{ color: false }` | Values for other options when this one is used |
 
 ### Arguments meta (second param of `.arguments()`)
 

@@ -4,6 +4,7 @@ import { hasInteractiveConfig, thenMaybe } from '../core/results.ts';
 import { buildCommandArgs, checkUnknownArgs } from '../core/validate.ts';
 import { promptInteractiveFields } from '../feature/interactive.ts';
 import type { AnyPadroneBuilder, CommandTypesBase, InterceptorValidateContext, InterceptorValidateResult } from '../types/index.ts';
+import { frameworkFlags } from './utils.ts';
 
 // ── Interceptor ─────────────────────────────────────────────────────────
 
@@ -14,14 +15,12 @@ const interactiveInterceptor = defineInterceptor(
       // Extract --interactive / -i flags from rawArgs
       let flagInteractive: boolean | undefined;
       if (hasInteractiveConfig(ctx.command.meta)) {
-        if (ctx.rawArgs.interactive !== undefined) {
-          flagInteractive = ctx.rawArgs.interactive !== false && ctx.rawArgs.interactive !== 'false';
-          delete ctx.rawArgs.interactive;
+        const flags = frameworkFlags(ctx.rawArgs, ctx.command);
+        for (const key of ['interactive', 'i']) {
+          const value = flags.get(key);
+          if (value !== undefined) flagInteractive = value !== false && value !== 'false';
         }
-        if (ctx.rawArgs.i !== undefined) {
-          flagInteractive = ctx.rawArgs.i !== false && ctx.rawArgs.i !== 'false';
-          delete ctx.rawArgs.i;
-        }
+        flags.delete('interactive', 'i');
       }
 
       // Resolve effective interactivity

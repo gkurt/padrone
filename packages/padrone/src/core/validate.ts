@@ -2,10 +2,13 @@ import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { AnyPadroneCommand, InterceptorValidateResult, PadroneGlobalArgsMeta, PadroneInput, PadroneSchema } from '../types/index.ts';
 import { camelToKebab } from '../util/shell-utils.ts';
 import {
+  applyFieldRules,
   coerceArgs,
   createOptionArityLookup,
   detectUnknownArgs,
+  extractFieldRules,
   extractSchemaMetadata,
+  type FieldRules,
   getJsonSchema,
   getOptionArity,
   parsePositionalConfig,
@@ -33,6 +36,7 @@ type SchemaOptionInfo = ReturnType<typeof extractSchemaMetadata> & {
   schemaArity: (key: string[], short: boolean) => OptionArity | undefined;
   arrayArguments: Set<string>;
   properties: Set<string>;
+  rules: FieldRules;
 };
 
 type CommandOptionInfo = SchemaOptionInfo & {
@@ -53,7 +57,8 @@ function getSchemaOptionInfo(schema: PadroneSchema | undefined, meta: PadroneGlo
   const metadata = schema
     ? extractSchemaMetadata(schema, meta?.fields, meta?.autoAlias)
     : { flags: {}, aliases: {}, negatives: {}, customNegation: new Set<string>() };
-  const schemaArity = createOptionArityLookup(schema, metadata);
+  const rules = extractFieldRules(schema, meta?.fields);
+  const schemaArity = createOptionArityLookup(schema, metadata, rules.counts);
 
   const arrayArguments = new Set<string>();
   if (schema) {
@@ -69,7 +74,17 @@ function getSchemaOptionInfo(schema: PadroneSchema | undefined, meta: PadroneGlo
     }
   }
 
-  return { ...metadata, arrayArguments, schemaArity, properties: getPropertyNames(schema) };
+  return { ...metadata, arrayArguments, schemaArity, properties: getPropertyNames(schema), rules };
+}
+
+/** Field rules of the command merged with those of the global args it doesn't override. */
+function mergeFieldRules(own: FieldRules, globals: FieldRules, globalOnly: (key: string) => boolean): FieldRules {
+  const pick = <T>(entries: Record<string, T>) => Object.fromEntries(Object.entries(entries).filter(([key]) => globalOnly(key)));
+  return {
+    counts: new Set([...own.counts, ...[...globals.counts].filter(globalOnly)]),
+    conflicts: { ...pick(globals.conflicts), ...own.conflicts },
+    implies: { ...pick(globals.implies), ...own.implies },
+  };
 }
 
 /** Option info for a command: its own schema, then the global args in effect (the command's own fields win). */
@@ -89,6 +104,7 @@ function getCommandOptionInfo(command: AnyPadroneCommand): CommandOptionInfo {
     customNegation: new Set([...own.customNegation, ...[...globals.customNegation].filter(globalOnly)]),
     arrayArguments: new Set([...own.arrayArguments, ...[...globals.arrayArguments].filter(globalOnly)]),
     properties: new Set([...own.properties, ...globals.properties]),
+    rules: mergeFieldRules(own.rules, globals.rules, globalOnly),
     schemaArity: (key, short) => own.schemaArity(key, short) ?? globals.schemaArity(key, short),
     interceptorOptions,
   };
@@ -198,7 +214,7 @@ export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPa
     if (defaultCommand) curCommand = defaultCommand;
   }
 
-  const { flags, aliases, negatives, customNegation, arrayArguments } = getCommandOptionInfo(curCommand);
+  const { flags, aliases, negatives, customNegation, arrayArguments, rules } = getCommandOptionInfo(curCommand);
 
   const rawArgs: Record<string, unknown> = {};
   let issues: StandardSchemaV1.Issue[] | undefined;
@@ -226,6 +242,15 @@ export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPa
     if (arg.missing) {
       const display = arg.type === 'alias' ? `-${arg.key[0]}` : `--${arg.key.join('.')}`;
       (issues ??= []).push({ path: key, message: `Option "${display}" requires a value` });
+      continue;
+    }
+
+    if (rules.counts.has(rootKey) && key.length === 1) {
+      // Counting flag: each bare occurrence adds one (-vvv → 3); --x=5 sets it; --no-x resets it
+      const existing = rawArgs[rootKey];
+      if (arg.type === 'named' && arg.negated) rawArgs[rootKey] = 0;
+      else if (arg.value !== undefined) rawArgs[rootKey] = arg.value;
+      else rawArgs[rootKey] = (typeof existing === 'number' ? existing : Number(existing ?? 0) || 0) + 1;
       continue;
     }
 
@@ -337,6 +362,10 @@ export function buildCommandArgs(
       },
     ];
   }
+
+  const ruled = applyFieldRules(preprocessedArgs, getCommandOptionInfo(command).rules);
+  preprocessedArgs = ruled.args;
+  if (ruled.issues.length > 0) (issues ??= []).push(...ruled.issues.map((message) => ({ path: [], message })));
 
   const { own, globals, globalSchema } = splitGlobalArgs(command, preprocessedArgs);
   preprocessedArgs = command.argsSchema ? coerceArgs(own, command.argsSchema) : own;

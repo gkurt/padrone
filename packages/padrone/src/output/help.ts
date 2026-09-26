@@ -1,5 +1,11 @@
 import type { StandardJSONSchemaV1 } from '@standard-schema/spec';
-import { extractSchemaMetadata, getJsonSchema, type PadroneArgsSchemaMeta, parsePositionalConfig } from '../core/args.ts';
+import {
+  extractSchemaMetadata,
+  getJsonSchema,
+  optionDisplayName,
+  type PadroneArgsSchemaMeta,
+  parsePositionalConfig,
+} from '../core/args.ts';
 import { findCommandByName, getGlobalArgs } from '../core/commands.ts';
 import type { AnyPadroneCommand, PadroneSchema } from '../types/index.ts';
 import { getRootCommand } from '../util/utils.ts';
@@ -143,12 +149,34 @@ function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSc
         // this arg is itself a negation of another arg, or custom negative keywords are set
         const isNegatable = propType === 'boolean' && !hasCustomNegative && !hasExplicitNegation(key) && !isNegationOf(key);
 
+        const isCount = !!(optMeta?.count ?? prop?.count);
+        const rawConflicts = optMeta?.conflicts ?? prop?.conflicts;
+        const conflicts: string[] = rawConflicts ? (typeof rawConflicts === 'string' ? [rawConflicts] : [...rawConflicts]) : [];
+        const implies = (optMeta?.implies ?? prop?.implies) as Record<string, unknown> | undefined;
+        const notes = [
+          ...(isCount ? ['repeatable'] : []),
+          ...(conflicts.length ? [`conflicts with ${conflicts.map((c) => `--${optionDisplayName(c)}`).join(', ')}`] : []),
+          ...(implies
+            ? [
+                `implies ${Object.entries(implies)
+                  .map(([k, v]) =>
+                    v === true
+                      ? `--${optionDisplayName(k)}`
+                      : v === false
+                        ? `--no-${optionDisplayName(k)}`
+                        : `--${optionDisplayName(k)}=${String(v)}`,
+                  )
+                  .join(', ')}`,
+              ]
+            : []),
+        ];
+
         result.push({
           name: key,
           description: optMeta?.description ?? prop.description,
           optional: isOptional,
           default: prop.default,
-          type: propType === 'array' ? `${prop.items?.type || 'string'}[]` : propType,
+          type: isCount ? undefined : propType === 'array' ? `${prop.items?.type || 'string'}[]` : propType,
           enum: enumValues,
           deprecated: optMeta?.deprecated ?? prop?.deprecated,
           hidden: optMeta?.hidden ?? prop?.hidden,
@@ -157,6 +185,7 @@ function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSc
           negatable: isNegatable,
           negative: negativeList?.length ? negativeList : undefined,
           group: optMeta?.group,
+          notes: notes.length ? notes : undefined,
         });
       }
     }

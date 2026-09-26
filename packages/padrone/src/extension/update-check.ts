@@ -3,6 +3,7 @@ import { defineInterceptor } from '../core/interceptors.ts';
 import type { UpdateCheckConfig } from '../feature/update-check.ts';
 import type { AnyPadroneBuilder, CommandTypesBase } from '../types/index.ts';
 import { getVersion } from '../util/utils.ts';
+import { frameworkFlags } from './utils.ts';
 
 // ── Interceptor ─────────────────────────────────────────────────────────
 
@@ -28,10 +29,9 @@ function createUpdateCheckInterceptor(config: UpdateCheckConfig) {
         },
         parse(_ctx, next) {
           return thenMaybe(next(), (res) => {
-            if ('update-check' in res.rawArgs) {
-              if (res.rawArgs['update-check'] === false) suppressed = true;
-              delete res.rawArgs['update-check'];
-            }
+            const flags = frameworkFlags(res.rawArgs, res.command);
+            if (flags.get('update-check') === false) suppressed = true;
+            flags.delete('update-check');
             return res;
           });
         },

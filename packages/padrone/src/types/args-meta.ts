@@ -50,6 +50,18 @@ export interface PadroneFieldMeta {
   examples?: readonly unknown[];
   /** Group name for organizing this option under a labeled section in help output. */
   group?: string;
+  /**
+   * Count repeated flags instead of taking a value, for number options: `-vvv` → `3`.
+   * `--verbose=5` sets the count directly and `--no-verbose` resets it to `0`.
+   */
+  count?: boolean;
+  /** Options (by field name) that can't be used together with this one. Only options the user provided are checked. */
+  conflicts?: readonly string[] | string;
+  /**
+   * Values for other options (by field name) to use when this option is provided and not `false`.
+   * Options given explicitly keep their value. @example `{ color: false }`
+   */
+  implies?: Record<string, unknown>;
 }
 
 type PositionalArgs<TObj> =

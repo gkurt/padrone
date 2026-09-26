@@ -91,8 +91,14 @@ type PositionalArgs<TObj> =
  */
 export type StdinConfig<TObj = Record<string, any>> = keyof TObj & string;
 
-/** Metadata for `.globalArgs()`: per-field config and auto-aliasing (global args are never positional). */
-export type PadroneGlobalArgsMeta<TObj = Record<string, any>> = Pick<PadroneArgsSchemaMeta<TObj>, 'fields' | 'autoAlias'>;
+/**
+ * Metadata for `.globalArgs()`: per-field config, auto-aliasing, and prompting for missing globals
+ * in every command of the subtree. Global args are never positional.
+ */
+export type PadroneGlobalArgsMeta<TObj = Record<string, any>> = Pick<
+  PadroneArgsSchemaMeta<TObj>,
+  'fields' | 'autoAlias' | 'interactive' | 'optionalInteractive'
+>;
 
 export interface PadroneArgsSchemaMeta<TObj = Record<string, any>> {
   /**

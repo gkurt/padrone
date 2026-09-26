@@ -580,3 +580,15 @@ test('globalArgs are merged into args, and a subcommand can override or extend t
     }),
   );
 });
+
+test('interactive globalArgs make every command in the subtree async', () => {
+  const program = createPadrone('app')
+    .globalArgs(z.object({ token: z.string() }), { interactive: true })
+    .command('logs', (c) => c.action((args) => args.token));
+  expectTypeOf(program.eval('logs')).toMatchTypeOf<Promise<any>>();
+
+  const plain = createPadrone('app')
+    .globalArgs(z.object({ token: z.string() }))
+    .command('logs', (c) => c.action((args) => args.token));
+  expectTypeOf(plain.eval('logs')).not.toMatchTypeOf<Promise<any>>();
+});

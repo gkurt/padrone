@@ -154,7 +154,7 @@ createPadrone('app')
   .command('cloud', (c) => c.globalArgs((inherited) => inherited.extend({ region: z.string().optional() })))
 ```
 
-`meta`: `{ fields?, autoAlias? }`. Validated separately from `.arguments()`; shown under "Global Options" in help; merged into MCP/serve input schemas.
+`meta`: `{ fields?, autoAlias?, interactive?, optionalInteractive? }` (interactive prompts for missing globals in the whole subtree and makes it async). Validated separately from `.arguments()`; shown under "Global Options" in help/man/docs; included in completions and MCP/serve input schemas. A command's own `interactive: true` also prompts for missing required globals.
 
 ### `.context(transform?)`
 

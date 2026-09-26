@@ -223,7 +223,13 @@ program
   );
 ```
 
-Global args are validated against their own schema and listed under "Global Options" in help.
+Global args are validated against their own schema and listed under "Global Options" in help, man pages, generated docs and shell completions.
+
+A command with `interactive: true` also prompts for missing required global args. To prompt in every command of a subtree, pass it to `.globalArgs()`:
+
+```typescript
+program.globalArgs(z.object({ token: z.string() }), { interactive: ['token'] }); // every command becomes async
+```
 
 To copy a parent's options into a single subcommand instead, pass a function to `.arguments()`: `.arguments((parent) => parent.extend({ file: z.string() }))`. Define the parent's schema before its subcommands so the parameter is typed.
 

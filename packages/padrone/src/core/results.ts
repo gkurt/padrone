@@ -1,6 +1,6 @@
 import type { AnyPadroneCommand, PadroneSchema } from '../types/index.ts';
 import type { Thenable } from '../util/type-utils.ts';
-import { getCommandRuntime } from './commands.ts';
+import { getCommandRuntime, getGlobalArgs } from './commands.ts';
 
 /**
  * Brands a schema as async, signaling that its `validate()` may return a Promise.
@@ -215,10 +215,22 @@ export function hasInteractiveConfig(meta: unknown): boolean {
   return m.interactive === true || Array.isArray(m.interactive) || m.optionalInteractive === true || Array.isArray(m.optionalInteractive);
 }
 
+/** Whether a command prompts for missing args: its own interactive config, or that of the global args in effect. */
+export function usesInteractive(command: AnyPadroneCommand): boolean {
+  return hasInteractiveConfig(command.meta) || hasInteractiveConfig(getGlobalArgs(command)?.meta);
+}
+
+/** Whether a command may validate asynchronously: marked async, or under async or interactive global args. */
+export function isAsyncCommand(command: AnyPadroneCommand): boolean {
+  if (command.isAsync) return true;
+  const globalArgs = getGlobalArgs(command);
+  return !!globalArgs && (isAsyncBranded(globalArgs.schema) || hasInteractiveConfig(globalArgs.meta));
+}
+
 export function warnIfUnexpectedAsync<T>(value: T, command: AnyPadroneCommand): T {
   const runtime = getCommandRuntime(command);
   if (runtime.env().NODE_ENV === 'production') return value;
-  if (value instanceof Promise && !command.isAsync) {
+  if (value instanceof Promise && !isAsyncCommand(command)) {
     runtime.error(
       `[padrone] Command "${command.path || command.name}" returned a Promise from validation, ` +
         `but was not marked as async. Use \`.async()\` on the builder or \`asyncSchema()\` to brand your schema. ` +

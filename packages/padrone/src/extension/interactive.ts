@@ -1,7 +1,8 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
+import { getGlobalArgs } from '../core/commands.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
-import { hasInteractiveConfig, thenMaybe } from '../core/results.ts';
-import { buildCommandArgs, checkUnknownArgs } from '../core/validate.ts';
+import { thenMaybe, usesInteractive } from '../core/results.ts';
+import { buildCommandArgs, checkUnknownArgs, validateCommandArgs } from '../core/validate.ts';
 import { promptInteractiveFields } from '../feature/interactive.ts';
 import type { AnyPadroneBuilder, CommandTypesBase, InterceptorValidateContext, InterceptorValidateResult } from '../types/index.ts';
 import { frameworkFlags } from './utils.ts';
@@ -14,7 +15,7 @@ const interactiveInterceptor = defineInterceptor(
     validate(ctx: InterceptorValidateContext, next) {
       // Extract --interactive / -i flags from rawArgs
       let flagInteractive: boolean | undefined;
-      if (hasInteractiveConfig(ctx.command.meta)) {
+      if (usesInteractive(ctx.command)) {
         const flags = frameworkFlags(ctx.rawArgs, ctx.command);
         for (const key of ['interactive', 'i']) {
           const value = flags.get(key);
@@ -34,7 +35,7 @@ const interactiveInterceptor = defineInterceptor(
         runtime.interactive === 'unsupported' || effectiveInteractive === false || (stdinIsPiped && effectiveInteractive !== true);
       const forceInteractive = !interactivitySuppressed && effectiveInteractive === true;
 
-      const willPrompt = !interactivitySuppressed && runtime.prompt && hasInteractiveConfig(command.meta);
+      const willPrompt = !interactivitySuppressed && runtime.prompt && usesInteractive(command);
       if (!willPrompt) return next();
 
       // Preprocess args to determine what's missing
@@ -53,13 +54,16 @@ const interactiveInterceptor = defineInterceptor(
 
       // Early-validate provided fields — fail fast on user-supplied errors before prompting
       const earlyValidateAndPrompt = (): InterceptorValidateResult | Promise<InterceptorValidateResult> => {
-        if (command.argsSchema) {
+        if (command.argsSchema || getGlobalArgs(command)) {
           const providedKeys = new Set(Object.keys(preprocessedArgs).filter((k) => preprocessedArgs[k] !== undefined));
-          const earlyCheck = command.argsSchema['~standard'].validate(preprocessedArgs);
+          // Validates the command's own args and the global args it doesn't override
+          const earlyCheck = validateCommandArgs(command, preprocessedArgs);
 
-          const checkForProvidedFieldErrors = (result: StandardSchemaV1.Result<unknown>): InterceptorValidateResult | undefined => {
-            if (!result.issues) return undefined;
-            const providedFieldIssues = result.issues.filter((issue: StandardSchemaV1.Issue) => {
+          const checkForProvidedFieldErrors = (result: {
+            argsResult?: StandardSchemaV1.Result<unknown>;
+          }): InterceptorValidateResult | undefined => {
+            if (!result.argsResult?.issues) return undefined;
+            const providedFieldIssues = result.argsResult.issues.filter((issue: StandardSchemaV1.Issue) => {
               const rootKey = issue.path?.[0];
               return rootKey !== undefined && providedKeys.has(String(rootKey));
             });

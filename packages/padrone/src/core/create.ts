@@ -165,7 +165,7 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
       // The function form extends the globals this command inherits
       const inherited = getGlobalArgs(existingCommand)?.schema;
       const resolved = (typeof schema === 'function' ? schema(inherited) : schema) as PadroneSchema | undefined;
-      const isAsync = existingCommand.isAsync || isAsyncBranded(resolved);
+      const isAsync = existingCommand.isAsync || isAsyncBranded(resolved) || hasInteractiveConfig(meta);
       return createPadroneBuilder({ ...existingCommand, globalArgsSchema: resolved, globalArgsMeta: meta, isAsync }) as any;
     },
     action(handler = noop) {

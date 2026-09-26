@@ -138,9 +138,9 @@ const program = createPadrone('app')
 
 **Parameters:**
 - `schema`: A schema, or a function receiving the inherited global schema (the nearest ancestor's) and returning a new one
-- `meta` (optional): `fields` (per-field `flags`, `alias`, `description`, …) and `autoAlias`
+- `meta` (optional): `fields` (per-field `flags`, `alias`, `description`, …), `autoAlias`, and `interactive` / `optionalInteractive` to prompt for missing globals in every command of the subtree (which makes those commands async)
 
-Global args are validated against their own schema, separately from each command's `.arguments()`. They are listed under **Global Options** in help, and included in the input schemas of MCP tools and serve endpoints.
+Global args are validated against their own schema, separately from each command's `.arguments()`. They are listed under **Global Options** in help, man pages and generated docs, included in shell completions and in the input schemas of MCP tools and serve endpoints. A command with `interactive: true` also prompts for missing required globals.
 
 ---
 

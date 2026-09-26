@@ -11,6 +11,7 @@ import type {
   FindDirectChild,
   FlattenCommands,
   FullCommandName,
+  HasInteractive,
   MaybePromise,
   OrAsync,
   OrAsyncMeta,
@@ -106,7 +107,7 @@ type InitialCommandBuilder<
       void,
       [],
       TParentArgs,
-      false,
+      OrAsync<false, TParentGlobals>,
       TParentContext,
       unknown,
       TParentGlobals
@@ -133,7 +134,7 @@ type InitialCommandBuilder<
         void,
         [],
         TParentArgs,
-        false,
+        OrAsync<false, TParentGlobals>,
         TParentContext,
         unknown,
         TParentGlobals
@@ -154,7 +155,19 @@ type DefaultCommandBuilder<
   TParentContext,
   TParentGlobals extends PadroneSchema = PadroneSchema<void>,
 > = [FindDirectChild<TCommands, TNameNested>] extends [never]
-  ? PadroneBuilder<TProgramName, TNameNested, TParentPath, any, void, [], TParentArgs, false, TParentContext, unknown, TParentGlobals>
+  ? PadroneBuilder<
+      TProgramName,
+      TNameNested,
+      TParentPath,
+      any,
+      void,
+      [],
+      TParentArgs,
+      OrAsync<false, TParentGlobals>,
+      TParentContext,
+      unknown,
+      TParentGlobals
+    >
   : FindDirectChild<TCommands, TNameNested> extends infer E extends AnyPadroneCommand
     ? PadroneBuilder<
         TProgramName,
@@ -169,7 +182,23 @@ type DefaultCommandBuilder<
         E['~types']['contextProvided'],
         TParentGlobals
       >
-    : PadroneBuilder<TProgramName, TNameNested, TParentPath, any, void, [], TParentArgs, false, TParentContext, unknown, TParentGlobals>;
+    : PadroneBuilder<
+        TProgramName,
+        TNameNested,
+        TParentPath,
+        any,
+        void,
+        [],
+        TParentArgs,
+        OrAsync<false, TParentGlobals>,
+        TParentContext,
+        unknown,
+        TParentGlobals
+      >;
+
+/** Global args that prompt (interactive meta) make every command in their subtree async, like an async schema. */
+type GlobalArgsWithAsync<TGlobals extends PadroneSchema, TMeta> =
+  HasInteractive<TMeta> extends true ? TGlobals & { '~async': true } : TGlobals;
 
 /**
  * Conditional type that returns either PadroneBuilder or PadroneProgram based on TReturn.
@@ -439,9 +468,9 @@ export type PadroneBuilderMethods<
    * @category Builder
    */
   globalArgs: {
-    <TNewGlobals extends PadroneSchema>(
+    <TNewGlobals extends PadroneSchema, const TMeta extends PadroneGlobalArgsMeta = PadroneGlobalArgsMeta>(
       schema: (inherited: TGlobals) => TNewGlobals,
-      meta?: PadroneGlobalArgsMeta,
+      meta?: TMeta,
     ): BuilderOrProgram<
       TReturn,
       TProgramName,
@@ -451,14 +480,17 @@ export type PadroneBuilderMethods<
       TRes,
       TCommands,
       TParentArgs,
-      OrAsync<TAsync, TNewGlobals>,
+      OrAsyncMeta<OrAsync<TAsync, TNewGlobals>, TMeta>,
       TContext,
       TContextProvided,
-      TNewGlobals
+      GlobalArgsWithAsync<TNewGlobals, TMeta>
     >;
-    <TNewGlobals extends PadroneSchema>(
+    <
+      TNewGlobals extends PadroneSchema,
+      const TMeta extends PadroneGlobalArgsMeta<NonNullable<StandardSchemaV1.InferInput<TNewGlobals>>> = Record<never, never>,
+    >(
       schema: TNewGlobals,
-      meta?: PadroneGlobalArgsMeta<NonNullable<StandardSchemaV1.InferInput<TNewGlobals>>>,
+      meta?: TMeta,
     ): BuilderOrProgram<
       TReturn,
       TProgramName,
@@ -468,10 +500,10 @@ export type PadroneBuilderMethods<
       TRes,
       TCommands,
       TParentArgs,
-      OrAsync<TAsync, TNewGlobals>,
+      OrAsyncMeta<OrAsync<TAsync, TNewGlobals>, TMeta>,
       TContext,
       TContextProvided,
-      TNewGlobals
+      GlobalArgsWithAsync<TNewGlobals, TMeta>
     >;
   };
 

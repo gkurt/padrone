@@ -1,5 +1,5 @@
 import { extractSchemaMetadata, getJsonSchema } from '../core/args.ts';
-import type { AnyPadroneCommand } from '../types/index.ts';
+import type { AnyPadroneCommand, PadroneGlobalArgsMeta, PadroneSchema } from '../types/index.ts';
 import { detectShell, getRcFile, type ShellType, writeToRcFile } from '../util/shell-utils.ts';
 
 export { detectShell, escapeRegExp, getRcFile, type ShellType, writeToRcFile } from '../util/shell-utils.ts';
@@ -31,16 +31,20 @@ interface ExtractedArg {
 }
 
 /**
- * Extracts all argument names from a command's schema.
+ * Extracts all argument names from a command's schema, and from the global args it defines.
  */
 function extractArguments(cmd: AnyPadroneCommand): ExtractedArg[] {
+  return [...extractSchemaArguments(cmd.argsSchema, cmd.meta), ...extractSchemaArguments(cmd.globalArgsSchema, cmd.globalArgsMeta)];
+}
+
+function extractSchemaArguments(schema: PadroneSchema | undefined, meta: PadroneGlobalArgsMeta | undefined): ExtractedArg[] {
   const argList: ExtractedArg[] = [];
 
-  if (!cmd.argsSchema) return argList;
+  if (!schema) return argList;
 
   try {
-    const argsMeta = cmd.meta?.fields;
-    const { aliases } = extractSchemaMetadata(cmd.argsSchema, argsMeta, cmd.meta?.autoAlias);
+    const argsMeta = meta?.fields;
+    const { aliases } = extractSchemaMetadata(schema, argsMeta, meta?.autoAlias);
 
     // Build reverse map: argName → aliasName
     const argToAlias: Record<string, string> = {};
@@ -48,7 +52,7 @@ function extractArguments(cmd: AnyPadroneCommand): ExtractedArg[] {
       if (!argToAlias[argName]) argToAlias[argName] = aliasName;
     }
 
-    const jsonSchema = getJsonSchema(cmd.argsSchema) as Record<string, any>;
+    const jsonSchema = getJsonSchema(schema) as Record<string, any>;
 
     if (jsonSchema.type === 'object' && jsonSchema.properties) {
       for (const [key, prop] of Object.entries(jsonSchema.properties as Record<string, any>)) {

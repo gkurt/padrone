@@ -20,7 +20,7 @@ import { getCommandRuntime } from './commands.ts';
 import { RoutingError, SignalError, ValidationError } from './errors.ts';
 import { resolveRegisteredInterceptors, runInterceptorChain, wrapWithCommandLifecycle, wrapWithLifecycle } from './interceptors.ts';
 import { errorResult, noop, thenMaybe, warnIfUnexpectedAsync, withDrain } from './results.ts';
-import { buildCommandArgs, formatIssueMessages, validateCommandArgs } from './validate.ts';
+import { buildCommandArgs, formatIssueMessages, getDeprecationWarnings, validateCommandArgs } from './validate.ts';
 
 export type ExecContext = {
   rootCommand: AnyPadroneCommand;
@@ -177,6 +177,10 @@ export function execCommand(
     const coreParse = (parseCtx: InterceptorParseContext): InterceptorParseResult => {
       const parseResult = parseCommandFn(parseCtx.input);
       if (parseResult.issues) parseIssues = { command: parseResult.command, issues: parseResult.issues };
+      // Warn people typing commands; programmatic callers already see `deprecated` in help and types.
+      if (caller === 'cli' || caller === 'repl') {
+        for (const warning of getDeprecationWarnings(parseResult.command, parseResult.rawArgs)) parseCtx.runtime.error(warning);
+      }
       return validateParseResult(parseResult, rootCommand);
     };
 

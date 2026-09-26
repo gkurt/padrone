@@ -1,5 +1,6 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { AnyPadroneCommand, InterceptorValidateResult, PadroneInput } from '../types/index.ts';
+import { camelToKebab } from '../util/shell-utils.ts';
 import {
   coerceArgs,
   createOptionArityLookup,
@@ -196,6 +197,30 @@ export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPa
   return { command: curCommand, rawArgs, args: argTokens, unmatchedTerms, issues };
 }
 
+/**
+ * Warnings for a deprecated command, and for each deprecated option set in `rawArgs`
+ * (from `.meta({ deprecated })` or the `fields` config).
+ */
+export function getDeprecationWarnings(command: AnyPadroneCommand, rawArgs: Record<string, unknown>): string[] {
+  const suffix = (deprecated: unknown) => (typeof deprecated === 'string' && deprecated ? `: ${deprecated}` : '');
+  const warnings: string[] = [];
+  if (command.deprecated) warnings.push(`Warning: command "${command.path || command.name}" is deprecated${suffix(command.deprecated)}`);
+
+  let properties: Record<string, any> = {};
+  if (command.argsSchema) {
+    try {
+      const jsonSchema = getJsonSchema(command.argsSchema);
+      if (jsonSchema.type === 'object' && jsonSchema.properties) properties = jsonSchema.properties;
+    } catch {}
+  }
+
+  for (const key of Object.keys(rawArgs)) {
+    const deprecated = command.meta?.fields?.[key]?.deprecated ?? properties[key]?.deprecated;
+    if (deprecated) warnings.push(`Warning: option "--${camelToKebab(key) ?? key}" is deprecated${suffix(deprecated)}`);
+  }
+  return warnings;
+}
+
 type FindCommandFn = (name: string, commands?: AnyPadroneCommand[]) => AnyPadroneCommand | undefined;
 
 /**
@@ -211,9 +236,9 @@ export function buildCommandArgs(
   let issues: StandardSchemaV1.Issue[] | undefined;
 
   const positionalConfig = command.meta?.positional ? parsePositionalConfig(command.meta.positional) : [];
+  let argIndex = 0;
 
   if (positionalConfig.length > 0) {
-    let argIndex = 0;
     for (let i = 0; i < positionalConfig.length; i++) {
       const { name, variadic } = positionalConfig[i]!;
       if (argIndex >= positionalArgs.length) break;
@@ -231,14 +256,24 @@ export function buildCommandArgs(
         const variadicEnd = positionalArgs.length - nonVariadicAfter;
         preprocessedArgs[name] = positionalArgs.slice(argIndex, variadicEnd);
         argIndex = variadicEnd;
-      } else if (i === positionalConfig.length - 1 && positionalArgs.length > argIndex + 1) {
-        preprocessedArgs[name] = positionalArgs.slice(argIndex).join(' ');
-        argIndex = positionalArgs.length;
       } else {
         preprocessedArgs[name] = positionalArgs[argIndex];
         argIndex++;
       }
     }
+  }
+
+  const excess = positionalArgs.slice(argIndex);
+  if (excess.length > 0 && !issues) {
+    issues = [
+      {
+        path: [],
+        message:
+          positionalConfig.length > 0
+            ? `Too many arguments: expected at most ${positionalConfig.length}, got ${positionalArgs.length} (unexpected: ${excess.join(' ')})`
+            : `Unexpected argument${excess.length > 1 ? 's' : ''}: ${excess.join(' ')}`,
+      },
+    ];
   }
 
   if (command.argsSchema) {
@@ -310,7 +345,12 @@ export function getKnownOptionNames(command: AnyPadroneCommand): string[] {
  * Formats validation issue messages for display.
  */
 export function formatIssueMessages(issues: readonly StandardSchemaV1.Issue[]): string {
-  return issues.map((i) => `  - ${i.path?.join('.') || 'root'}: ${i.message}`).join('\n');
+  return issues
+    .map((i) => {
+      const path = i.path?.map((segment) => (typeof segment === 'object' ? segment.key : segment)).join('.');
+      return path ? `  - ${path}: ${i.message}` : `  - ${i.message}`;
+    })
+    .join('\n');
 }
 
 /**

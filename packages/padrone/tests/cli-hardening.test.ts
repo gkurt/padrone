@@ -194,5 +194,88 @@ describe('CLI hardening', () => {
         .command('build', (c) => c.arguments(z.object({ file: z.string().optional() }), { positional: ['file'] }).action((args) => args));
       expect(program.eval(['build', '--debug', 'x.txt']).args).toEqual({ file: 'x.txt' });
     });
+
+    it('leaves a command its own --verbose even with the logger enabled', () => {
+      const program = createPadrone('app')
+        .extend(padroneLogger())
+        .command('build', (c) => c.arguments(z.object({ verbose: z.boolean().optional() })).action((args) => args));
+      expect(program.eval(['build', '--verbose']).args).toEqual({ verbose: true });
+    });
+  });
+});
+
+describe('CLI strictness', () => {
+  const positionalProgram = () =>
+    createPadrone('app')
+      .command('rm', (c) => c.arguments(z.object({ file: z.string() }), { positional: ['file'] }).action((args) => args))
+      .command('cp', (c) =>
+        c.arguments(z.object({ files: z.string().array(), dest: z.string() }), { positional: ['...files', 'dest'] }).action((args) => args),
+      )
+      .command('run', (c) => c.arguments(z.object({ verbose: z.boolean().optional() })).action((args) => args))
+      .command('calc', (c) => c.arguments(z.object({ n: z.number() })).action((args) => args));
+
+  it('rejects too many positionals instead of joining them', () => {
+    const result = positionalProgram().eval(['rm', 'a', 'b']);
+    expect(result.args).toBeUndefined();
+    expect(issuesOf(result)).toEqual([': Too many arguments: expected at most 1, got 2 (unexpected: b)']);
+  });
+
+  it('still lets a variadic positional take everything', () => {
+    expect(positionalProgram().eval(['cp', 'a', 'b', 'c', 'dest']).args).toEqual({ files: ['a', 'b', 'c'], dest: 'dest' });
+  });
+
+  it('rejects positionals for a command that declares none', () => {
+    expect(issuesOf(positionalProgram().eval(['run', './extra']))).toEqual([': Unexpected argument: ./extra']);
+    expect(issuesOf(positionalProgram().eval(['run', '--', 'a', 'b']))).toEqual([': Unexpected arguments: a b']);
+  });
+
+  it('only coerces decimal numbers', () => {
+    expect(positionalProgram().eval(['calc', '--n', '1.5e3']).args).toEqual({ n: 1500 });
+    expect(positionalProgram().eval(['calc', '--n', '.5']).args).toEqual({ n: 0.5 });
+    for (const bad of ['0x10', 'Infinity', ' 5', '', 'NaN']) {
+      expect(positionalProgram().eval(['calc', '--n', bad]).args).toBeUndefined();
+    }
+  });
+});
+
+describe('deprecation warnings', () => {
+  const deprecatedProgram = (errors: string[], argv: string[]) =>
+    createPadrone('app')
+      .runtime({ error: (msg) => errors.push(msg), argv: () => argv })
+      .command('build', (c) =>
+        c
+          .arguments(
+            z.object({
+              oldFlag: z.boolean().optional(),
+              legacy: z.string().optional().meta({ deprecated: true }),
+              newFlag: z.boolean().optional(),
+            }),
+            { fields: { oldFlag: { deprecated: 'Use --new-flag instead' } } },
+          )
+          .action(() => 'built'),
+      )
+      .command('old', (c) => c.configure({ deprecated: 'Use "app build"' }).action(() => 'old'));
+
+  it('warns when a deprecated option is used from the CLI', () => {
+    const errors: string[] = [];
+    const result = deprecatedProgram(errors, ['build', '--old-flag', '--legacy', 'x']).cli();
+    expect(result.result).toBe('built');
+    expect(errors).toEqual([
+      'Warning: option "--old-flag" is deprecated: Use --new-flag instead',
+      'Warning: option "--legacy" is deprecated',
+    ]);
+  });
+
+  it('warns when a deprecated command is used from the CLI', () => {
+    const errors: string[] = [];
+    deprecatedProgram(errors, ['old']).cli();
+    expect(errors).toEqual(['Warning: command "old" is deprecated: Use "app build"']);
+  });
+
+  it('does not warn for options that are not used, or for eval()', () => {
+    const errors: string[] = [];
+    deprecatedProgram(errors, ['build', '--new-flag']).cli();
+    deprecatedProgram(errors, []).eval(['build', '--old-flag']);
+    expect(errors).toEqual([]);
   });
 });

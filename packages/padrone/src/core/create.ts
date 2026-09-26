@@ -1,6 +1,6 @@
 import { padroneAutoOutput } from '../extension/auto-output.ts';
 import { padroneColor } from '../extension/color.ts';
-import type { HelpCommand } from '../extension/help.ts';
+import type { HelpCommand, PadroneHelpOptions } from '../extension/help.ts';
 import { padroneHelp } from '../extension/help.ts';
 import { padroneInteractive } from '../extension/interactive.ts';
 import { padroneRepl } from '../extension/repl.ts';
@@ -42,8 +42,8 @@ export { asyncSchema } from './results.ts';
  * Options for configuring which built-in extensions are applied by default.
  */
 export type PadroneBuiltins = {
-  /** Enable `help` command, `--help` / `-h` flags, and default help display. Defaults to `true`. */
-  help?: boolean;
+  /** Enable `help` command, `--help` / `-h` flags, and default help display. Defaults to `true`. Pass options to configure it. */
+  help?: boolean | PadroneHelpOptions;
   /** Enable `version` command and `--version` / `-v` / `-V` flags. Defaults to `true`. */
   version?: boolean;
   /** Enable `repl` command and `--repl` flag. Defaults to `true`. */
@@ -76,7 +76,7 @@ export function createPadrone<TProgramName extends string, const TBuiltins exten
   let builder: any = createPadroneBuilder({ name, path: '', commands: [] } as any);
 
   const b = options?.builtins;
-  if (b?.help !== false) builder = builder.extend(padroneHelp());
+  if (b?.help !== false) builder = builder.extend(padroneHelp(typeof b?.help === 'object' ? b.help : undefined));
   if (b?.version !== false) builder = builder.extend(padroneVersion());
   if (b?.repl !== false) builder = builder.extend(padroneRepl());
   if (b?.color !== false) builder = builder.extend(padroneColor());

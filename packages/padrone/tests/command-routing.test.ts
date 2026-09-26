@@ -175,14 +175,13 @@ describe('command routing', () => {
       expect(result.result).toBe('showing my-id');
     });
 
-    it('should allow extra args after -- separator', () => {
-      // After --, 'test' becomes a positional arg (not a term), so it won't be rejected
-      // as an unmatched term. It will be passed through to validation.
+    it('should reject extra args after -- separator when the command has no positionals', () => {
+      // After --, 'test' is a positional arg. start declares no positionals, so it is reported
+      // instead of being silently dropped.
       const result = program.eval('start -- test');
-      // start has no positional config, so 'test' is in args but not mapped.
-      // The command runs successfully since the schema is void.
       expect(result.command?.name).toBe('start');
-      expect(result.result).toBe('start-executed');
+      expect(result.result).toBeUndefined();
+      expect(result.argsResult?.issues?.[0]?.message).toBe('Unexpected argument: test');
     });
 
     it('should not reject extra terms for commands with positional config', () => {

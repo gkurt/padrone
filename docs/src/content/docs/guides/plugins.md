@@ -628,6 +628,8 @@ const program = createPadrone('myapp', {
 });
 ```
 
+`help` also accepts options instead of `false`: `builtins: { help: { showHelpOnError: true } }` prints the full help after a routing or validation error, instead of the default one-line `--help` hint.
+
 ### Overriding via Deduplication
 
 Built-in interceptors use `id` fields like `'padrone:help'`, `'padrone:auto-output'`, etc. Register an interceptor with the same `id` to replace the built-in behavior:

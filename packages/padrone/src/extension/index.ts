@@ -6,7 +6,7 @@ export type { PadroneConfigOptions } from './config.ts';
 export { padroneConfig } from './config.ts';
 export type { PadroneEnvOptions } from './env.ts';
 export { padroneEnv } from './env.ts';
-export type { HelpCommand, WithHelp } from './help.ts';
+export type { HelpCommand, PadroneHelpOptions, WithHelp } from './help.ts';
 export { padroneHelp } from './help.ts';
 export { padroneInteractive } from './interactive.ts';
 export type { PadroneLogger, PadroneLoggerConfig, PadroneLogLevel, WithLogger } from './logger.ts';

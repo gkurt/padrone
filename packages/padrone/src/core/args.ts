@@ -286,6 +286,8 @@ export function createOptionArityLookup(
   };
 }
 
+const DECIMAL_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+
 /** Coerce a single CLI string to a primitive based on the set of allowed types. */
 function coerceScalar(value: unknown, allowedTypes: Set<string>): unknown {
   if (typeof value !== 'string') return value;
@@ -296,13 +298,8 @@ function coerceScalar(value: unknown, allowedTypes: Set<string>): unknown {
     if (lower === 'false' || lower === '0' || lower === 'no' || lower === 'off') return false;
   }
 
-  if (allowedTypes.has('number') || allowedTypes.has('integer')) {
-    const trimmed = value.trim();
-    if (trimmed !== '') {
-      const num = Number(trimmed);
-      if (!Number.isNaN(num)) return num;
-    }
-  }
+  // Decimal notation only: `Number()` alone would also accept '0x10', 'Infinity' and ' 5 '.
+  if ((allowedTypes.has('number') || allowedTypes.has('integer')) && DECIMAL_NUMBER.test(value)) return Number(value);
 
   return value;
 }

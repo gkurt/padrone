@@ -1,5 +1,6 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { ValidationError } from '../core/errors.ts';
+import { formatIssueMessages } from '../core/validate.ts';
 import type { PadroneSchema } from '../types/index.ts';
 import { concatBytes } from '../util/stream.ts';
 
@@ -136,10 +137,7 @@ export function createWrapHandler<TCommandArgs extends PadroneSchema, TWrapArgs 
 
     const processResult = (result: StandardSchemaV1.Result<unknown>) => {
       if (result.issues) {
-        const issueMessages = result.issues
-          .map((i: StandardSchemaV1.Issue) => `  - ${(i.path as (string | number)[] | undefined)?.join('.') || 'root'}: ${i.message}`)
-          .join('\n');
-        throw new ValidationError(`Wrap schema validation failed:\n${issueMessages}`, result.issues as any);
+        throw new ValidationError(`Wrap schema validation failed:\n${formatIssueMessages(result.issues)}`, result.issues as any);
       }
       return result.value;
     };

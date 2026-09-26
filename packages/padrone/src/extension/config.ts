@@ -3,6 +3,7 @@ import { applyValues } from '../core/args.ts';
 import { ConfigError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
+import { formatIssueMessages } from '../core/validate.ts';
 import type { AnyPadroneBuilder, CommandTypesBase, InterceptorValidateContext } from '../types/index.ts';
 import type { WithAsync } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
@@ -242,10 +243,7 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
             const validated = configSchema['~standard'].validate(configData);
             return thenMaybe(validated, (result) => {
               if (result.issues) {
-                const issueMessages = result.issues
-                  .map((i: StandardSchemaV1.Issue) => `  - ${i.path?.join('.') || 'root'}: ${i.message}`)
-                  .join('\n');
-                throw new ConfigError(`Invalid config file:\n${issueMessages}`, {
+                throw new ConfigError(`Invalid config file:\n${formatIssueMessages(result.issues)}`, {
                   command: ctx.command.path || ctx.command.name,
                 });
               }

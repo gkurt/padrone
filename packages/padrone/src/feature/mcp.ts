@@ -1,4 +1,5 @@
 import { buildInputSchema, collectEndpoints, serializeArgsToFlags } from '../core/commands.ts';
+import { formatIssueMessages } from '../core/validate.ts';
 import { generateHelp } from '../output/help.ts';
 import type { AnyPadroneCommand, AnyPadroneProgram } from '../types/index.ts';
 import { readStreamAsText } from '../util/stream.ts';
@@ -178,8 +179,7 @@ export function createMcpHandler(
           }
 
           if (result.argsResult?.issues) {
-            const issueMessages = result.argsResult.issues.map((i: any) => `${i.path?.join('.') || 'root'}: ${i.message}`).join('\n');
-            content.push({ type: 'text', text: `Validation error:\n${issueMessages}` });
+            content.push({ type: 'text', text: `Validation error:\n${formatIssueMessages(result.argsResult.issues)}` });
             return { jsonrpc: '2.0', id: id ?? null, result: { content, isError: true } };
           }
 

@@ -1209,7 +1209,7 @@ The following extensions are applied automatically by `createPadrone()` and can 
 
 | Export | Builtin key | Purpose |
 |--------|-------------|---------|
-| `padroneHelp()` | `help` | Help command and `--help` flag |
+| `padroneHelp(options?)` | `help` | Help command and `--help` flag. `{ showHelpOnError: true }` prints the full help after errors |
 | `padroneVersion()` | `version` | Version command and `--version` flag |
 | `padroneRepl()` | `repl` | REPL command and `--repl` flag |
 | `padroneColor()` | `color` | `--color`/`--no-color` support |

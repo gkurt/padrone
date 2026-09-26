@@ -1,7 +1,7 @@
-import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { buildReplCompleter, findCommandByName, getCommandRuntime } from '../core/commands.ts';
 import { createTerminalReplSession } from '../core/default-runtime.ts';
 import { REPL_SIGINT, type ReplSessionConfig } from '../core/runtime.ts';
+import { formatIssueMessages } from '../core/validate.ts';
 import type { AnyPadroneCommand, PadroneEvalPreferences, PadroneReplPreferences } from '../types/index.ts';
 import { getVersion } from '../util/utils.ts';
 
@@ -292,10 +292,7 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
             const msg = result.error instanceof Error ? result.error.message : String(result.error);
             runtime.error(prefixLines ? prefixLines(msg) : msg);
           } else if (result.argsResult?.issues) {
-            const issueMessages = result.argsResult.issues
-              .map((i: StandardSchemaV1.Issue) => `  - ${i.path?.join('.') || 'root'}: ${i.message}`)
-              .join('\n');
-            const msg = `Validation error:\n${issueMessages}`;
+            const msg = `Validation error:\n${formatIssueMessages(result.argsResult.issues)}`;
             runtime.error(prefixLines ? prefixLines(msg) : msg);
           }
           yield result as any;

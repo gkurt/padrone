@@ -66,6 +66,7 @@ Array of argument names to accept as positional arguments.
 - Arguments are matched in the order specified
 - Optional arguments are skipped if not provided
 - Position matters: `['source', 'dest']` means first arg is source, second is dest
+- Extra arguments are an error (`Too many arguments`), as are positionals given to a command that declares none. Use a variadic (`...rest`) to accept any number
 
 **Variadic arguments:**
 - Prefix with `...` to capture multiple values: `['...files']`
@@ -413,18 +414,20 @@ program.stringify('cmd', { local: false })
 Mark arguments as deprecated to warn users:
 
 ```typescript
-z.object({
-  // Simple deprecation
-  old: z.string().optional().meta({ deprecated: true }),
-
-  // With migration message
-  legacy: z.string().optional().meta({
-    deprecated: 'Use --new-arg instead',
+.arguments(
+  z.object({
+    // Simple deprecation
+    old: z.string().optional().meta({ deprecated: true }),
+    legacy: z.string().optional(),
   }),
-})
+  {
+    // With a migration message (Zod's own `.meta()` type only allows a boolean here)
+    fields: { legacy: { deprecated: 'Use --new-arg instead' } },
+  },
+)
 ```
 
-Deprecated arguments still work but display a warning when used.
+Deprecated arguments still work. They are marked in help, and using one from `cli()` or the REPL prints a warning to stderr, e.g. `Warning: option "--legacy" is deprecated: Use --new-arg instead`. Deprecated commands (`.configure({ deprecated: 'Use "app build"' })`) warn the same way.
 
 ---
 

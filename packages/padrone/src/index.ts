@@ -24,6 +24,7 @@ export type {
 export { REPL_SIGINT } from './core/runtime.ts';
 export type {
   HelpCommand,
+  PadroneHelpOptions,
   PadroneLogger,
   PadroneLoggerConfig,
   PadroneLogLevel,

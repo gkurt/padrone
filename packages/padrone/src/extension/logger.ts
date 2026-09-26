@@ -1,6 +1,7 @@
 import { defineInterceptor } from '#src/core/interceptors.ts';
 import { thenMaybe } from '#src/core/results.ts';
 import type { ResolvedPadroneRuntime } from '#src/core/runtime.ts';
+import { getKnownOptionNames } from '#src/core/validate.ts';
 import type { AnyPadroneBuilder, CommandTypesBase } from '#src/types/index.ts';
 import type { WithInterceptor } from '#src/util/type-utils.ts';
 import type { PadroneTracer } from './tracing.ts';
@@ -100,41 +101,31 @@ function formatArgs(args: unknown[]): string {
   return `${result} ${tail}`;
 }
 
-function resolveCliLevel(rawArgs: Record<string, unknown>): PadroneLogLevel | undefined {
-  // --trace → trace level
-  if ('trace' in rawArgs) {
-    const t = rawArgs.trace;
-    delete rawArgs.trace;
-    if (t !== false) return 'trace';
-  }
-  // --verbose / --debug → debug level
-  if ('verbose' in rawArgs) {
-    const v = rawArgs.verbose;
-    delete rawArgs.verbose;
-    if (v !== false) return 'debug';
-  }
-  if ('debug' in rawArgs) {
-    const d = rawArgs.debug;
-    delete rawArgs.debug;
-    if (d !== false) return 'debug';
-  }
-  // --silent / --quiet → suppress all output
-  if ('silent' in rawArgs) {
-    const s = rawArgs.silent;
-    delete rawArgs.silent;
-    if (s !== false) return 'silent';
-  }
-  if ('quiet' in rawArgs) {
-    const q = rawArgs.quiet;
-    delete rawArgs.quiet;
-    if (q !== false) return 'silent';
-  }
-  // --log-level=<level> → explicit level (parser keeps kebab-case)
-  if ('log-level' in rawArgs) {
-    const val = rawArgs['log-level'];
-    delete rawArgs['log-level'];
-    if (typeof val === 'string' && VALID_LEVELS.has(val)) return val as PadroneLogLevel;
-  }
+/**
+ * Reads the log-level flags from `rawArgs`, removing the ones it consumes.
+ * Flags the command defines itself (e.g. its own `--verbose`) are left for the command.
+ */
+function resolveCliLevel(rawArgs: Record<string, unknown>, ownOptions: ReadonlySet<string>): PadroneLogLevel | undefined {
+  const take = (key: string): { value: unknown } | undefined => {
+    if (!(key in rawArgs) || ownOptions.has(key)) return undefined;
+    const value = rawArgs[key];
+    delete rawArgs[key];
+    return { value };
+  };
+  const enabled = (flag: { value: unknown } | undefined) => !!flag && flag.value !== false;
+
+  // Every flag is consumed even when an earlier one already decided the level
+  const trace = take('trace');
+  const verbose = take('verbose');
+  const debug = take('debug');
+  const silent = take('silent');
+  const quiet = take('quiet');
+  const logLevel = take('log-level');
+
+  if (enabled(trace)) return 'trace';
+  if (enabled(verbose) || enabled(debug)) return 'debug';
+  if (enabled(silent) || enabled(quiet)) return 'silent';
+  if (typeof logLevel?.value === 'string' && VALID_LEVELS.has(logLevel.value)) return logLevel.value as PadroneLogLevel;
   return undefined;
 }
 
@@ -200,7 +191,7 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
       return {
         parse(_ctx, next) {
           return thenMaybe(next(), (res) => {
-            cliLevel = resolveCliLevel(res.rawArgs);
+            cliLevel = resolveCliLevel(res.rawArgs, new Set(getKnownOptionNames(res.command)));
             return res;
           });
         },

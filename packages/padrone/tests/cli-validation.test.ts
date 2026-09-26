@@ -406,14 +406,14 @@ describe('CLI validation improvements', () => {
       const result = program.cli();
       expect(result.error).toBeInstanceOf(RoutingError);
 
-      // Suggestion goes to stderr, available commands to stdout (dimmed, not red)
-      const hasSuggestion = errors.some((e) => e.includes('Did you mean "list"'));
-      const hasAvailableCommands = outputs.some((e) => e.includes('Available commands: list, show'));
-      expect(hasSuggestion).toBe(true);
-      expect(hasAvailableCommands).toBe(true);
+      // Everything goes to stderr so stdout stays clean for piping
+      expect(errors.some((e) => e.includes('Did you mean "list"'))).toBe(true);
+      expect(errors.some((e) => e.includes('Available commands: list, show'))).toBe(true);
+      expect(errors.some((e) => e.includes('Run "app --help" for usage.'))).toBe(true);
+      expect(outputs).toEqual([]);
     });
 
-    it('should show full help when no suggestion matches', () => {
+    it('should list available commands and a help hint when no suggestion matches', () => {
       const errors: string[] = [];
       const program = createPadrone('app')
         .runtime({
@@ -425,10 +425,37 @@ describe('CLI validation improvements', () => {
 
       const result = program.cli();
       expect(result.error).toBeInstanceOf(RoutingError);
+      expect(errors).toEqual(['Unknown command: xyzabc', '\nAvailable commands: list, show', '\nRun "app --help" for usage.']);
+    });
 
-      // Should show full help (not compact)
-      const hasAvailableCommands = errors.some((e) => e.includes('Available commands'));
-      expect(hasAvailableCommands).toBe(false);
+    it('should show full help after an error with showHelpOnError', () => {
+      const errors: string[] = [];
+      const program = createPadrone('app', { builtins: { help: { showHelpOnError: true } } })
+        .runtime({
+          error: (msg) => errors.push(msg),
+          argv: () => ['list', '--nope'],
+        })
+        .command('list', (c) => c.configure({ description: 'List things' }).action(() => 'listed'));
+
+      const result = program.cli();
+      expect(result.error).toBeInstanceOf(ValidationError);
+      expect(errors[0]).toContain('Unknown option: "nope"');
+      expect(errors.some((e) => e.includes('Usage: app list') && e.includes('List things'))).toBe(true);
+      expect(errors.some((e) => e.includes('for usage.'))).toBe(false);
+    });
+
+    it('should point to the failing command help after a validation error', () => {
+      const errors: string[] = [];
+      const program = createPadrone('app')
+        .runtime({
+          error: (msg) => errors.push(msg),
+          argv: () => ['list', '--nope'],
+        })
+        .command('list', (c) => c.action(() => 'listed'));
+
+      program.cli();
+      expect(errors.at(-1)).toBe('\nRun "app list --help" for usage.');
+      expect(errors.some((e) => e.includes('Usage:'))).toBe(false);
     });
 
     it('should be a RoutingError with suggestions', () => {

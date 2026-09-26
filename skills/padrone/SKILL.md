@@ -59,6 +59,7 @@ program.cli();
 | Method | Purpose |
 |---|---|
 | `.arguments(schema, meta?)` | Define options/args with a Standard Schema |
+| `.globalArgs(schema, meta?)` | Options for this command and all subcommands (before or after the subcommand name), merged into their args. Subcommands override by redefining a field, or extend via `.globalArgs((inherited) => inherited.extend({...}))` |
 | `.action(handler?)` | Set the command handler `(args, ctx, base?) => result` |
 | `.command(name, builderFn?)` | Add or extend a subcommand |
 | `.context(transform?)` | Define typed context or transform inherited context |

@@ -140,6 +140,19 @@ type ArgsMeta = {
 };
 ```
 
+### `.globalArgs(schema, meta?)`
+
+Options accepted by this command and every subcommand below it, before or after the subcommand name. Values are merged into each command's `args` (typed). A subcommand's own field of the same name overrides the global; the function form extends the inherited globals for a subtree.
+
+```ts
+createPadrone('app')
+  .globalArgs(z.object({ verbose: z.boolean().optional().meta({ flags: 'v' }) }))
+  .command('deploy', (c) => c.arguments(z.object({ env: z.string() })).action((args) => args.verbose))
+  .command('cloud', (c) => c.globalArgs((inherited) => inherited.extend({ region: z.string().optional() })))
+```
+
+`meta`: `{ fields?, autoAlias? }`. Validated separately from `.arguments()`; shown under "Global Options" in help; merged into MCP/serve input schemas.
+
 ### `.context(transform?)`
 
 Sets or transforms the typed context for this command. Context flows through the command tree — subcommands inherit the parent's context type.

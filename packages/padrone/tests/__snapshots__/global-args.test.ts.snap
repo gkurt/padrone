@@ -1,0 +1,23 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`globalArgs help snapshot 1`] = `
+"Usage: app deploy [command] <env> [options]
+
+Commands:
+  [default]  
+  status     
+
+Run "deploy [command] --help" for more information on a command.
+
+Arguments:
+  env  
+
+Options:
+      --replicas  [number]  
+
+Global Options:
+  -v, --verbose             
+      --profile   [string]  (default: default)
+      --format    [string]  (choices: text, json)
+"
+`;

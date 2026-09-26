@@ -1,4 +1,4 @@
-import type { AnyPadroneCommand } from '../types/index.ts';
+import type { AnyPadroneCommand, PadroneGlobalArgsMeta, PadroneSchema } from '../types/index.ts';
 import { extractSchemaMetadata, getJsonSchema } from './args.ts';
 import { resolveRuntime } from './default-runtime.ts';
 import type { ResolvedPadroneRuntime } from './runtime.ts';
@@ -63,6 +63,8 @@ export function mergeCommands(existing: AnyPadroneCommand, override: AnyPadroneC
   // Override fields: take from override if explicitly set (not inherited from existing via spread)
   if (override.action !== existing.action) merged.action = override.action;
   if (override.argsSchema !== existing.argsSchema) merged.argsSchema = override.argsSchema;
+  if (override.globalArgsSchema !== existing.globalArgsSchema) merged.globalArgsSchema = override.globalArgsSchema;
+  if (override.globalArgsMeta !== existing.globalArgsMeta) merged.globalArgsMeta = override.globalArgsMeta;
   if (override.meta !== existing.meta) merged.meta = override.meta;
   if (override.isAsync !== existing.isAsync) merged.isAsync = override.isAsync || existing.isAsync;
   if (override.runtime !== existing.runtime) merged.runtime = override.runtime;
@@ -83,6 +85,14 @@ export function mergeCommands(existing: AnyPadroneCommand, override: AnyPadroneC
   }
 
   return merged;
+}
+
+/** The global args in effect for a command: its own `.globalArgs()`, or else the nearest ancestor's. */
+export function getGlobalArgs(command: AnyPadroneCommand): { schema: PadroneSchema; meta?: PadroneGlobalArgsMeta } | undefined {
+  for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
+    if (current.globalArgsSchema) return { schema: current.globalArgsSchema, meta: current.globalArgsMeta };
+  }
+  return undefined;
 }
 
 /**
@@ -345,14 +355,35 @@ export function collectEndpoints(commands: AnyPadroneCommand[] | undefined, pref
 
 /** Build the JSON Schema for a command's arguments. */
 export function buildInputSchema(cmd: AnyPadroneCommand): Record<string, unknown> {
-  if (!cmd.argsSchema) {
-    return { type: 'object', additionalProperties: false };
-  }
+  const empty = { type: 'object', additionalProperties: false };
+  let own: Record<string, any> = empty;
   try {
-    return getJsonSchema(cmd.argsSchema) as Record<string, unknown>;
+    if (cmd.argsSchema) own = getJsonSchema(cmd.argsSchema);
+  } catch {}
+
+  // Merge in the global args in effect; the command's own properties win
+  const globalSchema = getGlobalArgs(cmd)?.schema;
+  if (!globalSchema) return own;
+  let globals: Record<string, any>;
+  try {
+    globals = getJsonSchema(globalSchema);
   } catch {
-    return { type: 'object', additionalProperties: false };
+    return own;
   }
+  if (globals.type !== 'object' || !globals.properties || (own !== empty && own.type !== 'object')) return own;
+
+  const ownProperties: Record<string, unknown> = own.properties ?? {};
+  const globalOnly = Object.keys(globals.properties).filter((key) => !(key in ownProperties));
+  const required = [
+    ...(own.required ?? []),
+    ...((globals.required as string[] | undefined) ?? []).filter((key) => globalOnly.includes(key)),
+  ];
+  return {
+    ...own,
+    type: 'object',
+    properties: { ...Object.fromEntries(globalOnly.map((key) => [key, globals.properties[key]])), ...ownProperties },
+    ...(required.length > 0 && { required }),
+  };
 }
 
 /** Serialize a record of args into CLI flag strings. */

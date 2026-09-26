@@ -189,26 +189,43 @@ db migrate down --steps 3
 db migrate status
 ```
 
-### Sharing Options With Subcommands
+### Global Options
 
-Pass a function to `.arguments()` to extend the parent command's schema. The subcommand then accepts the parent's options too, before or after its own name:
+Options defined with `.globalArgs()` are accepted by a command and every subcommand below it, before or after the subcommand name, and merged into each command's `args`:
 
 ```typescript
 const program = createPadrone('app')
-  .arguments(z.object({ verbose: z.boolean().optional().meta({ flags: 'v' }) }))
-  .command('rm', (c) =>
+  .globalArgs(z.object({
+    verbose: z.boolean().optional().meta({ flags: 'v' }),
+    profile: z.string().default('default'),
+  }))
+  .command('deploy', (c) =>
     c
-      .arguments((parent) => parent.extend({ file: z.string() }), { positional: ['file'] })
-      .action((args) => args), // { verbose?: boolean; file: string }
+      .arguments(z.object({ env: z.string() }), { positional: ['env'] })
+      .action((args) => args), // { verbose?: boolean; profile: string; env: string }
   );
 ```
 
 ```bash
-app rm x.txt -v
-app -v rm x.txt
+app deploy prod -v --profile ci
+app -v --profile ci deploy prod
 ```
 
-Define the parent's schema before its subcommands so the parameter is typed.
+A subcommand can **override** a global by defining a field with the same name in its own `.arguments()`, or **extend** the globals for its subtree with the function form:
+
+```typescript
+program
+  .command('scale', (c) => c.arguments(z.object({ verbose: z.number().optional() })).action((args) => args.verbose)) // number
+  .command('cloud', (c) =>
+    c
+      .globalArgs((inherited) => inherited.extend({ region: z.string().optional() }))
+      .command('up', (u) => u.action((args) => args.region)),
+  );
+```
+
+Global args are validated against their own schema and listed under "Global Options" in help.
+
+To copy a parent's options into a single subcommand instead, pass a function to `.arguments()`: `.arguments((parent) => parent.extend({ file: z.string() }))`. Define the parent's schema before its subcommands so the parameter is typed.
 
 ## Environment Variables
 

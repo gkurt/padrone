@@ -1,3 +1,4 @@
+import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { PadroneBuilder, PadroneProgram } from '../types/builder.ts';
 import type { AnyPadroneCommand, PadroneCommand } from '../types/index.ts';
 import type { PadroneSchema } from '../types/schema.ts';
@@ -166,6 +167,28 @@ type ReplaceInTuple<TCommands extends AnyPadroneCommand[], TName extends string,
     : TCommands[K];
 };
 
+type NoArgs = void | undefined;
+
+/** Global args merged under a command's own args; the command's own fields win. */
+type MergeGlobalArgs<TGlobal, TOwn> = [Exclude<TGlobal, NoArgs>] extends [never]
+  ? TOwn
+  : [Exclude<TOwn, NoArgs>] extends [never]
+    ? Exclude<TGlobal, NoArgs>
+    : Omit<Exclude<TGlobal, NoArgs>, keyof Exclude<TOwn, NoArgs>> & Exclude<TOwn, NoArgs>;
+
+/**
+ * The args schema a command effectively accepts: its own, plus the global args in effect.
+ * Without global args (`PadroneSchema<void>`), this is the command's own schema unchanged.
+ */
+export type WithGlobalArgs<TArgs extends PadroneSchema, TGlobals extends PadroneSchema> = [
+  Exclude<StandardSchemaV1.InferOutput<TGlobals>, NoArgs>,
+] extends [never]
+  ? TArgs
+  : PadroneSchema<
+      MergeGlobalArgs<StandardSchemaV1.InferInput<TGlobals>, StandardSchemaV1.InferInput<TArgs>>,
+      MergeGlobalArgs<StandardSchemaV1.InferOutput<TGlobals>, StandardSchemaV1.InferOutput<TArgs>>
+    >;
+
 /**
  * Utility type for extensions that add a command to a builder/program.
  * Replaces the boilerplate `With*<T>` pattern used across all extension files.
@@ -181,11 +204,12 @@ export type WithCommand<T, TName extends string, TCmd extends AnyPadroneCommand>
     async: infer AS extends boolean;
     context: infer CTX;
     contextProvided: infer CTXP;
+    globals: infer G extends PadroneSchema;
   };
 }
   ? T extends { run: any }
-    ? PadroneProgram<PN, N, PaN, A, R, ReplaceOrAppendCommand<C, TName, TCmd>, any, AS, CTX, CTXP>
-    : PadroneBuilder<PN, N, PaN, A, R, ReplaceOrAppendCommand<C, TName, TCmd>, any, AS, CTX, CTXP>
+    ? PadroneProgram<PN, N, PaN, A, R, ReplaceOrAppendCommand<C, TName, TCmd>, any, AS, CTX, CTXP, G>
+    : PadroneBuilder<PN, N, PaN, A, R, ReplaceOrAppendCommand<C, TName, TCmd>, any, AS, CTX, CTXP, G>
   : T;
 
 /**
@@ -203,11 +227,12 @@ export type WithInterceptor<T, TProvides> = T extends {
     async: infer AS extends boolean;
     context: infer CTX;
     contextProvided: infer CTXP;
+    globals: infer G extends PadroneSchema;
   };
 }
   ? T extends { run: any }
-    ? PadroneProgram<PN, N, PaN, A, R, C, any, AS, CTX, CTXP & TProvides>
-    : PadroneBuilder<PN, N, PaN, A, R, C, any, AS, CTX, CTXP & TProvides>
+    ? PadroneProgram<PN, N, PaN, A, R, C, any, AS, CTX, CTXP & TProvides, G>
+    : PadroneBuilder<PN, N, PaN, A, R, C, any, AS, CTX, CTXP & TProvides, G>
   : T;
 
 /**
@@ -225,11 +250,12 @@ export type WithAsync<T> = T extends {
     async: any;
     context: infer CTX;
     contextProvided: infer CTXP;
+    globals: infer G extends PadroneSchema;
   };
 }
   ? T extends { run: any }
-    ? PadroneProgram<PN, N, PaN, A, R, C, any, true, CTX, CTXP>
-    : PadroneBuilder<PN, N, PaN, A, R, C, any, true, CTX, CTXP>
+    ? PadroneProgram<PN, N, PaN, A, R, C, any, true, CTX, CTXP, G>
+    : PadroneBuilder<PN, N, PaN, A, R, C, any, true, CTX, CTXP, G>
   : T;
 
 export type PickCommandByName<

@@ -122,6 +122,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | Method | What it does |
 |--------|-------------|
 | `.arguments(schema, meta?)` | Define args with Zod schema, positional config, field metadata |
+| `.globalArgs(schema, meta?)` | Define options shared by a command and all its subcommands, merged into their args |
 | `.action(handler)` | Set handler `(args, ctx, base?) => result` |
 | `.command(name, builder)` | Add subcommand (name or `[name, ...aliases]`) |
 | `.context(transform?)` | Define typed context or transform inherited context |

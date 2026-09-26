@@ -1,7 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { PadroneRuntime, ResolvedPadroneRuntime } from '../core/runtime.ts';
 import type { FullCommandName } from '../util/type-utils.ts';
-import type { PadroneArgsSchemaMeta } from './args-meta.ts';
+import type { PadroneArgsSchemaMeta, PadroneGlobalArgsMeta } from './args-meta.ts';
 import type { AnyPadroneProgram } from './builder.ts';
 import type { RegisteredInterceptor } from './interceptor.ts';
 import type { PadroneSchema } from './schema.ts';
@@ -110,6 +110,12 @@ export type PadroneCommand<
   examples?: string[];
   argsSchema?: TArgs;
   meta?: GetArgsMeta<TArgs>;
+  /**
+   * Options accepted by this command and every subcommand below it, anywhere on the command line.
+   * Their values are merged into each command's args; a command's own field of the same name wins. Set by `.globalArgs()`.
+   */
+  globalArgsSchema?: PadroneSchema;
+  globalArgsMeta?: PadroneGlobalArgsMeta;
   action?: (args: StandardSchemaV1.InferOutput<TArgs>, ctx: PadroneActionContext<TContext & TContextProvided>) => TRes;
   /** Runtime flag indicating this command uses async validation. Set by `.async()` or `asyncSchema()`. */
   isAsync?: boolean;

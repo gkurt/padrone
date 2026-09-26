@@ -538,3 +538,45 @@ test('function-form arguments infer the extended schema, with meta', () => {
         }),
     );
 });
+
+test('globalArgs are merged into args, and a subcommand can override or extend them', () => {
+  const program = createPadrone('app')
+    .globalArgs(z.object({ verbose: z.boolean().optional(), profile: z.string().default('default') }))
+    .command('deploy', (c) =>
+      c.arguments(z.object({ env: z.string() }), { positional: ['env'] }).action((args) => {
+        expectTypeOf(args).toEqualTypeOf<{ verbose?: boolean; profile: string } & { env: string }>();
+        return args.env;
+      }),
+    )
+    .command('logs', (c) =>
+      c.action((args) => {
+        expectTypeOf(args).toEqualTypeOf<{ verbose?: boolean; profile: string }>();
+      }),
+    )
+    .command('scale', (c) =>
+      c.arguments(z.object({ verbose: z.number().optional() })).action((args) => {
+        expectTypeOf(args.verbose).toEqualTypeOf<number | undefined>();
+        expectTypeOf(args.profile).toEqualTypeOf<string>();
+      }),
+    )
+    .command('cloud', (c) =>
+      c
+        .globalArgs((inherited) => inherited.extend({ region: z.string().optional() }))
+        .command('up', (u) =>
+          u.action((args) => {
+            expectTypeOf(args.region).toEqualTypeOf<string | undefined>();
+            expectTypeOf(args.profile).toEqualTypeOf<string>();
+          }),
+        ),
+    );
+
+  program.run('deploy', { env: 'prod', verbose: true });
+  expectTypeOf(program.parse('deploy prod')).toMatchTypeOf<{ args?: { env: string; profile: string } }>();
+
+  // Without globalArgs, args types are unchanged
+  createPadrone('plain').command('x', (c) =>
+    c.arguments(z.object({ a: z.string() })).action((args) => {
+      expectTypeOf(args).toEqualTypeOf<{ a: string }>();
+    }),
+  );
+});

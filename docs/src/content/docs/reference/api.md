@@ -109,6 +109,39 @@ program.arguments(
 
 When `interactive` or `optionalInteractive` is set, the command becomes async — `parse()` and `cli()` return Promises.
 
+`schema` can also be a function receiving the parent command's schema, to extend it: `.arguments((parent) => parent.extend({ file: z.string() }))`. To share options with a whole subtree, prefer [`.globalArgs()`](#globalargsschema-meta).
+
+---
+
+### .globalArgs(schema, meta?)
+
+Define options accepted by this command and every subcommand below it, before or after the subcommand name. Their values are merged into each command's `args`.
+
+```typescript
+const program = createPadrone('app')
+  .globalArgs(z.object({
+    verbose: z.boolean().optional().meta({ flags: 'v' }),
+    profile: z.string().default('default'),
+  }))
+  .command('deploy', (c) =>
+    c
+      .arguments(z.object({ env: z.string() }), { positional: ['env'] })
+      .action((args) => args), // { verbose?: boolean; profile: string; env: string }
+  )
+  // Override: a field with the same name in .arguments() replaces the global for this command
+  .command('scale', (c) => c.arguments(z.object({ verbose: z.number().optional() })).action((args) => args))
+  // Extend: the function form receives the inherited globals, for this subtree
+  .command('cloud', (c) =>
+    c.globalArgs((inherited) => inherited.extend({ region: z.string().optional() })).command('up', (u) => u.action((args) => args.region)),
+  );
+```
+
+**Parameters:**
+- `schema`: A schema, or a function receiving the inherited global schema (the nearest ancestor's) and returning a new one
+- `meta` (optional): `fields` (per-field `flags`, `alias`, `description`, …) and `autoAlias`
+
+Global args are validated against their own schema, separately from each command's `.arguments()`. They are listed under **Global Options** in help, and included in the input schemas of MCP tools and serve endpoints.
+
 ---
 
 ### .context(transform?)

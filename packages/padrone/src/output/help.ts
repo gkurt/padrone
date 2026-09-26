@@ -1,7 +1,7 @@
 import type { StandardJSONSchemaV1 } from '@standard-schema/spec';
 import { extractSchemaMetadata, getJsonSchema, type PadroneArgsSchemaMeta, parsePositionalConfig } from '../core/args.ts';
-import { findCommandByName } from '../core/commands.ts';
-import type { AnyPadroneCommand } from '../types/index.ts';
+import { findCommandByName, getGlobalArgs } from '../core/commands.ts';
+import type { AnyPadroneCommand, PadroneSchema } from '../types/index.ts';
 import { getRootCommand } from '../util/utils.ts';
 import type { ColorConfig, ColorTheme } from './colorizer.ts';
 import {
@@ -75,7 +75,7 @@ function extractPositionalArgsInfo(
   return { args, positionalNames };
 }
 
-function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: PadroneArgsSchemaMeta, positionalNames?: Set<string>) {
+function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSchemaMeta, 'fields'>, positionalNames?: Set<string>) {
   const result: HelpArgumentInfo[] = [];
   if (!schema) return result;
 
@@ -165,6 +165,27 @@ function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: PadroneArgsSchemaM
   }
 
   return result;
+}
+
+/** Option info for a schema, with its short flags and aliases attached. */
+function collectOptionsInfo(
+  schema: PadroneSchema,
+  meta: Pick<PadroneArgsSchemaMeta, 'fields' | 'autoAlias'> | undefined,
+  positionalNames?: Set<string>,
+): HelpArgumentInfo[] {
+  const argsInfo = extractArgsInfo(schema, meta, positionalNames);
+  const argMap: Record<string, HelpArgumentInfo> = Object.fromEntries(argsInfo.map((arg) => [arg.name, arg]));
+
+  const { flags, aliases } = extractSchemaMetadata(schema, meta?.fields, meta?.autoAlias);
+  for (const [flag, name] of Object.entries(flags)) {
+    const arg = argMap[name];
+    if (arg) arg.flags = [...(arg.flags || []), flag];
+  }
+  for (const [alias, name] of Object.entries(aliases)) {
+    const arg = argMap[name];
+    if (arg) arg.aliases = [...(arg.aliases || []), alias];
+  }
+  return argsInfo;
 }
 
 // ============================================================================
@@ -286,30 +307,20 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
     helpInfo.positionals = positionalArgs;
   }
 
-  // Build arguments info with aliases (excluding positional args)
-  if (cmd.argsSchema) {
-    const argsInfo = extractArgsInfo(cmd.argsSchema, cmd.meta, positionalNames);
-    const argMap: Record<string, HelpArgumentInfo> = Object.fromEntries(argsInfo.map((arg) => [arg.name, arg]));
+  // Build arguments info with aliases (excluding positional args), then the global args not overridden by the command
+  const ownArgs = cmd.argsSchema ? collectOptionsInfo(cmd.argsSchema, cmd.meta, positionalNames) : [];
+  const globalArgs = getGlobalArgs(cmd);
+  const ownNames = new Set([...ownArgs.map((arg) => arg.name), ...positionalNames]);
+  const inheritedArgs = globalArgs
+    ? collectOptionsInfo(globalArgs.schema, globalArgs.meta)
+        .filter((arg) => !ownNames.has(arg.name))
+        .map((arg) => ({ ...arg, group: arg.group ?? 'Global Options' }))
+    : [];
 
-    // Merge flags and aliases into arguments
-    const { flags, aliases } = extractSchemaMetadata(cmd.argsSchema, cmd.meta?.fields, cmd.meta?.autoAlias);
-    for (const [flag, name] of Object.entries(flags)) {
-      const arg = argMap[name];
-      if (!arg) continue;
-      arg.flags = [...(arg.flags || []), flag];
-    }
-    for (const [alias, name] of Object.entries(aliases)) {
-      const arg = argMap[name];
-      if (!arg) continue;
-      arg.aliases = [...(arg.aliases || []), alias];
-    }
-
-    // Filter out hidden arguments
-    const visibleArgs = argsInfo.filter((arg) => !arg.hidden);
-    if (visibleArgs.length > 0) {
-      helpInfo.arguments = visibleArgs;
-      helpInfo.usage.hasArguments = true;
-    }
+  const visibleArgs = [...ownArgs, ...inheritedArgs].filter((arg) => !arg.hidden);
+  if (visibleArgs.length > 0) {
+    helpInfo.arguments = visibleArgs;
+    helpInfo.usage.hasArguments = true;
   }
 
   // Add global commands/flags (root command by default, all commands when --all is passed)

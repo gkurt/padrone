@@ -1,5 +1,5 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
-import type { AnyPadroneCommand, InterceptorValidateResult, PadroneInput } from '../types/index.ts';
+import type { AnyPadroneCommand, InterceptorValidateResult, PadroneGlobalArgsMeta, PadroneInput, PadroneSchema } from '../types/index.ts';
 import { camelToKebab } from '../util/shell-utils.ts';
 import {
   coerceArgs,
@@ -11,7 +11,7 @@ import {
   parsePositionalConfig,
   preprocessArgs,
 } from './args.ts';
-import { getCommandRuntime } from './commands.ts';
+import { getCommandRuntime, getGlobalArgs } from './commands.ts';
 import type { OptionArity, ParseResolver } from './parse.ts';
 import { getNestedValue, parseCliInputToParts, setNestedValue } from './parse.ts';
 import { thenMaybe } from './results.ts';
@@ -28,25 +28,37 @@ function collectInterceptorOptions(command: AnyPadroneCommand): Record<string, O
   return options;
 }
 
-type CommandOptionInfo = ReturnType<typeof extractSchemaMetadata> & {
-  /** Arity from the command's own schema. */
+type SchemaOptionInfo = ReturnType<typeof extractSchemaMetadata> & {
+  /** Arity from the schema's own properties. */
   schemaArity: (key: string[], short: boolean) => OptionArity | undefined;
-  /** Options declared by interceptors on the command chain. */
-  interceptorOptions: Record<string, OptionArity>;
   arrayArguments: Set<string>;
+  properties: Set<string>;
 };
 
-function getCommandOptionInfo(command: AnyPadroneCommand): CommandOptionInfo {
-  const metadata = command.argsSchema
-    ? extractSchemaMetadata(command.argsSchema, command.meta?.fields, command.meta?.autoAlias)
+type CommandOptionInfo = SchemaOptionInfo & {
+  /** Options declared by interceptors on the command chain. */
+  interceptorOptions: Record<string, OptionArity>;
+};
+
+function getPropertyNames(schema: PadroneSchema | undefined): Set<string> {
+  if (!schema) return new Set();
+  try {
+    const jsonSchema = getJsonSchema(schema);
+    if (jsonSchema.type === 'object' && jsonSchema.properties) return new Set(Object.keys(jsonSchema.properties));
+  } catch {}
+  return new Set();
+}
+
+function getSchemaOptionInfo(schema: PadroneSchema | undefined, meta: PadroneGlobalArgsMeta | undefined): SchemaOptionInfo {
+  const metadata = schema
+    ? extractSchemaMetadata(schema, meta?.fields, meta?.autoAlias)
     : { flags: {}, aliases: {}, negatives: {}, customNegation: new Set<string>() };
-  const schemaArity = createOptionArityLookup(command.argsSchema, metadata);
-  const interceptorOptions = collectInterceptorOptions(command);
+  const schemaArity = createOptionArityLookup(schema, metadata);
 
   const arrayArguments = new Set<string>();
-  if (command.argsSchema) {
+  if (schema) {
     try {
-      const jsonSchema = getJsonSchema(command.argsSchema) as Record<string, any>;
+      const jsonSchema = getJsonSchema(schema) as Record<string, any>;
       if (jsonSchema.type === 'object' && jsonSchema.properties) {
         for (const [key, prop] of Object.entries(jsonSchema.properties as Record<string, any>)) {
           if (getOptionArity(prop) === 'array') arrayArguments.add(key);
@@ -57,7 +69,48 @@ function getCommandOptionInfo(command: AnyPadroneCommand): CommandOptionInfo {
     }
   }
 
-  return { ...metadata, arrayArguments, schemaArity, interceptorOptions };
+  return { ...metadata, arrayArguments, schemaArity, properties: getPropertyNames(schema) };
+}
+
+/** Option info for a command: its own schema, then the global args in effect (the command's own fields win). */
+function getCommandOptionInfo(command: AnyPadroneCommand): CommandOptionInfo {
+  const own = getSchemaOptionInfo(command.argsSchema, command.meta);
+  const interceptorOptions = collectInterceptorOptions(command);
+  const globalArgs = getGlobalArgs(command);
+  if (!globalArgs) return { ...own, interceptorOptions };
+
+  const globals = getSchemaOptionInfo(globalArgs.schema, globalArgs.meta);
+  const globalOnly = (key: string) => !own.properties.has(key);
+  const pick = (entries: Record<string, string>) => Object.fromEntries(Object.entries(entries).filter(([, target]) => globalOnly(target)));
+  return {
+    flags: { ...pick(globals.flags), ...own.flags },
+    aliases: { ...pick(globals.aliases), ...own.aliases },
+    negatives: { ...pick(globals.negatives), ...own.negatives },
+    customNegation: new Set([...own.customNegation, ...[...globals.customNegation].filter(globalOnly)]),
+    arrayArguments: new Set([...own.arrayArguments, ...[...globals.arrayArguments].filter(globalOnly)]),
+    properties: new Set([...own.properties, ...globals.properties]),
+    schemaArity: (key, short) => own.schemaArity(key, short) ?? globals.schemaArity(key, short),
+    interceptorOptions,
+  };
+}
+
+/**
+ * Splits args into the command's own and the global ones. A key belongs to the globals only when
+ * the global schema defines it and the command's own schema doesn't (a command can override a global).
+ */
+function splitGlobalArgs(command: AnyPadroneCommand, args: Record<string, unknown>) {
+  const globalArgs = getGlobalArgs(command);
+  if (!globalArgs) return { own: args, globals: undefined, globalSchema: undefined };
+
+  const ownProperties = getPropertyNames(command.argsSchema);
+  const globalProperties = getPropertyNames(globalArgs.schema);
+  const own: Record<string, unknown> = {};
+  const globals: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (globalProperties.has(key) && !ownProperties.has(key)) globals[key] = value;
+    else own[key] = value;
+  }
+  return { own, globals, globalSchema: globalArgs.schema };
 }
 
 /**
@@ -285,9 +338,9 @@ export function buildCommandArgs(
     ];
   }
 
-  if (command.argsSchema) {
-    preprocessedArgs = coerceArgs(preprocessedArgs, command.argsSchema);
-  }
+  const { own, globals, globalSchema } = splitGlobalArgs(command, preprocessedArgs);
+  preprocessedArgs = command.argsSchema ? coerceArgs(own, command.argsSchema) : own;
+  if (globals && globalSchema) preprocessedArgs = { ...coerceArgs(globals, globalSchema), ...preprocessedArgs };
 
   return { args: preprocessedArgs, issues };
 }
@@ -296,7 +349,8 @@ export function buildCommandArgs(
  * Detects unknown options in args that aren't defined in the schema.
  * Returns unknown key info with suggestions, or empty array if schema is loose.
  */
-export function checkUnknownArgs(command: AnyPadroneCommand, preprocessedArgs: Record<string, unknown>): { key: string }[] {
+export function checkUnknownArgs(command: AnyPadroneCommand, args: Record<string, unknown>): { key: string }[] {
+  const preprocessedArgs = splitGlobalArgs(command, args).own;
   if (!command.argsSchema) {
     const unknowns: { key: string }[] = [];
     for (const key of Object.keys(preprocessedArgs)) {
@@ -326,28 +380,33 @@ export function validateCommandArgs(command: AnyPadroneCommand, preprocessedArgs
     return { args: undefined, argsResult: { issues } as any };
   }
 
-  const argsParsed = command.argsSchema ? command.argsSchema['~standard'].validate(preprocessedArgs) : { value: {} };
+  const { own, globals, globalSchema } = splitGlobalArgs(command, preprocessedArgs);
+  const argsParsed = command.argsSchema ? command.argsSchema['~standard'].validate(own) : { value: {} };
 
   const buildResult = (parsed: StandardSchemaV1.Result<unknown>) => ({
     args: parsed.issues ? undefined : (parsed.value as any),
     argsResult: parsed as any,
   });
 
-  return thenMaybe(argsParsed, buildResult);
+  if (!globals || !globalSchema) return thenMaybe(argsParsed, buildResult);
+
+  // Global args validate against their own schema; the command's own values win on the merged result
+  return thenMaybe(argsParsed, (ownResult) =>
+    thenMaybe(globalSchema['~standard'].validate(globals), (globalResult) => {
+      const issues = [...(globalResult.issues ?? []), ...(ownResult.issues ?? [])];
+      if (issues.length > 0) return buildResult({ issues });
+      const ownValue = ownResult.issues ? undefined : ownResult.value;
+      const globalValue = globalResult.issues ? undefined : globalResult.value;
+      return buildResult({ value: { ...(globalValue as object), ...(typeof ownValue === 'object' ? ownValue : {}) } });
+    }),
+  );
 }
 
 /**
  * Returns the list of known option names from a command's schema (for fuzzy suggestion).
  */
 export function getKnownOptionNames(command: AnyPadroneCommand): string[] {
-  if (!command.argsSchema) return [];
-  try {
-    const js = getJsonSchema(command.argsSchema) as Record<string, any>;
-    if (js.type === 'object' && js.properties) return Object.keys(js.properties);
-  } catch {
-    /* ignore */
-  }
-  return [];
+  return [...new Set([...getPropertyNames(command.argsSchema), ...getPropertyNames(getGlobalArgs(command)?.schema)])];
 }
 
 /**

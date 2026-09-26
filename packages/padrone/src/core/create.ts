@@ -20,13 +20,22 @@ import type {
   InterceptorMeta,
   PadroneBuilder,
   PadroneCommand,
+  PadroneGlobalArgsMeta,
   PadroneInput,
   PadroneInterceptorFn,
   PadroneProgram,
   PadroneSchema,
   RegisteredInterceptor,
 } from '../types/index.ts';
-import { commandSymbol, findCommandByName, lazyResolver, mergeCommands, repathCommandTree, resolveCommand } from './commands.ts';
+import {
+  commandSymbol,
+  findCommandByName,
+  getGlobalArgs,
+  lazyResolver,
+  mergeCommands,
+  repathCommandTree,
+  resolveCommand,
+} from './commands.ts';
 import { RoutingError } from './errors.ts';
 import type { ExecContext } from './exec.ts';
 import { collectInterceptors, errorResultWithSignal, execCommand } from './exec.ts';
@@ -151,6 +160,13 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
       const resolvedArgs = (typeof schema === 'function' ? schema(baseSchema) : schema) as PadroneSchema | undefined;
       const isAsync = existingCommand.isAsync || isAsyncBranded(resolvedArgs) || hasInteractiveConfig(meta);
       return createPadroneBuilder({ ...existingCommand, argsSchema: resolvedArgs, meta, isAsync }) as any;
+    },
+    globalArgs(schema?: unknown, meta?: PadroneGlobalArgsMeta) {
+      // The function form extends the globals this command inherits
+      const inherited = getGlobalArgs(existingCommand)?.schema;
+      const resolved = (typeof schema === 'function' ? schema(inherited) : schema) as PadroneSchema | undefined;
+      const isAsync = existingCommand.isAsync || isAsyncBranded(resolved);
+      return createPadroneBuilder({ ...existingCommand, globalArgsSchema: resolved, globalArgsMeta: meta, isAsync }) as any;
     },
     action(handler = noop) {
       const baseHandler = existingCommand.action ?? noop;

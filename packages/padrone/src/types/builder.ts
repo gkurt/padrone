@@ -20,8 +20,9 @@ import type {
   RepathCommands,
   ReplaceOrAppendCommand,
   SafeString,
+  WithGlobalArgs,
 } from '../util/type-utils.ts';
-import type { PadroneArgsSchemaMeta } from './args-meta.ts';
+import type { PadroneArgsSchemaMeta, PadroneGlobalArgsMeta } from './args-meta.ts';
 import type {
   AnyPadroneCommand,
   CommandTypesBase,
@@ -95,8 +96,21 @@ type InitialCommandBuilder<
   TParentArgs extends PadroneSchema,
   TCommands extends [...AnyPadroneCommand[]],
   TParentContext,
+  TParentGlobals extends PadroneSchema = PadroneSchema<void>,
 > = [FindDirectChild<TCommands, TNameNested>] extends [never]
-  ? PadroneBuilder<TProgramName, TNameNested, TParentPath, PadroneSchema<void>, void, [], TParentArgs, false, TParentContext>
+  ? PadroneBuilder<
+      TProgramName,
+      TNameNested,
+      TParentPath,
+      PadroneSchema<void>,
+      void,
+      [],
+      TParentArgs,
+      false,
+      TParentContext,
+      unknown,
+      TParentGlobals
+    >
   : FindDirectChild<TCommands, TNameNested> extends infer E extends AnyPadroneCommand
     ? PadroneBuilder<
         TProgramName,
@@ -108,11 +122,24 @@ type InitialCommandBuilder<
         TParentArgs,
         E['~types']['async'],
         E['~types']['context'],
-        E['~types']['contextProvided']
+        E['~types']['contextProvided'],
+        TParentGlobals
       >
-    : PadroneBuilder<TProgramName, TNameNested, TParentPath, PadroneSchema<void>, void, [], TParentArgs, false, TParentContext>;
+    : PadroneBuilder<
+        TProgramName,
+        TNameNested,
+        TParentPath,
+        PadroneSchema<void>,
+        void,
+        [],
+        TParentArgs,
+        false,
+        TParentContext,
+        unknown,
+        TParentGlobals
+      >;
 
-export type AnyPadroneBuilder = InitialCommandBuilder<string, string, string, PadroneSchema, [...AnyPadroneCommand[]], unknown>;
+export type AnyPadroneBuilder = InitialCommandBuilder<string, string, string, PadroneSchema, [...AnyPadroneCommand[]], unknown, any>;
 
 /**
  * Like InitialCommandBuilder but uses `any` for args in the fresh case.
@@ -125,8 +152,9 @@ type DefaultCommandBuilder<
   TParentArgs extends PadroneSchema,
   TCommands extends [...AnyPadroneCommand[]],
   TParentContext,
+  TParentGlobals extends PadroneSchema = PadroneSchema<void>,
 > = [FindDirectChild<TCommands, TNameNested>] extends [never]
-  ? PadroneBuilder<TProgramName, TNameNested, TParentPath, any, void, [], TParentArgs, false, TParentContext>
+  ? PadroneBuilder<TProgramName, TNameNested, TParentPath, any, void, [], TParentArgs, false, TParentContext, unknown, TParentGlobals>
   : FindDirectChild<TCommands, TNameNested> extends infer E extends AnyPadroneCommand
     ? PadroneBuilder<
         TProgramName,
@@ -138,9 +166,10 @@ type DefaultCommandBuilder<
         TParentArgs,
         E['~types']['async'],
         E['~types']['context'],
-        E['~types']['contextProvided']
+        E['~types']['contextProvided'],
+        TParentGlobals
       >
-    : PadroneBuilder<TProgramName, TNameNested, TParentPath, any, void, [], TParentArgs, false, TParentContext>;
+    : PadroneBuilder<TProgramName, TNameNested, TParentPath, any, void, [], TParentArgs, false, TParentContext, unknown, TParentGlobals>;
 
 /**
  * Conditional type that returns either PadroneBuilder or PadroneProgram based on TReturn.
@@ -158,9 +187,10 @@ type BuilderOrProgram<
   TAsync extends boolean,
   TContext,
   TContextProvided = unknown,
+  TGlobals extends PadroneSchema = PadroneSchema<void>,
 > = TReturn extends 'builder'
-  ? PadroneBuilder<TProgramName, TName, TParentName, TArgs, TRes, TCommands, TParentArgs, TAsync, TContext, TContextProvided>
-  : PadroneProgram<TProgramName, TName, TParentName, TArgs, TRes, TCommands, TParentArgs, TAsync, TContext, TContextProvided>;
+  ? PadroneBuilder<TProgramName, TName, TParentName, TArgs, TRes, TCommands, TParentArgs, TAsync, TContext, TContextProvided, TGlobals>
+  : PadroneProgram<TProgramName, TName, TParentName, TArgs, TRes, TCommands, TParentArgs, TAsync, TContext, TContextProvided, TGlobals>;
 
 /**
  * Base builder methods shared between PadroneBuilder and PadroneProgram.
@@ -177,13 +207,28 @@ export type PadroneBuilderMethods<
   TAsync extends boolean,
   TContext,
   TContextProvided,
+  /** The global args in effect for this command (its own `.globalArgs()` or the nearest ancestor's) */
+  TGlobals extends PadroneSchema,
   /** The return type for builder methods - either PadroneBuilder or PadroneProgram */
   TReturn extends 'builder' | 'program',
 > = {
   /** Apply a build-time extension that transforms this builder/program. @category Builder */
   extend: <TResult extends CommandTypesBase>(
     extension: PadroneExtension<
-      BuilderOrProgram<TReturn, TProgramName, TName, TParentName, TArgs, TRes, TCommands, TParentArgs, TAsync, TContext, TContextProvided>,
+      BuilderOrProgram<
+        TReturn,
+        TProgramName,
+        TName,
+        TParentName,
+        TArgs,
+        TRes,
+        TCommands,
+        TParentArgs,
+        TAsync,
+        TContext,
+        TContextProvided,
+        TGlobals
+      >,
       TResult
     >,
   ) => TResult;
@@ -205,31 +250,84 @@ export type PadroneBuilderMethods<
           TParentArgs,
           TAsync,
           TContext,
-          TContextProvided & ExtractInterceptorContext<TInterceptor>
+          TContextProvided & ExtractInterceptorContext<TInterceptor>,
+          TGlobals
         >
       : InterceptorRequiresError;
     /** Plain interceptor — no context change. Rejects if required context is not satisfied. */
     <TInterceptor extends PadroneInterceptorFn<StandardSchemaV1.InferOutput<TArgs>, TRes, any>>(
       interceptor: TInterceptor,
     ): InterceptorRequiresCheck<TInterceptor, TContext & TContextProvided> extends true
-      ? BuilderOrProgram<TReturn, TProgramName, TName, TParentName, TArgs, TRes, TCommands, TParentArgs, TAsync, TContext, TContextProvided>
+      ? BuilderOrProgram<
+          TReturn,
+          TProgramName,
+          TName,
+          TParentName,
+          TArgs,
+          TRes,
+          TCommands,
+          TParentArgs,
+          TAsync,
+          TContext,
+          TContextProvided,
+          TGlobals
+        >
       : InterceptorRequiresError;
     /** Register an interceptor with static metadata and a factory function. Context is strongly typed. */
     (
       meta: InterceptorMeta,
       factory: InterceptorFactory<StandardSchemaV1.InferOutput<TArgs>, TRes, TContext & TContextProvided>,
-    ): BuilderOrProgram<TReturn, TProgramName, TName, TParentName, TArgs, TRes, TCommands, TParentArgs, TAsync, TContext, TContextProvided>;
+    ): BuilderOrProgram<
+      TReturn,
+      TProgramName,
+      TName,
+      TParentName,
+      TArgs,
+      TRes,
+      TCommands,
+      TParentArgs,
+      TAsync,
+      TContext,
+      TContextProvided,
+      TGlobals
+    >;
   };
 
   /** Set command metadata like title, description, version, hidden, deprecated, etc. @category Builder */
   configure: (
     config: PadroneCommandConfig,
-  ) => BuilderOrProgram<TReturn, TProgramName, TName, TParentName, TArgs, TRes, TCommands, TParentArgs, TAsync, TContext, TContextProvided>;
+  ) => BuilderOrProgram<
+    TReturn,
+    TProgramName,
+    TName,
+    TParentName,
+    TArgs,
+    TRes,
+    TCommands,
+    TParentArgs,
+    TAsync,
+    TContext,
+    TContextProvided,
+    TGlobals
+  >;
 
   /** Override the runtime adapter (process, IO, environment). @category Builder */
   runtime: (
     runtime: PadroneRuntime,
-  ) => BuilderOrProgram<TReturn, TProgramName, TName, TParentName, TArgs, TRes, TCommands, TParentArgs, TAsync, TContext, TContextProvided>;
+  ) => BuilderOrProgram<
+    TReturn,
+    TProgramName,
+    TName,
+    TParentName,
+    TArgs,
+    TRes,
+    TCommands,
+    TParentArgs,
+    TAsync,
+    TContext,
+    TContextProvided,
+    TGlobals
+  >;
 
   /** Mark this command as async, forcing all return types to be `Promise`-wrapped. @category Builder */
   async: () => BuilderOrProgram<
@@ -243,7 +341,8 @@ export type PadroneBuilderMethods<
     TParentArgs,
     true,
     TContext,
-    TContextProvided
+    TContextProvided,
+    TGlobals
   >;
 
   /**
@@ -267,7 +366,8 @@ export type PadroneBuilderMethods<
       TParentArgs,
       TAsync,
       TNewContext,
-      TContextProvided
+      TContextProvided,
+      TGlobals
     >;
     <TNewContext>(
       transform: (ctx: TContext) => TNewContext,
@@ -282,7 +382,8 @@ export type PadroneBuilderMethods<
       TParentArgs,
       TAsync,
       TNewContext,
-      TContextProvided
+      TContextProvided,
+      TGlobals
     >;
   };
 
@@ -308,7 +409,8 @@ export type PadroneBuilderMethods<
       TParentArgs,
       OrAsyncMeta<OrAsync<TAsync, TNewArgs>, TMeta>,
       TContext,
-      TContextProvided
+      TContextProvided,
+      TGlobals
     >;
     <TNewArgs extends PadroneSchema = PadroneSchema<void>, TMeta extends GetArgsMeta<TNewArgs> = GetArgsMeta<TNewArgs>>(
       schema?: TNewArgs,
@@ -324,16 +426,64 @@ export type PadroneBuilderMethods<
       TParentArgs,
       OrAsyncMeta<OrAsync<TAsync, TNewArgs>, TMeta>,
       TContext,
-      TContextProvided
+      TContextProvided,
+      TGlobals
+    >;
+  };
+
+  /**
+   * Define options accepted by this command and every subcommand below it, before or after the subcommand name.
+   * Their values are merged into each command's `args`. A subcommand can override a global by defining a field
+   * of the same name in its own `.arguments()`, or extend the globals for its subtree with the function form:
+   * `.globalArgs((inherited) => inherited.extend({ ... }))`.
+   * @category Builder
+   */
+  globalArgs: {
+    <TNewGlobals extends PadroneSchema>(
+      schema: (inherited: TGlobals) => TNewGlobals,
+      meta?: PadroneGlobalArgsMeta,
+    ): BuilderOrProgram<
+      TReturn,
+      TProgramName,
+      TName,
+      TParentName,
+      TArgs,
+      TRes,
+      TCommands,
+      TParentArgs,
+      OrAsync<TAsync, TNewGlobals>,
+      TContext,
+      TContextProvided,
+      TNewGlobals
+    >;
+    <TNewGlobals extends PadroneSchema>(
+      schema: TNewGlobals,
+      meta?: PadroneGlobalArgsMeta<NonNullable<StandardSchemaV1.InferInput<TNewGlobals>>>,
+    ): BuilderOrProgram<
+      TReturn,
+      TProgramName,
+      TName,
+      TParentName,
+      TArgs,
+      TRes,
+      TCommands,
+      TParentArgs,
+      OrAsync<TAsync, TNewGlobals>,
+      TContext,
+      TContextProvided,
+      TNewGlobals
     >;
   };
 
   /** Set the handler function that runs when this command is executed. @category Builder */
   action: <TNewRes>(
     handler?: (
-      args: StandardSchemaV1.InferOutput<TArgs>,
+      args: StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>,
       ctx: PadroneActionContext<TContext & TContextProvided>,
-      base: (args: StandardSchemaV1.InferOutput<TArgs>, ctx: PadroneActionContext<TContext & TContextProvided>) => TRes,
+      base: (
+        args: StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>,
+        ctx: PadroneActionContext<TContext & TContextProvided>,
+      ) => TRes,
     ) => TNewRes,
   ) => BuilderOrProgram<
     TReturn,
@@ -346,7 +496,8 @@ export type PadroneBuilderMethods<
     TParentArgs,
     TAsync,
     TContext,
-    TContextProvided
+    TContextProvided,
+    TGlobals
   >;
 
   /** Wrap an external CLI tool, delegating execution to a shell command. @category Builder */
@@ -363,7 +514,8 @@ export type PadroneBuilderMethods<
     TParentArgs,
     TAsync,
     TContext,
-    TContextProvided
+    TContextProvided,
+    TGlobals
   >;
 
   /** Add or override a subcommand. Pass a builder function to define its schema, action, and nested commands. @category Builder */
@@ -377,7 +529,8 @@ export type PadroneBuilderMethods<
         FullCommandName<TName, TParentName>,
         TArgs,
         TCommands,
-        TContext & TContextProvided
+        TContext & TContextProvided,
+        TGlobals
       >,
     >(
       name: TNameNested | readonly [TNameNested, ...TAliases],
@@ -388,7 +541,8 @@ export type PadroneBuilderMethods<
           FullCommandName<TName, TParentName>,
           TArgs,
           TCommands,
-          TContext & TContextProvided
+          TContext & TContextProvided,
+          TGlobals
         >,
       ) => TBuilder,
     ): BuilderOrProgram<
@@ -410,7 +564,8 @@ export type PadroneBuilderMethods<
       TParentArgs,
       TAsync,
       TContext,
-      TContextProvided
+      TContextProvided,
+      TGlobals
     >;
     // Overload for defineCommand.requires() branded callbacks — validates context requirements
     <TNameNested extends string, TAliases extends string[] = [], TBuilder extends CommandTypesBase = CommandTypesBase, TReq = unknown>(
@@ -436,7 +591,8 @@ export type PadroneBuilderMethods<
           TParentArgs,
           TAsync,
           TContext,
-          TContextProvided
+          TContextProvided,
+          TGlobals
         >
       : DefineCommandRequiresError;
     // Fallback overload: accepts DefineCommand-typed callbacks where the builder type is not structurally compatible
@@ -464,7 +620,8 @@ export type PadroneBuilderMethods<
       TParentArgs,
       TAsync,
       TContext,
-      TContextProvided
+      TContextProvided,
+      TGlobals
     >;
   };
 
@@ -541,7 +698,8 @@ export type PadroneBuilderMethods<
       TParentArgs,
       TAsync,
       TContext,
-      TContextProvided
+      TContextProvided,
+      TGlobals
     >;
 
     <
@@ -621,7 +779,8 @@ export type PadroneBuilderMethods<
       TParentArgs,
       TAsync,
       TContext,
-      TContextProvided
+      TContextProvided,
+      TGlobals
     >;
   };
 
@@ -638,7 +797,8 @@ export type PadroneBuilderMethods<
     async: TAsync;
     context: TContext;
     contextProvided: TContextProvided;
-    command: PadroneCommand<TName, TParentName, TArgs, TRes, TCommands, [], TAsync, TContext, TContextProvided>;
+    globals: TGlobals;
+    command: PadroneCommand<TName, TParentName, WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands, [], TAsync, TContext, TContextProvided>;
   };
 };
 
@@ -653,6 +813,7 @@ export type PadroneBuilder<
   TAsync extends boolean = false,
   TContext = unknown,
   TContextProvided = unknown,
+  TGlobals extends PadroneSchema = PadroneSchema<void>,
 > = PadroneBuilderMethods<
   TProgramName,
   TName,
@@ -664,6 +825,7 @@ export type PadroneBuilder<
   TAsync,
   TContext,
   TContextProvided,
+  TGlobals,
   'builder'
 >;
 
@@ -678,6 +840,7 @@ export type PadroneProgram<
   TAsync extends boolean = false,
   TContext = unknown,
   TContextProvided = unknown,
+  TGlobals extends PadroneSchema = PadroneSchema<void>,
 > = PadroneBuilderMethods<
   TProgramName,
   TName,
@@ -689,66 +852,78 @@ export type PadroneProgram<
   TAsync,
   TContext,
   TContextProvided,
+  TGlobals,
   'program'
 > & {
   /** Execute a command by name with pre-validated args (skips parsing and validation). @category Execution */
-  run: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], true, true>>(
+  run: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], true, true>>(
     name: TCommand | SafeString,
-    args: NoInfer<GetArguments<'in', PickCommandByName<[PadroneCommand<'', '', TArgs, TRes, TCommands>], TCommand>>>,
+    args: NoInfer<
+      GetArguments<'in', PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>
+    >,
     prefs?: ContextParam<TContext>,
-  ) => PadroneCommandResult<PickCommandByName<[PadroneCommand<'', '', TArgs, TRes, TCommands>], TCommand>>;
+  ) => PadroneCommandResult<PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>;
 
   /**
    * Parse and execute input through the full interceptor pipeline. A string is tokenized (honoring quotes);
    * an array is taken as already-tokenized argv, one entry per argument. @category Execution
    */
-  eval: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], true, true>>(
+  eval: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], true, true>>(
     input: TCommand | SafeString | readonly string[],
     prefs?: PadroneEvalPreferences & ContextParam<TContext>,
   ) => MaybePromiseCommandResult<
-    PickCommandByPossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], TCommand>,
-    PickCommandByPossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], TCommand>['~types']['async']
+    PickCommandByPossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>,
+    PickCommandByPossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>['~types']['async']
   >;
 
   /** Parse and execute from `process.argv` through the full interceptor pipeline. @category Execution */
   cli: (
     prefs?: PadroneCliPreferences & ContextParam<TContext>,
-  ) => MaybePromiseCommandResult<FlattenCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>]>, TAsync>;
+  ) => MaybePromiseCommandResult<FlattenCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>, TAsync>;
 
   /** Parse and validate input (a string, or argv as an array) without executing the action. @category Execution */
-  parse: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], true, false>>(
+  parse: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], true, false>>(
     input?: TCommand | SafeString | readonly string[],
   ) => MaybePromise<
-    PadroneParseResult<PickCommandByPossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], TCommand>>,
-    PickCommandByPossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], TCommand>['~types']['async']
+    PadroneParseResult<PickCommandByPossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>,
+    PickCommandByPossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>['~types']['async']
   >;
 
   /** Serialize args back into a CLI string. @category Utility */
-  stringify: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], false, true>>(
+  stringify: <
+    const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], false, true>,
+  >(
     command?: TCommand | SafeString,
-    args?: GetArguments<'out', PickCommandByPossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], TCommand>>,
+    args?: GetArguments<
+      'out',
+      PickCommandByPossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>
+    >,
   ) => string;
 
   /** Look up a command definition by name. @category Utility */
-  find: <const TFind extends PossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], false, true>>(
+  find: <const TFind extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], false, true>>(
     command: TFind | SafeString,
-  ) => PickCommandByPossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], TFind> | undefined;
+  ) => PickCommandByPossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TFind> | undefined;
 
   /** Get a structured API representation of all commands. @category Utility */
-  api: () => PadroneAPI<PadroneCommand<'', '', TArgs, TRes, TCommands>>;
+  api: () => PadroneAPI<PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>>;
 
   /** Start an interactive REPL session. @category Execution */
-  repl: (options?: PadroneReplPreferences<PossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>]>>) => AsyncIterable<
-    PadroneCommandResult<FlattenCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>]>>
-  > & {
-    drain: () => Promise<PadroneDrainResult<PadroneCommandResult<FlattenCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>]>>[]>>;
+  repl: (
+    options?: PadroneReplPreferences<PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>>,
+  ) => AsyncIterable<PadroneCommandResult<FlattenCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>>> & {
+    drain: () => Promise<
+      PadroneDrainResult<
+        PadroneCommandResult<FlattenCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>>[]
+      >
+    >;
   };
 
   /** Export as an AI SDK tool. @category Utility */
   tool: () => Tool<{ command: string }>;
 
   /** Generate help text for a command. @category Utility */
-  help: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', TArgs, TRes, TCommands>], false, true>>(
+  help: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], false, true>>(
     command?: TCommand,
     prefs?: HelpPreferences,
   ) => string;

@@ -29,7 +29,10 @@ function collectInterceptorOptions(command: AnyPadroneCommand): Record<string, O
 }
 
 type CommandOptionInfo = ReturnType<typeof extractSchemaMetadata> & {
-  arity: (key: string[], short: boolean) => OptionArity | undefined;
+  /** Arity from the command's own schema. */
+  schemaArity: (key: string[], short: boolean) => OptionArity | undefined;
+  /** Options declared by interceptors on the command chain. */
+  interceptorOptions: Record<string, OptionArity>;
   arrayArguments: Set<string>;
 };
 
@@ -54,11 +57,7 @@ function getCommandOptionInfo(command: AnyPadroneCommand): CommandOptionInfo {
     }
   }
 
-  return {
-    ...metadata,
-    arrayArguments,
-    arity: (key, short) => schemaArity(key, short) ?? (key.length === 1 ? interceptorOptions[key[0]!] : undefined),
-  };
+  return { ...metadata, arrayArguments, schemaArity, interceptorOptions };
 }
 
 /**
@@ -81,7 +80,17 @@ export function createParseResolver(
   };
 
   return {
-    arity: (key, short) => info(current).arity(key, short),
+    // The current command's schema, then its default subcommand's (options typed before a default
+    // subcommand belong to it), then options declared by interceptors.
+    arity(key, short) {
+      const own = info(current);
+      const defaultCommand = findCommandByName('', current.commands);
+      return (
+        own.schemaArity(key, short) ??
+        (defaultCommand ? info(defaultCommand).schemaArity(key, short) : undefined) ??
+        (key.length === 1 ? own.interceptorOptions[key[0]!] : undefined)
+      );
+    },
     isCommand: (term) => routing && !!findCommandByName(term, current.commands),
     enter(term) {
       const isFirst = first;

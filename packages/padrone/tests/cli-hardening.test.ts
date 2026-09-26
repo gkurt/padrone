@@ -61,6 +61,15 @@ describe('CLI hardening', () => {
       expect(createProgram().eval(['build', '--verbose', 'false', 'x.txt']).args).toEqual({ verbose: false, file: 'x.txt' });
     });
 
+    it('uses the default subcommand schema for options typed at the root', () => {
+      const program = createPadrone('app').command('', (c) =>
+        c
+          .arguments(z.object({ file: z.string().optional(), verbose: z.boolean().optional() }), { positional: ['file'] })
+          .action((args) => args),
+      );
+      expect(program.eval(['--verbose', 'x.txt']).args).toEqual({ verbose: true, file: 'x.txt' });
+    });
+
     it('keeps a subcommand after built-in flags like --help', () => {
       const result = createProgram().eval(['--help', 'build']);
       expect(result.command?.name).toBe('build');
@@ -277,5 +286,76 @@ describe('deprecation warnings', () => {
     deprecatedProgram(errors, ['build', '--new-flag']).cli();
     deprecatedProgram(errors, []).eval(['build', '--old-flag']);
     expect(errors).toEqual([]);
+  });
+});
+
+describe('parser fuzzing', () => {
+  const pieces = [
+    'build',
+    'group',
+    'sub',
+    'help',
+    'x.txt',
+    '-',
+    '--',
+    '-v',
+    '-q',
+    '-n',
+    '-n5',
+    '-vq',
+    '-vn',
+    '-o',
+    '-oout',
+    '--verbose',
+    '--no-verbose',
+    '--name',
+    '--name=',
+    '--name=a=b',
+    '--tags',
+    '--tags=[a,b]',
+    '--tags=[',
+    '--cache',
+    '--user.id',
+    '--user.admin',
+    '--__proto__.x=1',
+    '--constructor',
+    '--prototype.y',
+    '--no-',
+    '---',
+    '-=',
+    '--=x',
+    '-5',
+    '-.5',
+    '1e3',
+    '""',
+    "'",
+    '[a,b]',
+    'true',
+    'off',
+    '--help',
+    '-h',
+    '--version',
+    '--repl',
+    '--color',
+    'é',
+    ' ',
+  ];
+
+  // Deterministic PRNG so failures are reproducible
+  let seed = 42;
+  const random = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+
+  it('never throws or touches prototypes on random argv and string input', () => {
+    for (let run = 0; run < 1500; run++) {
+      const argv = Array.from({ length: Math.floor(random() * 7) }, () => pieces[Math.floor(random() * pieces.length)]!);
+      const program = createProgram();
+      const results = [program.parse(argv), program.parse(argv.join(' '))];
+      for (const result of results) expect(result).toBeDefined();
+      expect(Object.keys(Object.prototype)).toEqual([]);
+      expect(({} as Record<string, unknown>).x).toBeUndefined();
+    }
   });
 });

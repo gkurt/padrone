@@ -67,7 +67,22 @@ export interface PadroneFieldMeta {
    * Options given explicitly keep their value. @example `{ color: false }`
    */
   implies?: Record<string, unknown>;
+  /**
+   * Values shell completion offers for this option or positional (needs `padroneCompletion()`),
+   * e.g. branch names read at completion time. Enum values are offered without it.
+   */
+  complete?: (ctx: PadroneCompleteContext) => readonly string[] | Promise<readonly string[]>;
 }
+
+/** Passed to a field's `complete` callback. */
+export type PadroneCompleteContext = {
+  /** The part of the word typed so far. Candidates needn't be filtered by it; the shell does that. */
+  prefix: string;
+  /** The options typed before the word, parsed but not validated. */
+  args: Record<string, unknown>;
+  /** The command being completed, as a space-separated path (`''` for the program itself). */
+  command: string;
+};
 
 type PositionalArgs<TObj> =
   TObj extends Record<string, any>

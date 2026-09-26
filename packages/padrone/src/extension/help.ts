@@ -17,7 +17,7 @@ import type {
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
-import { findCommandInTree, frameworkFlags, markErrorReported, passthroughSchema } from './utils.ts';
+import { findCommandInTree, frameworkFlags, isErrorReported, markErrorReported, passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -160,7 +160,7 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
         },
         error(ctx, next) {
           return thenMaybe(next(), (er) => {
-            if (ctx.caller !== 'cli' || !er.error) return er;
+            if (ctx.caller !== 'cli' || !er.error || isErrorReported(er.error)) return er;
             if (!(er.error instanceof RoutingError) && !(er.error instanceof ValidationError)) return er;
 
             const rootCommand = getRootCommand(ctx.command);

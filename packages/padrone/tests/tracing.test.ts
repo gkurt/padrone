@@ -427,3 +427,63 @@ describe('padroneTracing with run() and nested commands', () => {
     expect(spans[0]!._attributes).toEqual({ 'padrone.command': 'db migrate', 'padrone.caller': 'eval' });
   });
 });
+
+describe('padroneTracing context propagation', () => {
+  // A synchronous stand-in for the OTEL context manager: `with` makes a context active while `fn` runs
+  function createContextApi() {
+    type Ctx = { span?: OtelSpan };
+    let active: Ctx = {};
+    return {
+      context: {
+        active: () => active,
+        with<T>(ctx: unknown, fn: () => T): T {
+          const previous = active;
+          active = ctx as Ctx;
+          try {
+            return fn();
+          } finally {
+            active = previous;
+          }
+        },
+      },
+      trace: { setSpan: (ctx: unknown, span: never) => ({ ...(ctx as Ctx), span }) },
+      activeSpan: () => active.span,
+    };
+  }
+
+  it('parents child spans to the root span, and nested spans to their parent', async () => {
+    const api = createContextApi();
+    const parents = new Map<string, string | undefined>();
+    const provider: OtelTracerProvider = {
+      getTracer: () => ({
+        startSpan(name: string) {
+          parents.set(name, (api.activeSpan() as { _name?: string } | undefined)?._name);
+          const span = {
+            _name: name,
+            setAttribute: () => span,
+            addEvent: () => span,
+            setStatus: () => span,
+            recordException: () => span,
+            end() {},
+            spanContext: () => ({ traceId: 't', spanId: name }),
+          };
+          return span as unknown as OtelSpan;
+        },
+      }),
+    };
+
+    const program = createPadrone('test-cli')
+      .extend(padroneTracing({ provider, api }))
+      .command('deploy', (c) =>
+        c.action((_args, ctx) => {
+          ctx.context.tracing.span('build', () => ctx.context.tracing.span('compile', () => 'ok'));
+          return 'done';
+        }),
+      );
+
+    await program.eval('deploy');
+    expect(parents.get('cli deploy')).toBeUndefined();
+    expect(parents.get('build')).toBe('cli deploy');
+    expect(parents.get('compile')).toBe('build');
+  });
+});

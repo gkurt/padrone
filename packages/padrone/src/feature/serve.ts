@@ -231,6 +231,8 @@ export function createServeHandler(
     const errors: string[] = [];
     const result = await evalCommand(commandString || (undefined as any), {
       caller: 'serve',
+      // Aborts the command when the client disconnects
+      signal: request.signal,
       runtime: {
         output: (...args: unknown[]) => output.push(args.map(String).join(' ')),
         error: (text: string) => errors.push(text),
@@ -399,9 +401,14 @@ export async function startServeServer(
       if (value) headers.set(key, Array.isArray(value) ? value.join(', ') : value);
     }
 
+    const disconnected = new AbortController();
+    res.on('close', () => {
+      if (!res.writableFinished) disconnected.abort('Client disconnected');
+    });
     const fetchReq = new Request(url, {
       method: req.method,
       headers,
+      signal: disconnected.signal,
       body: req.method !== 'GET' && req.method !== 'HEAD' ? await readBody(req) : undefined,
     });
 

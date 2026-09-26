@@ -36,6 +36,7 @@ z.object({
 | `variadic` | `boolean` | Array option that takes every following value up to the next option (`--tag a b c`) |
 | `conflicts` | `string \| string[]` | Options that can't be used together with this one |
 | `implies` | `Record<string, unknown>` | Values for other options when this one is used |
+| `complete` | `(ctx) => string[] \| Promise<string[]>` | Values shell completion offers for this option or positional (`fields` config only; needs `padroneCompletion()`) |
 
 :::note
 Single-character short flags use `flags`, not `alias`. The `alias` field is for multi-character long alternatives like `--dry-run` for `--dryRun`.
@@ -103,7 +104,7 @@ Per-argument configuration that supplements or overrides `.meta()`:
 }
 ```
 
-This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `variadic`, `conflicts`, `implies`.
+This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `variadic`, `conflicts`, `implies` — plus `complete`, which only works here since functions don't survive `.meta()`.
 
 ### autoAlias
 
@@ -540,4 +541,23 @@ z.object({
 - Only options the user provided count: from the command line, stdin, env or config — not schema defaults or implied values.
 
 Help shows `(conflicts with --table)` and `(implies --no-color)`.
+
+## Completion Values
+
+With `padroneCompletion()` applied, the generated shell scripts ask the program for candidates on each tab press, so completion follows the command being typed: its subcommands, its own options and inherited global options, and values for the option or positional under the cursor. Enum values are offered automatically; `complete` supplies values computed at completion time:
+
+```typescript
+import { padroneCompletion } from 'padrone/completion';
+
+createPadrone('git')
+  .extend(padroneCompletion())
+  .command('checkout', (c) =>
+    c.arguments(z.object({ branch: z.string() }), {
+      positional: ['branch'],
+      fields: { branch: { complete: async ({ prefix, args, command }) => listBranches() } },
+    }),
+  );
+```
+
+The callback receives the word typed so far (`prefix`), the options typed before it (`args`, parsed but not validated) and the command path. Return candidates unfiltered or filtered, it's up to you: only those starting with the prefix are shown. Errors are swallowed so a failing lookup never breaks the shell. Scripts are generated with `git completion <shell>`; they call `git __complete <words>`, which you can run by hand to debug.
 

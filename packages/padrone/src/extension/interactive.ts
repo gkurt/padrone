@@ -2,7 +2,13 @@ import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { getGlobalArgs } from '../core/commands.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe, usesInteractive } from '../core/results.ts';
-import { buildCommandArgs, checkUnknownArgs, validateCommandArgs } from '../core/validate.ts';
+import {
+  buildCommandArgs,
+  checkUnknownArgs,
+  getInterceptorOptionNames,
+  getKnownOptionNames,
+  validateCommandArgs,
+} from '../core/validate.ts';
 import { promptInteractiveFields } from '../feature/interactive.ts';
 import type { AnyPadroneBuilder, CommandTypesBase, InterceptorValidateContext, InterceptorValidateResult } from '../types/index.ts';
 import { frameworkFlags } from './utils.ts';
@@ -13,16 +19,14 @@ const interactiveInterceptor = defineInterceptor(
   { id: 'padrone:interactive', name: 'padrone:interactive', order: -999, options: { interactive: 'flag', i: 'flag' } },
   () => ({
     validate(ctx: InterceptorValidateContext, next) {
-      // Extract --interactive / -i flags from rawArgs
+      // Extract --interactive / -i flags from rawArgs; on a command with nothing to prompt for they're a no-op
       let flagInteractive: boolean | undefined;
-      if (usesInteractive(ctx.command)) {
-        const flags = frameworkFlags(ctx.rawArgs, ctx.command);
-        for (const key of ['interactive', 'i']) {
-          const value = flags.get(key);
-          if (value !== undefined) flagInteractive = value !== false && value !== 'false';
-        }
-        flags.delete('interactive', 'i');
+      const flags = frameworkFlags(ctx.rawArgs, ctx.command);
+      for (const key of ['interactive', 'i']) {
+        const value = flags.get(key);
+        if (value !== undefined) flagInteractive = value !== false && value !== 'false';
       }
+      flags.delete('interactive', 'i');
 
       // Resolve effective interactivity
       const { runtime, command } = ctx;
@@ -42,8 +46,16 @@ const interactiveInterceptor = defineInterceptor(
       const { args: preprocessedArgs, issues: positionalIssues } = buildCommandArgs(command, ctx.rawArgs, ctx.positionalArgs);
       if (positionalIssues) return { args: undefined, argsResult: { issues: positionalIssues } } as any;
 
+      // The early checks below skip options declared by interceptors: inner ones (e.g. confirm's `--yes`)
+      // haven't read theirs yet, and still get them through the args passed on
+      const interceptorOptions = getInterceptorOptionNames(command);
+      const known = new Set(getKnownOptionNames(command));
+      const ownArgs = Object.fromEntries(
+        Object.entries(preprocessedArgs).filter(([key]) => known.has(key) || !interceptorOptions.has(key)),
+      );
+
       // Check for unknown args before prompting
-      const unknowns = checkUnknownArgs(command, preprocessedArgs);
+      const unknowns = checkUnknownArgs(command, ownArgs);
       if (unknowns.length > 0) {
         const issues: StandardSchemaV1.Issue[] = unknowns.map(({ key }) => ({
           path: [key],
@@ -55,9 +67,9 @@ const interactiveInterceptor = defineInterceptor(
       // Early-validate provided fields — fail fast on user-supplied errors before prompting
       const earlyValidateAndPrompt = (): InterceptorValidateResult | Promise<InterceptorValidateResult> => {
         if (command.argsSchema || getGlobalArgs(command)) {
-          const providedKeys = new Set(Object.keys(preprocessedArgs).filter((k) => preprocessedArgs[k] !== undefined));
+          const providedKeys = new Set(Object.keys(ownArgs).filter((k) => ownArgs[k] !== undefined));
           // Validates the command's own args and the global args it doesn't override
-          const earlyCheck = validateCommandArgs(command, preprocessedArgs);
+          const earlyCheck = validateCommandArgs(command, ownArgs);
 
           const checkForProvidedFieldErrors = (result: {
             argsResult?: StandardSchemaV1.Result<unknown>;

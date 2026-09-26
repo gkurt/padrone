@@ -233,3 +233,32 @@ describe('cli error output', () => {
     expect(errors[0]).toStartWith('Validation error:');
   });
 });
+
+describe('error stack traces', () => {
+  const createProgram = (options?: { errorStack?: boolean }) =>
+    createPadrone('test', { builtins: { autoOutput: options ?? true } }).command('deploy', (c) =>
+      c.action(() => {
+        throw new Error('outer', { cause: new Error('inner') });
+      }),
+    );
+  const run = (program: ReturnType<typeof createProgram>, env: Record<string, string> = {}) => {
+    const errors: string[] = [];
+    program.cli({
+      runtime: { argv: () => ['deploy'], output: () => {}, error: (text) => errors.push(text), env: () => env, setExitCode: () => {} },
+    });
+    return errors;
+  };
+
+  it('prints only the message by default', () => {
+    expect(run(createProgram())).toEqual(['outer']);
+    expect(run(createProgram(), { DEBUG: '0' })).toEqual(['outer']);
+  });
+
+  it('prints the stack and cause chain with DEBUG or errorStack', () => {
+    for (const errors of [run(createProgram(), { DEBUG: '1' }), run(createProgram({ errorStack: true }))]) {
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toStartWith('Error: outer\n    at ');
+      expect(errors[0]).toContain('Caused by: Error: inner');
+    }
+  });
+});

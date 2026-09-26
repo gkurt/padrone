@@ -182,6 +182,16 @@ test.skip('Types - Interactive', () => {
   expectTypeOf(bothCli).toMatchTypeOf<Promise<any>>();
 });
 
+/** This test verifies that stdin meta makes commands async */
+test.skip('Types - Stdin', () => {
+  const program = createPadrone('test')
+    .command('plain', (c) => c.arguments(z.object({ input: z.string().optional() })).action((args) => args.input))
+    .command('piped', (c) => c.arguments(z.object({ input: z.string().optional() }), { stdin: 'input' }).action((args) => args.input));
+
+  expectTypeOf(program.eval('plain')).not.toMatchTypeOf<Promise<any>>();
+  expectTypeOf(program.eval('piped')).toMatchTypeOf<Promise<any>>();
+});
+
 /** This test verifies that command override/extension types work correctly */
 test.skip('Types - Command override', () => {
   // Override builder receives existing command's args type

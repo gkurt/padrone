@@ -132,6 +132,8 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.extend(padroneConfig({ files, schema }))` | Load args from config files (composable extension) |
 | `.wrap(config)` | Wrap an external CLI tool *(experimental)* |
 | `.extend(padroneProgress(config?))` | Auto-managed progress indicator (extension) |
+| `.extend(padroneJson())` | `--json` flag: results and errors as JSON (extension) |
+| `.extend(padroneConfirm())` | Confirm `mutation: true` commands, skipped with `--yes` (extension) |
 | `.intercept(interceptor)` | Register middleware interceptor (use `defineInterceptor()`) |
 | `.extend(extension)` | Apply a build-time extension (bundle of config, commands, interceptors) |
 | `.runtime(runtime)` | Custom I/O (for non-terminal use) |

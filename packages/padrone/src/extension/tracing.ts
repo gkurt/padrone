@@ -41,6 +41,17 @@ export interface OtelTracerProvider {
   getTracer(name: string, version?: string): OtelTracer;
 }
 
+/**
+ * Minimal subset of the OTEL context API: pass `{ context, trace }` from `@opentelemetry/api`.
+ * Makes the root span the active span while the action runs, so `tracing.span()` children and
+ * auto-instrumented calls (HTTP, databases) are parented to it.
+ */
+export interface OtelContextApi {
+  context: { active(): unknown; with<T>(context: unknown, fn: () => T): T };
+  // `never`: accepts OTEL's `setSpan(context, span: Span)`, whose Span has more members than `OtelSpan`
+  trace: { setSpan(context: unknown, span: never): unknown };
+}
+
 /** Tracing handle injected into the command context. */
 export type PadroneTracer = {
   /** The underlying OTEL tracer. */
@@ -57,6 +68,11 @@ export type PadroneTracingConfig = {
   provider: OtelTracerProvider;
   /** Service / tracer name. Defaults to the CLI program name. */
   serviceName?: string;
+  /**
+   * The OTEL context API (`{ context, trace }` from `@opentelemetry/api`). Without it, `tracing.span()` children
+   * and spans from instrumented libraries aren't parented to the root span.
+   */
+  api?: OtelContextApi;
 };
 
 /** Builder/program type after applying `padroneTracing()`. Adds `{ tracing: PadroneTracer }` to the command context. */
@@ -68,12 +84,17 @@ export type WithTracing<T> = WithInterceptor<T, { tracing: PadroneTracer }>;
 
 const OTEL_ERROR: SpanStatusCode = 2;
 
-type ResolvedTracingConfig = { provider: OtelTracerProvider; serviceName: string | undefined };
+type ResolvedTracingConfig = { provider: OtelTracerProvider; serviceName: string | undefined; api: OtelContextApi | undefined };
 
 function tracingInterceptor(config: ResolvedTracingConfig) {
   return defineInterceptor({ id: 'padrone:tracing', name: 'padrone:tracing', order: -1 }, () => {
     let rootSpan: OtelSpan | undefined;
     let tracer: OtelTracer | undefined;
+
+    const { api } = config;
+    /** Runs `fn` with `span` as the active span (a no-op without the context API). */
+    const withSpan = <T>(span: OtelSpan, fn: () => T): T =>
+      api ? api.context.with(api.trace.setSpan(api.context.active(), span as never), fn) : fn();
 
     const getTracer = (command: AnyPadroneCommand) =>
       (tracer ??= config.provider.getTracer(config.serviceName ?? getRootCommand(command).name));
@@ -103,7 +124,7 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
           span(name, fn) {
             const child = activeTracer.startSpan(name);
             try {
-              const result = fn(child);
+              const result = withSpan(child, () => fn(child));
               if (result != null && typeof (result as any).then === 'function') {
                 return (result as any).then(
                   (v: any) => {
@@ -129,7 +150,8 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
           },
         };
 
-        if (ctx.caller !== 'run') return next({ context: { tracing: padroneTracer } });
+        const runAction = () => withSpan(span, () => next({ context: { tracing: padroneTracer } }));
+        if (ctx.caller !== 'run') return runAction();
 
         // `run()` has no error/shutdown phases: settle the root span here
         const fail = (err: unknown): never => {
@@ -152,7 +174,7 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
         };
         let result: InterceptorExecuteResult | Promise<InterceptorExecuteResult>;
         try {
-          result = next({ context: { tracing: padroneTracer } });
+          result = runAction();
         } catch (err) {
           return fail(err);
         }
@@ -198,12 +220,12 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
  *
  * Usage:
  * ```ts
- * import { trace } from '@opentelemetry/api';
+ * import { context, trace } from '@opentelemetry/api';
  * import { createPadrone, padroneLogger } from 'padrone';
  * import { padroneTracing } from 'padrone/tracing';
  *
  * createPadrone('my-cli')
- *   .extend(padroneTracing({ provider: trace.getTracerProvider() }))
+ *   .extend(padroneTracing({ provider: trace.getTracerProvider(), api: { context, trace } }))
  *   .extend(padroneLogger())
  *   .command('deploy', (c) =>
  *     c.action((_args, ctx) => {
@@ -219,6 +241,7 @@ export function padroneTracing<T extends CommandTypesBase>(config: PadroneTracin
   const resolved: ResolvedTracingConfig = {
     provider: config.provider,
     serviceName: config.serviceName,
+    api: config.api,
   };
   return ((builder: AnyPadroneBuilder) => builder.intercept(tracingInterceptor(resolved))) as any;
 }

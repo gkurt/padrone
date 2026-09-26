@@ -41,14 +41,16 @@ Additional opt-in extensions are available for advanced features:
 | `padroneEnv(schema)` | `'padrone'` | Parse environment variables into args |
 | `padroneConfig(options)` | `'padrone'` | Load args from config files |
 | `padroneProgress(config)` | `'padrone'` | Auto-managed progress indicators |
-| `padroneLogger(options)` | `'padrone'` | Structured logging with levels (`env`, `stderr` options) |
+| `padroneLogger(options)` | `'padrone'` | Structured logging with levels (`--verbose` repeatable; `shortFlags`, `env`, `stderr` options) |
+| `padroneJson()` | `'padrone'` | `--json` flag: results and errors as JSON |
+| `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`) before `mutation: true` commands |
 | `padroneTiming()` | `'padrone'` | Execution timing |
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking |
 | `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
-| `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing |
-| `padroneCompletion()` | `'padrone/completion'` | Shell completion generation |
+| `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing (pass `api: { context, trace }` for span parenting) |
+| `padroneCompletion()` | `'padrone/completion'` | Shell completion generation (dynamic, with field `complete` callbacks) |
 | `padroneMan()` | `'padrone/man'` | Man page generation |
 
 ## Extensions

@@ -46,14 +46,17 @@ export type HasInteractive<TMeta> = TMeta extends { interactive: true | readonly
     : false;
 
 /**
- * Combines schema-level async detection with meta-level interactive detection.
- * Returns `true` if the existing async flag is set, the schema is branded async, or the meta has interactive fields.
+ * Combines schema-level async detection with meta-level interactive and stdin detection.
+ * Returns `true` if the existing async flag is set, the schema is branded async, or the meta has interactive fields
+ * or reads stdin (piped input is read asynchronously).
  */
 export type OrAsyncMeta<TExisting extends boolean, TMeta> = TExisting extends true
   ? true
   : HasInteractive<TMeta> extends true
     ? true
-    : false;
+    : TMeta extends { stdin: string }
+      ? true
+      : false;
 
 /**
  * Unwraps a result type by resolving Promises and collecting iterables into arrays.

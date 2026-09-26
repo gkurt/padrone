@@ -1,6 +1,7 @@
 import { extractSchemaMetadata, getJsonSchema } from '../core/args.ts';
 import type { AnyPadroneCommand, PadroneGlobalArgsMeta, PadroneSchema } from '../types/index.ts';
 import { detectShell, getRcFile, type ShellType, writeToRcFile } from '../util/shell-utils.ts';
+import { generateDynamicCompletion } from './complete.ts';
 
 export { detectShell, escapeRegExp, getRcFile, type ShellType, writeToRcFile } from '../util/shell-utils.ts';
 
@@ -392,6 +393,9 @@ ${enumBlock}  if ($wordToComplete -like '-*') {
  * Generates a completion script for the specified shell.
  */
 export function generateCompletion(program: AnyPadroneCommand, shell: ShellType): string {
+  // With `padroneCompletion()` the program answers `__complete` itself, so the script can ask it (per-command, dynamic values)
+  const dynamic = program.interceptors?.some((i) => i.meta.id === 'padrone:completion' && !i.meta.disabled);
+  if (dynamic) return generateDynamicCompletion(program.name, shell);
   switch (shell) {
     case 'bash':
       return generateBashCompletion(program);

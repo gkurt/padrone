@@ -304,3 +304,35 @@ describe('mcp', () => {
     });
   });
 });
+
+describe('mcp cancellation', () => {
+  const createWaitProgram = () =>
+    createPadrone('test').command('wait', (c) =>
+      c.async().action(
+        (_args, ctx) =>
+          new Promise<string>((resolve, reject) => {
+            ctx.signal.addEventListener('abort', () => reject(new Error(`aborted: ${ctx.signal.reason}`)));
+            setTimeout(() => resolve('finished'), 1000);
+          }),
+      ),
+    );
+
+  it('aborts a tool call on notifications/cancelled', async () => {
+    const program = createWaitProgram();
+    const handler = createMcpHandler(getCommand(program), program.eval.bind(program) as any);
+    const call = handler({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'wait', arguments: {} } });
+    await handler({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 7, reason: 'user' } });
+    const response = (await call) as any;
+    expect(response.result.isError).toBe(true);
+    expect(response.result.content.at(-1).text).toBe('aborted: user');
+  });
+
+  it('aborts a tool call when the transport signal aborts', async () => {
+    const program = createWaitProgram();
+    const handler = createMcpHandler(getCommand(program), program.eval.bind(program) as any);
+    const controller = new AbortController();
+    const call = handler({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'wait', arguments: {} } }, controller.signal);
+    controller.abort('gone');
+    expect(((await call) as any).result.content.at(-1).text).toBe('aborted: gone');
+  });
+});

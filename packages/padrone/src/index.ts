@@ -24,6 +24,7 @@ export type {
 export { REPL_SIGINT } from './core/runtime.ts';
 export type {
   HelpCommand,
+  PadroneConfirmOptions,
   PadroneHelpOptions,
   PadroneLogger,
   PadroneLoggerConfig,
@@ -48,9 +49,11 @@ export {
   padroneAutoOutput,
   padroneColor,
   padroneConfig,
+  padroneConfirm,
   padroneEnv,
   padroneHelp,
   padroneInteractive,
+  padroneJson,
   padroneLogger,
   padroneProgress,
   padroneRepl,
@@ -101,6 +104,7 @@ export type {
   PadroneBuilder,
   PadroneCommand,
   PadroneCommandResult,
+  PadroneCompleteContext,
   PadroneContextInterceptor,
   PadroneDrainResult,
   PadroneExtension,

@@ -25,10 +25,18 @@ function collectInterceptorOptions(command: AnyPadroneCommand): Record<string, O
   for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
     for (const { meta } of current.interceptors ?? []) {
       if (meta.disabled || !meta.options) continue;
-      for (const [key, arity] of Object.entries(meta.options)) options[key] ??= arity;
+      // The nearest declaration wins, except that a counting flag wins over a plain one (e.g. logger `-v` over version `-v`)
+      for (const [key, arity] of Object.entries(meta.options)) {
+        if (options[key] === undefined || (arity === 'count' && options[key] === 'flag')) options[key] = arity;
+      }
     }
   }
   return options;
+}
+
+/** Names of the options interceptors on the command chain declare (`meta.options`), which they read from `rawArgs` themselves. */
+export function getInterceptorOptionNames(command: AnyPadroneCommand): Set<string> {
+  return new Set(Object.keys(collectInterceptorOptions(command)));
 }
 
 type SchemaOptionInfo = ReturnType<typeof extractSchemaMetadata> & {
@@ -215,7 +223,8 @@ export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPa
     if (defaultCommand) curCommand = defaultCommand;
   }
 
-  const { flags, aliases, negatives, customNegation, arrayArguments, rules } = getCommandOptionInfo(curCommand);
+  const { flags, aliases, negatives, customNegation, arrayArguments, rules, properties, interceptorOptions } =
+    getCommandOptionInfo(curCommand);
 
   const rawArgs: Record<string, unknown> = {};
   let issues: StandardSchemaV1.Issue[] | undefined;
@@ -246,7 +255,8 @@ export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPa
       continue;
     }
 
-    if (rules.counts.has(rootKey) && key.length === 1) {
+    const counted = rules.counts.has(rootKey) || (!properties.has(rootKey) && interceptorOptions[rootKey] === 'count');
+    if (counted && key.length === 1) {
       // Counting flag: each bare occurrence adds one (-vvv → 3); --x=5 sets it; --no-x resets it
       const existing = rawArgs[rootKey];
       if (arg.type === 'named' && arg.negated) rawArgs[rootKey] = 0;

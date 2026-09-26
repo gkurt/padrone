@@ -726,3 +726,12 @@ describe('Interactive', () => {
     });
   });
 });
+
+describe('--interactive on a command without prompts', () => {
+  it('is accepted and ignored', () => {
+    const program = createPadrone('test').command('list', (c) => c.action(() => 'items'));
+    expect(program.eval('list -i').result).toBe('items');
+    expect(program.eval('list --interactive').result).toBe('items');
+    expect(program.eval('list --no-interactive').result).toBe('items');
+  });
+});

@@ -11,6 +11,7 @@ import type {
   InterceptorExecuteContext,
   InterceptorExecuteResult,
 } from '../types/index.ts';
+import { safeJsonStringify } from '../util/json.ts';
 import { isErrorReported, markErrorReported } from './utils.ts';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -21,7 +22,7 @@ import { isErrorReported, markErrorReported } from './utils.ts';
  * For promises: awaits, then recurses.
  * For other values: outputs directly, returns as-is.
  */
-function outputAndCollect(value: unknown, output: (...args: unknown[]) => void): unknown {
+function outputAndCollect(value: unknown, output: (value: unknown) => void, outputItem = output): unknown {
   if (value == null) return value;
 
   if (isAsyncIterator(value)) {
@@ -32,7 +33,7 @@ function outputAndCollect(value: unknown, output: (...args: unknown[]) => void):
         const { done, value: item } = await iter.next();
         if (done) break;
         items.push(item);
-        if (item != null) output(item);
+        if (item != null) outputItem(item);
       }
       return items;
     })();
@@ -45,13 +46,13 @@ function outputAndCollect(value: unknown, output: (...args: unknown[]) => void):
       const { done, value: item } = iter.next();
       if (done) break;
       items.push(item);
-      if (item != null) output(item);
+      if (item != null) outputItem(item);
     }
     return items;
   }
 
   if (value instanceof Promise) {
-    return value.then((resolved) => outputAndCollect(resolved, output));
+    return value.then((resolved) => outputAndCollect(resolved, output, outputItem));
   }
 
   output(value);
@@ -60,14 +61,37 @@ function outputAndCollect(value: unknown, output: (...args: unknown[]) => void):
 
 // ── Interceptor ─────────────────────────────────────────────────────────
 
+/** Callers that print to a terminal; serve, MCP and tool calls return results through their own transport. */
+const TERMINAL_CALLERS = new Set<string>(['cli', 'eval', 'repl']);
+
 const autoOutputMeta = { id: 'padrone:auto-output', name: 'padrone:auto-output', order: -1100 } as const;
 
-function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: boolean) {
+/** `DEBUG` set to anything but empty, `0` or `false` (e.g. `DEBUG=1`, `DEBUG=*`). */
+function isDebugEnv(env: Record<string, string | undefined>): boolean {
+  const debug = env.DEBUG;
+  return !!debug && debug !== '0' && debug !== 'false';
+}
+
+/** The error's stack, followed by the stacks of its `cause` chain. */
+function formatErrorStack(error: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  for (let current: unknown = error; current !== undefined && !seen.has(current); current = (current as { cause?: unknown })?.cause) {
+    seen.add(current);
+    const text = current instanceof Error ? (current.stack ?? `${current.name}: ${current.message}`) : String(current);
+    parts.push(parts.length === 0 ? text : `Caused by: ${text}`);
+    if (!(current instanceof Error)) break;
+  }
+  return parts.join('\n');
+}
+
+function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: boolean, errorStack?: boolean) {
   return defineInterceptor(autoOutputMeta, () => ({
     error(ctx: InterceptorErrorContext, next: () => InterceptorErrorResult | Promise<InterceptorErrorResult>) {
       const handleResult = (er: InterceptorErrorResult): InterceptorErrorResult => {
         if (!er.error || errorOutput === false || ctx.caller !== 'cli' || isErrorReported(er.error)) return er;
-        ctx.runtime.error(er.error instanceof Error ? er.error.message : String(er.error));
+        const showStack = errorStack ?? isDebugEnv(ctx.runtime.env());
+        ctx.runtime.error(showStack ? formatErrorStack(er.error) : er.error instanceof Error ? er.error.message : String(er.error));
         markErrorReported(er.error);
         return er;
       };
@@ -96,6 +120,11 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
             }
           }
 
+          // `format: 'json'` (e.g. from `--json`): values as JSON, iterator items one per line (NDJSON)
+          if (ctx.runtime.format === 'json' && TERMINAL_CALLERS.has(ctx.caller)) {
+            const write = (space?: number) => (v: unknown) => ctx.runtime.output(safeJsonStringify(v, space) ?? String(v));
+            return outputAndCollect(value, write(2), write());
+          }
           return outputAndCollect(value, ctx.runtime.output);
         };
 
@@ -141,6 +170,11 @@ export type PadroneAutoOutputOptions = {
    * @default true
    */
   errorOutput?: boolean;
+  /**
+   * Print the error's stack trace (and its `cause` chain) instead of only its message.
+   * Defaults to on when the `DEBUG` environment variable is set (e.g. `DEBUG=1 my-cli deploy`).
+   */
+  errorStack?: boolean;
 };
 
 /**
@@ -167,6 +201,6 @@ export type PadroneAutoOutputOptions = {
 export function padroneAutoOutput(options?: PadroneAutoOutputOptions): <T extends CommandTypesBase>(builder: T) => T {
   const interceptor = options?.disabled
     ? defineInterceptor({ ...autoOutputMeta, disabled: true }, () => ({}))
-    : createAutoOutputInterceptor(options?.output, options?.errorOutput);
+    : createAutoOutputInterceptor(options?.output, options?.errorOutput, options?.errorStack);
   return ((builder: AnyPadroneBuilder) => builder.intercept(interceptor)) as any;
 }

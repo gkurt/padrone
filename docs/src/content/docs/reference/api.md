@@ -985,6 +985,8 @@ const script = program.completion('bash');
 
 **Returns:** Shell completion script string
 
+With the `padroneCompletion()` extension (`padrone/completion`) the scripts are dynamic: they call `<program> __complete <words>` for per-command subcommands, options and values, including `complete` callbacks on fields. Without it, they're static lists of every command and option.
+
 ---
 
 ## Color Themes
@@ -1161,7 +1163,8 @@ z.custom<AsyncIterable<MyType>>().meta(asyncStream(myItemSchema))
 
 ### Stdin Behavior
 
-- Only reads when stdin is piped (not a TTY) and the target field wasn't provided via CLI flags
+- Only reads when stdin is piped (not a TTY) and the target field wasn't provided via CLI flags or positionally
+- A `stdin` field makes the command async (like interactive fields): `eval()`/`parse()` return a Promise, no `.async()` needed
 - Read mode is inferred from the schema: `string` fields read all stdin as text, `string[]` fields read line-by-line, `zodAsyncStream()`/`asyncStream()` fields stream lazily
 - Resolution priority: CLI args > stdin > env vars > config files > defaults
 
@@ -1239,7 +1242,9 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneEnv(schema?, options?)` | Parse environment variables into args (`vars` maps args to variables and shows them in help) |
 | `padroneConfig(options)` | Load args from config files |
 | `padroneProgress(config)` | Auto-managed progress indicators |
-| `padroneLogger(options)` | Structured logging with levels (`--verbose`, `--quiet`, `--log-level`; `env` reads the level from a variable, `stderr: true` keeps stdout for results) |
+| `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable, `stderr: true` keeps stdout for results) |
+| `padroneJson()` | `--json` flag: prints the result as JSON (iterator items one per line) and, in `cli()`, errors as `{ "error": { ... } }` on stdout |
+| `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and without a terminal the command fails unless `--yes` is given. Options: `message`, `when`, `flags` |
 | `padroneTiming()` | Execution timing |
 | `padroneUpdateCheck(config)` | Background version checking |
 
@@ -1250,8 +1255,8 @@ The following extensions live in their own subpath imports to keep optional depe
 | `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
-| `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing |
-| `padroneCompletion()` | `'padrone/completion'` | Shell completion generation |
+| `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing. Pass `api: { context, trace }` from `@opentelemetry/api` to parent child spans to the command's span |
+| `padroneCompletion()` | `'padrone/completion'` | Shell completion generation, with dynamic per-command completion (`__complete`) and field `complete` callbacks |
 | `padroneMan()` | `'padrone/man'` | Man page generation |
 
 The following extensions are applied automatically by `createPadrone()` and can be disabled via `builtins`:
@@ -1264,7 +1269,7 @@ The following extensions are applied automatically by `createPadrone()` and can 
 | `padroneColor()` | `color` | `--color`/`--no-color` support |
 | `padroneSuggestions()` | `suggestions` | "Did you mean?" suggestions |
 | `padroneSignalHandling()` | `signal` | Signal handling and AbortSignal |
-| `padroneAutoOutput()` | `autoOutput` | Auto-print results |
+| `padroneAutoOutput(options?)` | `autoOutput` | Auto-print results and errors. `errorStack: true` (or the `DEBUG` env variable) prints stack traces with their `cause` chain |
 | `padroneStdin()` | `stdin` | Stdin piping support |
 | `padroneInteractive()` | `interactive` | Interactive prompting |
 

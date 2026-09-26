@@ -221,3 +221,16 @@ describe('stdin field given positionally', () => {
     expect(result.result).toBe('piped');
   });
 });
+
+describe('stdin commands are async', () => {
+  it('reads piped stdin without the not-marked-as-async warning', async () => {
+    const errors: string[] = [];
+    const program = createPadrone('test').command('cat', (c) =>
+      c.arguments(z.object({ input: z.string().optional() }), { stdin: 'input' }).action((args) => args.input),
+    );
+    const stdin = { isTTY: false, text: async () => 'piped', lines: async function* () {} };
+    const result = await program.eval('cat', { runtime: { stdin, output: () => {}, error: (text) => errors.push(text) } });
+    expect(result.result).toBe('piped');
+    expect(errors).toEqual([]);
+  });
+});

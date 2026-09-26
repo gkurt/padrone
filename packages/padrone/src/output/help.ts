@@ -421,6 +421,10 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
       });
     }
 
+    if (rootCmd.interceptors?.some((i) => i.meta.id === 'padrone:json' && !i.meta.disabled)) {
+      builtins.push({ name: '--json', description: 'Print the result, and errors, as JSON' });
+    }
+
     builtins.push({
       name: '--color [theme], --no-color',
       description: 'Set color theme (default, ocean, warm, monochrome) or disable colors',

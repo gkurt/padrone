@@ -667,7 +667,7 @@ describe('padroneLogger value formatting', () => {
     const value: Record<string, unknown> = { n: 1n };
     value.self = value;
     const { output } = await run((logger) => logger.info(value));
-    expect(output).toEqual(['[INFO] {"n":"1n","self":"[Circular]"}']);
+    expect(output).toEqual(['[INFO] {"n":"1","self":"[Circular]"}']);
   });
 
   it('keeps repeated references that are not circular', async () => {
@@ -685,5 +685,35 @@ describe('padroneLogger value formatting', () => {
     const { output, errors } = await run((logger) => logger.info('to stderr'), { stderr: true });
     expect(output).toEqual([]);
     expect(errors).toEqual(['[INFO] to stderr']);
+  });
+});
+
+describe('padroneLogger verbosity stacking', () => {
+  const levelOf = (input: string, config?: Parameters<typeof padroneLogger>[0]) => {
+    let level: string | undefined;
+    const program = createPadrone('test')
+      .configure({ version: '1.0.0' })
+      .extend(padroneLogger(config))
+      .action((_args, ctx) => {
+        level = ctx.context.logger.level;
+      });
+    const result = program.eval(input, { runtime: { output: () => {}, error: () => {} } });
+    return { level, result: result.result };
+  };
+
+  it('counts repeated --verbose', () => {
+    expect(levelOf('--verbose').level).toBe('debug');
+    expect(levelOf('--verbose --verbose').level).toBe('trace');
+    expect(levelOf('--no-verbose').level).toBe('info');
+  });
+
+  it('adds -v, -vv and -q with shortFlags', () => {
+    expect(levelOf('-v', { shortFlags: true }).level).toBe('debug');
+    expect(levelOf('-vv', { shortFlags: true }).level).toBe('trace');
+    expect(levelOf('-q', { shortFlags: true }).level).toBe('silent');
+  });
+
+  it('leaves -v to the version builtin without shortFlags', () => {
+    expect(levelOf('-v').result).toBe('1.0.0');
   });
 });

@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, mock } from 'bun:test';
 import { createPadrone } from 'padrone';
+import { padroneCompletion } from 'padrone/completion';
 import * as z from 'zod/v4';
 
 function createProgramWithEnums() {
@@ -141,5 +142,66 @@ describe('Completion - option value completion', () => {
       const ps = await program.completion('powershell');
       expect(ps).not.toContain('switch');
     });
+  });
+});
+
+describe('Dynamic completion (__complete)', () => {
+  const branches = mock(async ({ prefix }: { prefix: string }) => ['main', 'develop', `feature/${prefix || 'x'}`]);
+  const program = createPadrone('git')
+    .extend(padroneCompletion())
+    .globalArgs(z.object({ profile: z.enum(['dev', 'prod']).optional() }))
+    .command('checkout', (c) =>
+      c
+        .arguments(z.object({ branch: z.string(), force: z.boolean().optional(), dryRun: z.boolean().optional() }), {
+          positional: ['branch'],
+          fields: { branch: { complete: branches }, force: { flags: 'f' } },
+        })
+        .action(() => {}),
+    )
+    .command('remote', (c) =>
+      c
+        .command('add', (a) => a.arguments(z.object({ kind: z.enum(['fetch', 'push']) })).action(() => {}))
+        .command('remove', (a) => a.action(() => {})),
+    );
+
+  const complete = async (...words: string[]) => {
+    const output: string[] = [];
+    const result = await program.eval(['__complete', ...words], { runtime: { output: (text) => output.push(String(text)) } });
+    return { candidates: result.result as unknown as string[], output };
+  };
+
+  it('completes subcommands at each level', async () => {
+    expect((await complete('')).candidates).toEqual(['checkout', 'remote']);
+    expect((await complete('remote', 're')).candidates).toEqual(['remove']);
+  });
+
+  it('completes the command’s own option names, plus inherited globals', async () => {
+    expect((await complete('checkout', '--')).candidates).toEqual(['--branch', '--force', '--dryRun', '--dry-run', '--profile', '--help']);
+    expect((await complete('remote', 'add', '--k')).candidates).toEqual(['--kind']);
+  });
+
+  it('completes option values from enums, including --opt=value and bash’s split form', async () => {
+    expect((await complete('remote', 'add', '--kind', '')).candidates).toEqual(['fetch', 'push']);
+    expect((await complete('remote', 'add', '--kind=p')).candidates).toEqual(['--kind=push']);
+    expect((await complete('remote', 'add', '--kind', '=', 'f')).candidates).toEqual(['fetch']);
+    expect((await complete('checkout', '--profile', 'p')).candidates).toEqual(['prod']);
+  });
+
+  it('calls a field’s complete callback for positionals, with the typed args', async () => {
+    const { candidates, output } = await complete('checkout', '--force', 'fe');
+    expect(candidates).toEqual(['feature/fe']);
+    expect(output).toEqual(['feature/fe']);
+    expect(branches).toHaveBeenLastCalledWith({ prefix: 'fe', args: { force: true }, command: 'checkout' });
+  });
+
+  it('offers nothing after the positionals are filled', async () => {
+    expect((await complete('checkout', 'main', '')).candidates).toEqual([]);
+  });
+
+  it('generates scripts that call __complete', async () => {
+    for (const shell of ['bash', 'zsh', 'fish', 'powershell'] as const) {
+      expect(await program.completion(shell)).toContain('git __complete');
+    }
+    expect(await createPadrone('git').completion('bash')).not.toContain('__complete');
   });
 });

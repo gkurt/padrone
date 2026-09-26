@@ -1,4 +1,11 @@
-export type { PadroneArgsSchemaMeta, PadroneFieldMeta, PadroneGlobalArgsMeta, SingleChar, StdinConfig } from './args-meta.ts';
+export type {
+  PadroneArgsSchemaMeta,
+  PadroneCompleteContext,
+  PadroneFieldMeta,
+  PadroneGlobalArgsMeta,
+  SingleChar,
+  StdinConfig,
+} from './args-meta.ts';
 export type {
   AnyPadroneBuilder,
   AnyPadroneProgram,

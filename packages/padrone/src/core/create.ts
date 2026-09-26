@@ -1,3 +1,4 @@
+import type { PadroneAutoOutputOptions } from '../extension/auto-output.ts';
 import { padroneAutoOutput } from '../extension/auto-output.ts';
 import { padroneColor } from '../extension/color.ts';
 import type { HelpCommand, PadroneHelpOptions } from '../extension/help.ts';
@@ -63,8 +64,8 @@ export type PadroneBuiltins = {
   suggestions?: boolean;
   /** Enable signal handling (SIGINT, SIGTERM, SIGHUP). Defaults to `true`. */
   signal?: boolean;
-  /** Enable automatic result output for `cli()`. Defaults to `true`. */
-  autoOutput?: boolean;
+  /** Enable automatic result and error output for `cli()`. Defaults to `true`. Pass options to configure it (e.g. `{ errorStack: true }`). */
+  autoOutput?: boolean | PadroneAutoOutputOptions;
   /** Enable stdin piping support. Defaults to `true`. */
   stdin?: boolean;
   /** Enable interactive prompting for missing arguments. Defaults to `true`. */
@@ -91,7 +92,7 @@ export function createPadrone<TProgramName extends string, const TBuiltins exten
   if (b?.color !== false) builder = builder.extend(padroneColor());
   if (b?.suggestions !== false) builder = builder.extend(padroneSuggestions());
   if (b?.signal !== false) builder = builder.extend(padroneSignalHandling());
-  if (b?.autoOutput !== false) builder = builder.extend(padroneAutoOutput());
+  if (b?.autoOutput !== false) builder = builder.extend(padroneAutoOutput(typeof b?.autoOutput === 'object' ? b.autoOutput : undefined));
   if (b?.stdin !== false) builder = builder.extend(padroneStdin());
   if (b?.interactive !== false) builder = builder.extend(padroneInteractive());
 
@@ -158,7 +159,8 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
       // A subcommand extends its parent's schema; the root extends its own earlier schema.
       const baseSchema = existingCommand.parent ? existingCommand.parent.argsSchema : existingCommand.argsSchema;
       const resolvedArgs = (typeof schema === 'function' ? schema(baseSchema) : schema) as PadroneSchema | undefined;
-      const isAsync = existingCommand.isAsync || isAsyncBranded(resolvedArgs) || hasInteractiveConfig(meta);
+      // Piped stdin is read asynchronously, like prompts
+      const isAsync = existingCommand.isAsync || isAsyncBranded(resolvedArgs) || hasInteractiveConfig(meta) || !!meta?.stdin;
       return createPadroneBuilder({ ...existingCommand, argsSchema: resolvedArgs, meta, isAsync }) as any;
     },
     globalArgs(schema?: unknown, meta?: PadroneGlobalArgsMeta) {

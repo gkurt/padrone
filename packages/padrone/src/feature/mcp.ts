@@ -99,7 +99,11 @@ export function createMcpHandler(
     },
   };
 
-  return async function handleRequest(req: JsonRpcRequest): Promise<JsonRpcResponse | undefined> {
+  // Tool calls in flight, so `notifications/cancelled` can abort them
+  const inFlight = new Map<string | number, AbortController>();
+
+  /** `signal` aborts the call too, e.g. when an HTTP client disconnects. */
+  return async function handleRequest(req: JsonRpcRequest, signal?: AbortSignal): Promise<JsonRpcResponse | undefined> {
     const { id, method, params } = req;
 
     switch (method) {
@@ -114,8 +118,13 @@ export function createMcpHandler(
           },
         };
 
+      case 'notifications/cancelled': {
+        const requestId = params?.requestId as string | number | undefined;
+        if (requestId !== undefined) inFlight.get(requestId)?.abort(params?.reason ?? 'Cancelled by the client');
+        return undefined;
+      }
+
       case 'notifications/initialized':
-      case 'notifications/cancelled':
         return undefined;
 
       case 'ping':
@@ -156,11 +165,16 @@ export function createMcpHandler(
         const argParts = serializeArgsToFlags(args);
         const input = [commandPath, ...argParts].filter(Boolean).join(' ') || undefined;
 
+        const controller = new AbortController();
+        const onAbort = () => controller.abort(signal?.reason);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (id != null) inFlight.set(id, controller);
         try {
           const output: string[] = [];
           const errors: string[] = [];
           const result = await evalCommand(input as any, {
             caller: 'mcp',
+            signal: controller.signal,
             runtime: {
               output: (...outArgs: unknown[]) => output.push(outArgs.map(String).join(' ')),
               error: (text: string) => errors.push(text),
@@ -197,6 +211,9 @@ export function createMcpHandler(
             id: id ?? null,
             result: { content: [{ type: 'text', text: errorMsg }], isError: true },
           };
+        } finally {
+          if (id != null) inFlight.delete(id);
+          signal?.removeEventListener('abort', onAbort);
         }
       }
 
@@ -211,7 +228,9 @@ export function createMcpHandler(
 }
 
 /** stdio transport: newline-delimited JSON per 2025-11-25 spec. */
-async function startStdioTransport(handleRequest: (req: JsonRpcRequest) => Promise<JsonRpcResponse | undefined>): Promise<void> {
+async function startStdioTransport(
+  handleRequest: (req: JsonRpcRequest, signal?: AbortSignal) => Promise<JsonRpcResponse | undefined>,
+): Promise<void> {
   const { stdin, stdout } = await import('node:process');
   const { createInterface } = await import('node:readline');
 
@@ -223,19 +242,23 @@ async function startStdioTransport(handleRequest: (req: JsonRpcRequest) => Promi
 
   for await (const line of rl) {
     if (!line.trim()) continue;
+    let req: JsonRpcRequest;
     try {
-      const req = JSON.parse(line) as JsonRpcRequest;
-      const res = await handleRequest(req);
-      if (res) send(res);
+      req = JSON.parse(line) as JsonRpcRequest;
     } catch {
-      // Ignore malformed JSON
+      continue; // Ignore malformed JSON
     }
+    // Not awaited: a long tool call mustn't hold up later messages, such as its own cancellation
+    handleRequest(req).then(
+      (res) => res && send(res),
+      () => {},
+    );
   }
 }
 
 /** Streamable HTTP transport per 2025-11-25 spec. Responds with JSON or SSE based on client's Accept header. */
 async function startHttpTransport(
-  handleRequest: (req: JsonRpcRequest) => Promise<JsonRpcResponse | undefined>,
+  handleRequest: (req: JsonRpcRequest, signal?: AbortSignal) => Promise<JsonRpcResponse | undefined>,
   prefs: PadroneMcpPreferences,
   log: (msg: string) => void,
   onSignal?: (callback: () => void) => () => void,
@@ -330,7 +353,12 @@ async function startHttpTransport(
       return;
     }
 
-    const response = await handleRequest(rpcRequest);
+    // Abort the call when the client goes away before the response is sent
+    const disconnected = new AbortController();
+    res.on('close', () => {
+      if (!res.writableFinished) disconnected.abort('Client disconnected');
+    });
+    const response = await handleRequest(rpcRequest, disconnected.signal);
 
     // On initialize response: create session and set header
     if (rpcRequest.method === 'initialize' && response?.result) {

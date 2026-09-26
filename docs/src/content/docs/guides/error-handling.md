@@ -59,7 +59,7 @@ Every `PadroneError` carries:
 
 ### With cli()
 
-`cli()` never throws: it prints routing and validation errors to stderr, followed by a hint (`Run "my-cli build --help" for usage.`), and returns the error on the result. To print the full help of the failing command instead, pass `createPadrone('my-cli', { builtins: { help: { showHelpOnError: true } } })`. When a run ends with an error, it sets the process exit code to the error's `exitCode` (`1` by default, `130` after SIGINT) through `runtime.setExitCode` — `process.exitCode` in the default runtime, so output still flushes. Inspect the result to customize what happens next:
+`cli()` never throws: it prints routing and validation errors to stderr, followed by a hint (`Run "my-cli build --help" for usage.`), prints the message of any other error, and returns the error on the result. Set `DEBUG=1` (or pass `builtins: { autoOutput: { errorStack: true } }`) to print stack traces with the `cause` chain instead; with `padroneJson()`, `--json` prints errors as JSON on stdout. To print the full help of the failing command instead, pass `createPadrone('my-cli', { builtins: { help: { showHelpOnError: true } } })`. When a run ends with an error, it sets the process exit code to the error's `exitCode` (`1` by default, `130` after SIGINT) through `runtime.setExitCode` — `process.exitCode` in the default runtime, so output still flushes. Inspect the result to customize what happens next:
 
 ```typescript
 const { error } = await program.cli().drain();

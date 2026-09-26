@@ -3,6 +3,7 @@ import { thenMaybe } from '#src/core/results.ts';
 import type { ResolvedPadroneRuntime } from '#src/core/runtime.ts';
 import { getKnownOptionNames } from '#src/core/validate.ts';
 import type { AnyPadroneBuilder, CommandTypesBase } from '#src/types/index.ts';
+import { safeJsonStringify } from '#src/util/json.ts';
 import type { WithInterceptor } from '#src/util/type-utils.ts';
 import type { PadroneTracer } from './tracing.ts';
 
@@ -40,6 +41,11 @@ export type PadroneLoggerConfig = {
    */
   env?: string;
   /**
+   * Add `-v` (repeatable: `-v` debug, `-vv` trace) and `-q` (silent) next to the long flags. Defaults to `false`.
+   * `-v` takes precedence over the version builtin's `-v`; keep `--version` / `-V` for the version.
+   */
+  shortFlags?: boolean;
+  /**
    * Write every level to the runtime's `error` stream (stderr), keeping `output` (stdout) for command results.
    * Defaults to `false`: `trace`, `debug` and `info` go to `output`; `warn` and `error` to `error`.
    */
@@ -72,22 +78,7 @@ function stringifyValue(value: unknown): string {
   if (value instanceof Error) return value.stack ?? `${value.name}: ${value.message}`;
   if (typeof value === 'bigint') return `${value}n`;
   if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return String(value);
-  const ancestors: unknown[] = [];
-  try {
-    const json = JSON.stringify(value, function (this: unknown, _key, v: unknown) {
-      if (typeof v === 'bigint') return `${v}n`;
-      if (v instanceof Error) return { name: v.name, message: v.message };
-      if (!v || typeof v !== 'object') return v;
-      // `this` is the object holding `v`: drop the ancestors that aren't on its path
-      while (ancestors.length > 0 && ancestors.at(-1) !== this) ancestors.pop();
-      if (ancestors.includes(v)) return '[Circular]';
-      ancestors.push(v);
-      return v;
-    });
-    return json ?? String(value);
-  } catch {
-    return String(value);
-  }
+  return safeJsonStringify(value) ?? String(value);
 }
 
 /**
@@ -135,7 +126,11 @@ function formatArgs(args: unknown[]): string {
  * Reads the log-level flags from `rawArgs`, removing the ones it consumes.
  * Flags the command defines itself (e.g. its own `--verbose`) are left for the command.
  */
-function resolveCliLevel(rawArgs: Record<string, unknown>, ownOptions: ReadonlySet<string>): PadroneLogLevel | undefined {
+function resolveCliLevel(
+  rawArgs: Record<string, unknown>,
+  ownOptions: ReadonlySet<string>,
+  shortFlags: boolean,
+): PadroneLogLevel | undefined {
   const take = (key: string): { value: unknown } | undefined => {
     if (!(key in rawArgs) || ownOptions.has(key)) return undefined;
     const value = rawArgs[key];
@@ -143,18 +138,22 @@ function resolveCliLevel(rawArgs: Record<string, unknown>, ownOptions: ReadonlyS
     return { value };
   };
   const enabled = (flag: { value: unknown } | undefined) => !!flag && flag.value !== false;
+  // Counting flags: `--verbose` / `-v` once is 1, `-vv` is 2, `--no-verbose` is 0
+  const count = (flag: { value: unknown } | undefined) =>
+    !flag ? 0 : typeof flag.value === 'number' ? flag.value : flag.value === false ? 0 : Number(flag.value) || 1;
 
   // Every flag is consumed even when an earlier one already decided the level
   const trace = take('trace');
-  const verbose = take('verbose');
+  const verbosity = count(take('verbose')) + (shortFlags ? count(take('v')) : 0);
   const debug = take('debug');
   const silent = take('silent');
   const quiet = take('quiet');
+  const q = shortFlags ? take('q') : undefined;
   const logLevel = take('log-level');
 
-  if (enabled(trace)) return 'trace';
-  if (enabled(verbose) || enabled(debug)) return 'debug';
-  if (enabled(silent) || enabled(quiet)) return 'silent';
+  if (enabled(trace) || verbosity >= 2) return 'trace';
+  if (verbosity === 1 || enabled(debug)) return 'debug';
+  if (enabled(silent) || enabled(quiet) || enabled(q)) return 'silent';
   if (typeof logLevel?.value === 'string' && VALID_LEVELS.has(logLevel.value)) return logLevel.value as PadroneLogLevel;
   return undefined;
 }
@@ -212,7 +211,15 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
   return defineInterceptor({
     id: 'padrone:logger',
     name: 'padrone:logger',
-    options: { trace: 'flag', verbose: 'flag', debug: 'flag', silent: 'flag', quiet: 'flag', 'log-level': 'value' },
+    options: {
+      trace: 'flag',
+      verbose: 'count',
+      debug: 'flag',
+      silent: 'flag',
+      quiet: 'flag',
+      'log-level': 'value',
+      ...(rawConfig?.shortFlags && { v: 'count' as const, q: 'flag' as const }),
+    },
   })
     .requires<{ tracing?: PadroneTracer; loggerConfig?: PadroneLoggerConfig }>()
     .factory(() => {
@@ -221,7 +228,7 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
       return {
         parse(_ctx, next) {
           return thenMaybe(next(), (res) => {
-            cliLevel = resolveCliLevel(res.rawArgs, new Set(getKnownOptionNames(res.command)));
+            cliLevel = resolveCliLevel(res.rawArgs, new Set(getKnownOptionNames(res.command)), !!rawConfig?.shortFlags);
             return res;
           });
         },
@@ -261,7 +268,8 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
  *
  * Supports CLI flags for runtime level overrides:
  * - `--trace` → sets level to `trace`
- * - `--verbose` or `--debug` → sets level to `debug`
+ * - `--verbose` or `--debug` → sets level to `debug`; `--verbose --verbose` → `trace`
+ * - `-v` / `-vv` / `-q` with `shortFlags: true` (debug / trace / silent)
  * - `--silent` or `--quiet` → sets level to `silent`
  * - `--log-level=<level>` → sets an explicit level (`trace`, `debug`, `info`, `warn`, `error`, `silent`)
  *

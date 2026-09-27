@@ -329,7 +329,17 @@ function invalidRequest(message: unknown): JsonRpcResponse {
 
 type McpRequestHandler = ReturnType<typeof createMcpHandler>;
 
-type McpSession = { version: string; calls: Set<AbortController>; timer?: ReturnType<typeof setTimeout> };
+type McpSession = { version: string; owner?: string; calls: Set<AbortController>; timer?: ReturnType<typeof setTimeout> };
+
+/** Who a session belongs to: the `auth` identity, compared by value (a fresh object per request). */
+function sessionOwner(auth: unknown): string | undefined {
+  if (auth === undefined) return undefined;
+  try {
+    return JSON.stringify(auth) ?? String(auth);
+  } catch {
+    return String(auth);
+  }
+}
 
 /**
  * HTTP sessions, least recently used first. One is dropped (its calls aborted) after `ttl` ms without requests, or when a
@@ -352,15 +362,19 @@ function createSessionStore(ttl: number | undefined, max: number, newId: () => s
     session.timer.unref?.();
   };
   return {
-    get: (id: string) => sessions.get(id),
+    /** The session, if `owner` created it: another identity that knows its id can't use or end it. */
+    get(id: string, owner: string | undefined) {
+      const session = sessions.get(id);
+      return session && session.owner === owner ? session : undefined;
+    },
     drop,
-    create(version: string): string {
+    create(version: string, owner: string | undefined): string {
       for (const oldest of sessions.keys()) {
         if (sessions.size < Math.max(1, max)) break;
         drop(oldest, 'Session evicted');
       }
       const id = newId();
-      const session: McpSession = { version, calls: new Set() };
+      const session: McpSession = { version, owner, calls: new Set() };
       sessions.set(id, session);
       expireWhenIdle(id, session);
       return id;
@@ -445,6 +459,12 @@ async function startHttpTransport(
       res.end(JSON.stringify(body));
     };
 
+    // A refused request's body is still read (up to `maxBodySize`), or its connection can keep the server from closing
+    const discardBody = () =>
+      readBodyText(req as AsyncIterable<Uint8Array>, req.headers['content-length'], prefs.maxBodySize).catch(() => {
+        res.setHeader('Connection', 'close');
+      });
+
     // CORS headers
     if (corsOrigin) {
       res.setHeader('Access-Control-Allow-Origin', corsOrigin);
@@ -492,6 +512,7 @@ async function startHttpTransport(
         return;
       }
       if (!auth) {
+        await discardBody();
         res.setHeader('WWW-Authenticate', 'Bearer');
         sendJson(401, { jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Unauthorized' } });
         return;
@@ -501,7 +522,8 @@ async function startHttpTransport(
     // DELETE: terminate session
     if (req.method === 'DELETE') {
       const reqSessionId = req.headers['mcp-session-id'] as string | undefined;
-      const dropped = reqSessionId ? sessions.drop(reqSessionId, 'Session terminated') : false;
+      const dropped =
+        reqSessionId && sessions.get(reqSessionId, sessionOwner(auth)) ? sessions.drop(reqSessionId, 'Session terminated') : false;
       res.writeHead(!reqSessionId ? 400 : dropped ? 200 : 404);
       res.end();
       return;
@@ -516,9 +538,10 @@ async function startHttpTransport(
 
     // Validate session ID on non-initialize requests
     const reqSessionId = req.headers['mcp-session-id'] as string | undefined;
-    const session = reqSessionId ? sessions.get(reqSessionId) : undefined;
+    const session = reqSessionId ? sessions.get(reqSessionId, sessionOwner(auth)) : undefined;
     const negotiatedVersion = session?.version;
     if (reqSessionId && !negotiatedVersion) {
+      await discardBody();
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid session' } }));
       return;
@@ -569,7 +592,7 @@ async function startHttpTransport(
     // On initialize response: create session and set header
     const initialized = (response?.result as { protocolVersion?: string } | undefined)?.protocolVersion;
     if ((rpcRequest as JsonRpcRequest).method === 'initialize' && initialized) {
-      res.setHeader('MCP-Session-Id', sessions.create(initialized));
+      res.setHeader('MCP-Session-Id', sessions.create(initialized, sessionOwner(auth)));
     }
 
     if (response) {
@@ -599,6 +622,8 @@ async function startHttpTransport(
     server.on('error', reject);
     const unsubscribe = onSignal?.(() => {
       server.close(() => resolve());
+      // Keep-alive clients would otherwise hold the server open; requests in flight still finish
+      server.closeIdleConnections?.();
     });
     server.on('close', () => {
       unsubscribe?.();

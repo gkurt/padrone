@@ -360,6 +360,22 @@ describe('MCP over HTTP', () => {
     }
   });
 
+  test("a session belongs to the identity that created it: another client's token can't use or end it", async () => {
+    const server = await startServer('mcp', build, { bearer: ['alice', 'bob'] });
+    try {
+      const session = await initialize(server.url, { Authorization: 'Bearer alice' });
+      const asBob = { Authorization: 'Bearer bob', 'MCP-Session-Id': session };
+      const call = await post(server.url, rpc(2, 'tools/call', { name: 'whoami', arguments: {} }), asBob);
+      expect(call.status).toBe(404);
+      expect(await call.text()).not.toContain('alice');
+      expect((await fetch(`${server.url}/mcp`, { method: 'DELETE', headers: asBob })).status).toBe(404);
+      const asAlice = { Authorization: 'Bearer alice', 'MCP-Session-Id': session };
+      expect((await post(server.url, rpc(3, 'ping'), asAlice)).status).toBe(200);
+    } finally {
+      await server.stop();
+    }
+  });
+
   test('idle sessions expire after sessionTtl', async () => {
     const server = await startServer('mcp', build, { sessionTtl: 40 });
     try {

@@ -1196,7 +1196,7 @@ await program.mcp({
 | `timeout` | `number` | — | Longest a command may run, in ms: its signal is aborted and the request fails (JSON-RPC error `-32001`) |
 | `maxConcurrent` | `number` | — | Most commands running at once; one over it fails right away (JSON-RPC error `-32000`) |
 | `sessionTtl` | `number` | — | HTTP sessions idle this long (ms, no request and no call running) are dropped, aborting their calls; the client gets 404 and starts a new one |
-| `maxSessions` | `number` | `1000` | Most HTTP sessions kept; a new one drops the least recently used |
+| `maxSessions` | `number` | `1000` | Most HTTP sessions kept; a new one drops the least recently used. With `auth`/`bearer`, a session only answers the identity that created it |
 
 **Returns:** `Promise<void>` (resolves when the server shuts down)
 

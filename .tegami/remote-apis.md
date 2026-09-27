@@ -12,3 +12,4 @@ packages:
 - `timeout` aborts a command that runs too long (serve: 504; MCP: a JSON-RPC error), and `maxConcurrent` refuses requests over a limit (serve: 503). `tool({ timeout })` works the same way.
 - MCP HTTP sessions can expire after `sessionTtl` ms without requests, and `maxSessions` (1000 by default) drops the least recently used one.
 - `serve()` and `mcp()` log the port they actually listen on, so `port: 0` works.
+- With `auth` or `bearer`, an MCP session only answers the identity that created it.

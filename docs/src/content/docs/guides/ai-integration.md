@@ -102,7 +102,7 @@ The `.mcp()` method, `padroneMcp(defaults)` and the `mcp` command accept these o
 | `timeout` | `number` | — | Longest a command may run, in ms |
 | `maxConcurrent` | `number` | — | Most commands running at once |
 | `sessionTtl` | `number` | — | Drop an HTTP session after this many ms without requests |
-| `maxSessions` | `number` | `1000` | Most HTTP sessions kept; a new one drops the least recently used |
+| `maxSessions` | `number` | `1000` | Most HTTP sessions kept; a new one drops the least recently used. With `auth`/`bearer`, a session only answers the identity that created it |
 
 ### Transports
 

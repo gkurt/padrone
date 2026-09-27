@@ -39,6 +39,9 @@ Padrone supports these Zod types:
 | `z.enum(['a', 'b'])` | `--level high` |
 | `z.array(z.string())` | `--tags foo --tags bar` or `--tags=[foo,bar]`; with `.meta({ variadic: true })` also `--tags foo bar` |
 | `z.union([z.boolean(), z.string()])` | `--cache` (→ `true`) or `--cache dir` (→ `"dir"`) |
+| `z.object({ host: z.string() })` | `--db.host localhost` or `--db '{"host":"localhost"}'` |
+| `z.record(z.string(), z.string())` | `--labels.env prod` or `--labels '{"app.kubernetes.io/name":"web"}'` |
+| `z.array(z.object({ name: z.string() }))` | `--items '[{"name":"a"},{"name":"b"}]'` or `--items '{"name":"a"}' --items '{"name":"b"}'` |
 
 Parsing follows the schema, so each option consumes values according to its type:
 
@@ -47,6 +50,7 @@ Parsing follows the schema, so each option consumes values according to its type
 - An option whose type allows both a boolean and a value (`--cache [dir]`) takes the next argument only when it doesn't look like an option or a subcommand.
 - A repeated option keeps the last value (`--name a --name b` → `"b"`); array options collect every value.
 - The `[a,b]` bracket syntax only applies to array options — `--title=[WIP]` stays a string.
+- Objects, records and arrays of objects take a JSON value (a JSON object, or for arrays a JSON array or one object per occurrence). Dotted keys merge with it, the later value winning: `--db '{"host":"x","port":1}' --db.port 2` gives `{ host: 'x', port: 2 }`. Invalid JSON is reported as `Option "--db" has invalid JSON: …`. A JSON string from an env variable or a `fromFile` file (`--db @db.json`) is parsed too.
 - `--` ends option parsing; everything after it is positional. A lone `-` is a positional (commonly stdin).
 
 ### Argument Flags

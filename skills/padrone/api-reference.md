@@ -567,7 +567,7 @@ const withDb = defineInterceptor({ name: 'with-db' })
 
 **Metadata:** `name` (string), `order` (number, lower = outermost, default: 0), `id` (string, deduplication key — last wins), `disabled` (boolean), `callers` (callers it runs for, e.g. `LOCAL_CALLERS`/`REMOTE_CALLERS`; still counts for `requires`), `on` (event handlers keyed by event id).
 
-**Chaining:** `.provides<T>()` and `.requires<T>(...ids)` for typed context (ids are checked at runtime), `.factory(fn)` to set the factory, `.on(event, handler)` for a typed custom event handler.
+**Chaining:** `.provides<T>()` and `.requires<T>(...ids)` for typed context (ids are checked at runtime), `.factory(fn)` to set the factory, `.on(event, handler)` for a typed custom event handler. `.requires()` and `.on()` return a new interceptor (same id, meta and factory); the original is unchanged.
 
 ### Custom events
 
@@ -643,7 +643,7 @@ All handlers can return Promises for async behavior.
 - Same `order` preserves registration order
 - First-registered = outermost by default
 - Built-in extension orders: signal (-2000), autoOutput (-1100), color/stdin (-1001), help/version/repl (-1000), interactive (-999), suggestions (-500)
-- When multiple interceptors share the same `id`, last one wins (deduplication)
+- When multiple interceptors share the same `id`, last one wins (deduplication), also across root and command: the command's replaces the root's for route/validate/execute and for error/shutdown
 
 ---
 

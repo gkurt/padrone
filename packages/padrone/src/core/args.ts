@@ -438,16 +438,56 @@ function getPropertySchema(properties: Record<string, any>, path: readonly strin
   return prop;
 }
 
+/** Objects and records (not string unions) take their command-line value as JSON. */
+const takesJson = (types: Set<string>) => types.has('object') && !types.has('string');
+
 /** How a schema property consumes CLI values, derived from its allowed types. */
 export function getOptionArity(prop: Record<string, any> | undefined): OptionArity | undefined {
   if (!prop) return undefined;
   const types = new Set<string>();
-  collectAllowedTypes(prop, types, new Set());
+  const itemTypes = new Set<string>();
+  collectAllowedTypes(prop, types, itemTypes);
   types.delete('null');
-  if (types.has('array')) return 'array';
+  if (types.has('array')) return takesJson(itemTypes) && !types.has('string') ? 'json' : 'array';
   if (types.has('boolean')) return types.size === 1 ? 'flag' : 'optional';
+  if (takesJson(types)) return 'json';
   if (types.size === 0) return 'optional';
   return 'value';
+}
+
+/** Whether a schema property accepts an array, so its command-line values accumulate (`--tag a --tag b`). */
+export function acceptsArray(prop: Record<string, any> | undefined): boolean {
+  const types = new Set<string>();
+  collectAllowedTypes(prop, types, new Set());
+  return types.has('array');
+}
+
+/** Parses the JSON object or array given to an option that takes JSON (`--db '{"host":"x"}'`); other values stay as they are. */
+export function parseJsonArg(value: unknown): { value: unknown } | { error: string } {
+  if (typeof value !== 'string') return { value };
+  const text = value.trim();
+  if (!text.startsWith('{') && !text.startsWith('[')) return { value };
+  try {
+    return { value: JSON.parse(text) };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+const jsonOrValue = (value: unknown) => {
+  const parsed = parseJsonArg(value);
+  return 'value' in parsed ? parsed.value : value;
+};
+
+/** `source` merged into `target` key by key (nested objects too), `source` winning. */
+export function mergeObjects(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...target };
+  for (const [key, value] of Object.entries(source)) {
+    if (key === '__proto__') continue;
+    const existing = result[key];
+    result[key] = isPlainObject(existing) && isPlainObject(value) ? mergeObjects(existing, value) : value;
+  }
+  return result;
 }
 
 /**
@@ -531,29 +571,39 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
   return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 }
 
-/** Coerces each value against its property schema, descending into nested objects (`--user.id=7`). */
+/**
+ * Coerces each value against its property schema, descending into nested objects (`--user.id=7`) and records.
+ * Options that take JSON parse a JSON string (e.g. a file's text read for `fromFile`, or an env value).
+ */
 function coerceProperties(data: Record<string, unknown>, properties: Record<string, any>): Record<string, unknown> {
   const result = { ...data };
 
-  for (const [key, value] of Object.entries(result)) {
-    const prop = properties[key];
+  for (const [key, raw] of Object.entries(result)) {
+    const prop = key === '__proto__' || !Object.hasOwn(properties, key) ? undefined : properties[key];
     if (!prop) continue;
 
-    if (isPlainObject(value)) {
-      if (prop.properties) result[key] = coerceProperties(value, prop.properties);
-      continue;
-    }
-
+    const json = getOptionArity(prop) === 'json';
+    const value = json ? jsonOrValue(raw) : raw;
+    result[key] = value;
     const types = new Set<string>();
     const itemTypes = new Set<string>();
     collectAllowedTypes(prop, types, itemTypes);
+
+    if (isPlainObject(value)) {
+      const additional = prop.additionalProperties;
+      if (prop.properties) result[key] = coerceProperties(value, prop.properties);
+      else if (additional && typeof additional === 'object')
+        result[key] = coerceProperties(value, Object.fromEntries(Object.keys(value).map((k) => [k, additional])));
+      else if (types.has('array') && !types.has('object')) result[key] = [value];
+      continue;
+    }
 
     const isArrayValue = Array.isArray(value);
     const allowsArray = types.has('array');
     const allowsScalar = types.has('string') || types.has('boolean') || types.has('number') || types.has('integer');
 
     if (isArrayValue && allowsArray) {
-      result[key] = value.map((v) => coerceScalar(v, itemTypes));
+      result[key] = value.map((v) => (json ? jsonOrValue(v) : coerceScalar(v, itemTypes)));
     } else if (!isArrayValue && allowsArray && !allowsScalar) {
       // Wrap single value into an array when only array shapes are allowed
       result[key] = [coerceScalar(value, itemTypes)];

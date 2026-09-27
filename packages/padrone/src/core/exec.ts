@@ -168,6 +168,8 @@ export function execCommand(
   const rootRegistered = rootCommand.interceptors ?? [];
   const rootInterceptors = resolveRegisteredInterceptors(rootRegistered, factoryCache);
   const rootInterceptorSet = new Set(rootInterceptors);
+  // Root interceptors whose id a command-level one reuses: the command's wins for error/shutdown too
+  const overridden = new Set<ResolvedInterceptor>();
 
   const runPipeline = (signal: AbortSignal, pipelineContext: unknown) => {
     // ── Phase 1: Parse ──────────────────────────────────────────────────
@@ -205,6 +207,8 @@ export function execCommand(
       checkInterceptorRequirements(registered);
       const commandInterceptors = resolveRegisteredInterceptors(registered, factoryCache);
       const commandOnlyInterceptors = commandInterceptors.filter((i) => !rootInterceptorSet.has(i));
+      const commandIds = new Set(commandOnlyInterceptors.map((i) => i.id).filter(Boolean));
+      for (const i of rootInterceptors) if (i.id && commandIds.has(i.id)) overridden.add(i);
       const context = resolveContext(command, pipelineContext);
 
       // ── Phase 2: Route ──────────────────────────────────────────────
@@ -340,5 +344,6 @@ export function execCommand(
     ctx.builder,
     caller,
     pipelineState,
+    overridden,
   ) as any;
 }

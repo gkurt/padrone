@@ -120,6 +120,8 @@ The second parameter to `.arguments()` configures positional args, interactive p
 })
 ```
 
+Object, record and array-of-object options take JSON as well as dotted keys: `--db '{"host":"x"}' --db.port 5432` (dotted keys merge with the JSON, the later one winning), `--items '[{"name":"a"}]'` or one `--items '{"name":"a"}'` per item.
+
 ## Interceptor System
 
 Seven phases in onion/middleware pattern with `next()`:
@@ -129,7 +131,7 @@ Seven phases in onion/middleware pattern with `next()`:
 3. **route** — after command resolved, before validation (root + command chain)
 4. **validate** — schema validation (root + command chain)
 5. **execute** — handler execution (root + command chain)
-6. **error** — error handling, two layers: command-level first, then root-level (return `{ error: undefined, result }` to suppress)
+6. **error** — error handling, two layers: command-level first, then root-level (return `{ error: undefined, result }` to suppress); a command-level interceptor with a root one's `id` replaces it in both
 7. **shutdown** — cleanup, always runs, two layers: command-level first, then root-level
 
 All phase contexts include `context` (user-provided context), `signal` (AbortSignal for cancellation), `caller` (invocation method: `'cli'`, `'eval'`, `'run'`, etc.), and `runtime`.
@@ -154,7 +156,7 @@ const timer = defineInterceptor({ name: 'timer', order: -10 }, () => {
 program.intercept(timer);
 ```
 
-`defineInterceptor()` returns a factory — each execution gets fresh closure state. Supports `.provides<T>()` and `.requires<T>()` for typed context; `.requires<T>('padrone:logger')` also checks at runtime that the interceptor with that id is registered. `callers: LOCAL_CALLERS` (or `['cli', 'repl']`, `REMOTE_CALLERS`) in the meta runs it only for those callers. Custom events: `const deployed = defineEvent<{ env: string }>('myapp:deployed')`, handled with `interceptor.on(deployed, (payload, ctx) => ...)` and emitted with `await ctx.emit(deployed, { env })` from actions/interceptors (handlers on the command chain run in order) or `program.emit()` (root handlers).
+`defineInterceptor()` returns a factory — each execution gets fresh closure state. Supports `.provides<T>()` and `.requires<T>()` for typed context (`.requires()` and `.on()` return a new interceptor, leaving a shared one unchanged); `.requires<T>('padrone:logger')` also checks at runtime that the interceptor with that id is registered. `callers: LOCAL_CALLERS` (or `['cli', 'repl']`, `REMOTE_CALLERS`) in the meta runs it only for those callers. Custom events: `const deployed = defineEvent<{ env: string }>('myapp:deployed')`, handled with `interceptor.on(deployed, (payload, ctx) => ...)` and emitted with `await ctx.emit(deployed, { env })` from actions/interceptors (handlers on the command chain run in order) or `program.emit()` (root handlers).
 
 ## Extension-First Architecture
 

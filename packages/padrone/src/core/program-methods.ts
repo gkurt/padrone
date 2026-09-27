@@ -48,6 +48,13 @@ function reportExitCode<T extends { error?: unknown; exitCode?: number; drain: (
   return result;
 }
 
+/** Quotes a token for `eval()`'s tokenizer when it has spaces or quotes (JSON values do), escaping `\` and the quote. */
+function quoteToken(text: string): string {
+  if (!/[\s"'`]/.test(text)) return text;
+  const quote = text.includes('"') && !text.includes("'") ? "'" : '"';
+  return `${quote}${text.replace(/[\\"']/g, (c) => (c === '\\' || c === quote ? `\\${c}` : c))}${quote}`;
+}
+
 export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadroneProgram['eval']) {
   const { rootCommand } = ctx;
 
@@ -70,24 +77,14 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
         const value = (args as Record<string, unknown>)[name];
         if (value === undefined) continue;
 
-        if (variadic && Array.isArray(value)) {
-          for (const v of value) {
-            const vStr = String(v);
-            if (vStr.includes(' ')) parts.push(`"${vStr}"`);
-            else parts.push(vStr);
-          }
-        } else {
-          const argStr = String(value);
-          if (argStr.includes(' ')) parts.push(`"${argStr}"`);
-          else parts.push(argStr);
-        }
+        if (variadic && Array.isArray(value)) for (const v of value) parts.push(quoteToken(String(v)));
+        else parts.push(quoteToken(String(value)));
       }
 
       const named = Object.fromEntries(Object.entries(args).filter(([key]) => !positionalNames.has(key)));
       for (const token of serializeArgsToFlags(named, commandObj)) {
         const eq = token.startsWith('--') ? token.indexOf('=') : -1;
-        if (!token.includes(' ', eq)) parts.push(token);
-        else parts.push(eq === -1 ? `"${token}"` : `${token.slice(0, eq)}="${token.slice(eq + 1)}"`);
+        parts.push(eq === -1 ? quoteToken(token) : `${token.slice(0, eq + 1)}${quoteToken(token.slice(eq + 1))}`);
       }
     }
 

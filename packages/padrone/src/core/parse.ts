@@ -6,8 +6,13 @@
  * - `array`: like `value`, and also accepts the `--tags=[a,b]` bracket syntax.
  * - `count`: never takes a value from the next token; each occurrence increments (`-vvv` → 3).
  * - `variadic`: like `array`, and also takes every following token up to the next option (`--tag a b c`).
+ * - `json`: like `value`, for objects, records and arrays of objects: the value can be JSON (`--db '{"host":"x"}'`),
+ *   and an attached `[...]` is kept whole.
  */
-export type OptionArity = 'flag' | 'value' | 'optional' | 'array' | 'count' | 'variadic';
+export type OptionArity = 'flag' | 'value' | 'optional' | 'array' | 'count' | 'variadic' | 'json';
+
+/** Arities that always take a value, even one starting with `-`. */
+const TAKES_VALUE = new Set<OptionArity | undefined>(['value', 'array', 'variadic', 'json']);
 
 /**
  * Supplies the command-aware knowledge the tokenizer needs. Without one, every option is treated
@@ -167,7 +172,7 @@ export function parseCliInputToParts(input: string | readonly string[], resolver
     const next = tokens[i + 1];
     if (next === undefined || next === '--' || arity === 'count') return undefined;
     if (arity === 'flag' && !BOOLEAN_WORD.test(next)) return undefined;
-    if (arity !== 'value' && arity !== 'array' && arity !== 'variadic') {
+    if (!TAKES_VALUE.has(arity)) {
       if (looksLikeOption(next) || resolver?.isCommand(next)) return undefined;
     }
     i++;
@@ -180,7 +185,7 @@ export function parseCliInputToParts(input: string | readonly string[], resolver
       return;
     }
     const first = takeNext(arity);
-    if (first === undefined && (arity === 'value' || arity === 'array' || arity === 'variadic')) part.missing = true;
+    if (first === undefined && TAKES_VALUE.has(arity)) part.missing = true;
     if (arity !== 'variadic' || first === undefined) {
       part.value = first;
       return;
@@ -237,7 +242,7 @@ export function parseCliInputToParts(input: string | readonly string[], resolver
         result.push(part);
 
         const rest = chars.slice(ci + 1);
-        if (rest && (arity === 'value' || arity === 'optional' || arity === 'array' || arity === 'variadic')) {
+        if (rest && (TAKES_VALUE.has(arity) || arity === 'optional')) {
           part.value = inline === undefined ? rest : `${rest}=${inline}`;
           break;
         }

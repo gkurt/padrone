@@ -197,7 +197,7 @@ export async function getCompletionResult(rootCommand: AnyPadroneCommand, words:
       else if (!option) {
         const name = word.startsWith('--') ? word.slice(2) : word.slice(1).at(-1);
         const arity = name ? getInterceptorOptions(command)[name] : undefined;
-        extensionValue = arity === 'value' || arity === 'array' || arity === 'variadic';
+        extensionValue = arity === 'value' || arity === 'array' || arity === 'variadic' || arity === 'json';
       }
       continue;
     }

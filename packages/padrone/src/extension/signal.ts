@@ -54,11 +54,22 @@ const signalInterceptor = defineInterceptor(signalMeta, () => {
         upstream.removeEventListener('abort', onUpstreamAbort);
       };
 
-      const result = next({ signal: abortController.signal });
-      return thenMaybe(result, (r) => {
+      // Cleaned up on failure too: a command-level interceptor with this id replaces this one's shutdown
+      const fail = (err: unknown): never => {
+        cleanup();
+        throw err;
+      };
+      let result: ReturnType<typeof next>;
+      try {
+        result = next({ signal: abortController.signal });
+      } catch (err) {
+        return fail(err);
+      }
+      const done = <T>(r: T): T => {
         cleanup();
         return attachSignalInfo(r);
-      });
+      };
+      return result instanceof Promise ? result.then(done, fail) : done(result);
     },
     error(_ctx, next) {
       return thenMaybe(next(), (er) => {

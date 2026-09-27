@@ -135,11 +135,14 @@ Groups of options of which exactly one, or at least one, must be given. See [Opt
 
 ### stdin
 
-Read from stdin and inject the data into a specified argument field. Only reads when stdin is piped (not a TTY) and the field wasn't already provided via CLI flags. The read mode is inferred from the schema: `string` fields read all stdin as text, `string[]` fields read line-by-line.
+Read from stdin and inject the data into a specified argument field. Only reads when stdin is piped (not a TTY) and the field wasn't already provided via CLI flags, or when its value is a lone `-` (`cat -`, `--data -`; read even from a terminal). The read mode is inferred from the schema: `string` fields read all stdin as text, `string[]` fields read line-by-line. `{ field, trim: true }` trims the text (each line, for arrays); number and boolean fields are always trimmed, so `echo 21 | my-cli double` works.
 
 ```typescript
 // Read all stdin as text into 'data' field
 .arguments(z.object({ data: z.string() }), { stdin: 'data' })
+
+// Without the trailing newline
+.arguments(z.object({ token: z.string() }), { stdin: { field: 'token', trim: true } })
 
 // Read stdin line-by-line into an array field (inferred from array schema)
 .arguments(
@@ -555,6 +558,7 @@ z.object({
 - `--body @@me` passes `@me`: a leading `@@` escapes the `@`. Other values are taken as given.
 - For array options, each value is read on its own: `--tag @a.txt --tag b`.
 - An object, record or array-of-objects option reads a JSON file: `--db @db.json` parses the file's JSON into the object (see [Supported Types](/padrone/guides/commands-arguments/#supported-types)).
+- With [`padroneResponseFiles()`](/padrone/reference/api/#padroneresponsefilesoptions), an option's `@file` value is still read by `fromFile`, not expanded as a response file.
 - Only values typed on the command line (`cli()`, `eval()`, the REPL) are read. Values from env variables and config files, and args from serve, MCP and `tool()` calls, are taken literally, so a remote client can't read the server's files.
 
 Help marks the option `(@file or - for stdin)`. Reading stdin is async, so a command with a `fromFile` field in its `fields` meta is typed as async; set with `.meta({ fromFile: true })` on the schema, mark the command `.async()`.

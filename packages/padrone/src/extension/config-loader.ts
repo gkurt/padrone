@@ -1,6 +1,7 @@
 import { ConfigError } from '../core/errors.ts';
 import { thenMaybe } from '../core/results.ts';
 import { getProgramDirs } from '../util/dirs.ts';
+import { programEnvVar } from './utils.ts';
 
 type ConfigData = Record<string, unknown>;
 type MaybePromise<T> = T | Promise<T>;
@@ -218,7 +219,7 @@ export function applyProfile(data: ConfigData, name?: string): ConfigData {
 
 /** The environment variable that selects a profile by default: `my-cli` → `MY_CLI_PROFILE`. */
 export function profileEnvVar(programName: string): string {
-  return `${programName.replace(/[^a-z0-9]+/gi, '_').toUpperCase()}_PROFILE`;
+  return programEnvVar(programName, 'PROFILE');
 }
 
 /** Runs `step` over `items` in order, waiting for each only when it returns a promise. */

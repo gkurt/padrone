@@ -1,5 +1,5 @@
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from '@standard-schema/spec';
-import type { PadroneFieldGroups, PadroneFieldMeta } from '../types/args-meta.ts';
+import type { PadroneFieldGroups, PadroneFieldMeta, StdinConfig } from '../types/args-meta.ts';
 import { camelToKebab } from '../util/shell-utils.ts';
 import { asyncStreamRegistry } from '../util/stream.ts';
 import type { OptionArity } from './parse.ts';
@@ -21,6 +21,20 @@ function getFieldJsonSchema(schema: StandardJSONSchemaV1 | undefined, field: str
     if (jsonSchema.type === 'object' && jsonSchema.properties) return jsonSchema.properties[field];
   } catch {}
   return undefined;
+}
+
+/** The JSON types a field accepts (`anyOf`/`oneOf` variants included), e.g. `{'number'}` for `z.number().optional()`. */
+export function getFieldTypes(schema: StandardJSONSchemaV1 | undefined, field: string): Set<string> {
+  const types = new Set<string>();
+  collectAllowedTypes(getFieldJsonSchema(schema, field), types, new Set());
+  return types;
+}
+
+/** The field `meta.stdin` reads into, and whether to trim it. */
+export function getStdinConfig(meta: { stdin?: StdinConfig } | undefined): { field: string; trim?: boolean } | undefined {
+  const stdin = meta?.stdin;
+  if (!stdin) return undefined;
+  return typeof stdin === 'string' ? { field: stdin } : stdin;
 }
 
 /**

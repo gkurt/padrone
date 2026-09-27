@@ -44,11 +44,11 @@ Additional opt-in extensions are available for advanced features:
 | `padroneLogger(options)` | `'padrone'` | Structured logging to stderr with levels (`--verbose` repeatable; `shortFlags`, `env`, `stdout`, `format: 'json'`, `redact`, `destination` options; `child({ requestId })` bindings) |
 | `padroneJson(options?)` | `'padrone'` | `--json` flag: results and errors as JSON; `--jq` and `--template` filter and format the result; `fields` adds gh-style `--json name,url` |
 | `padroneFormat(options?)` | `'padrone'` | `--output`/`-o <format>`: text, json, yaml, csv, tsv or table; `tableFlags` adds `--columns`, `--sort`, `--no-header` |
-| `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`) before `mutation: true` commands |
+| `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`, or `<PROGRAM>_YES=1`) before `mutation: true` commands |
 | `padroneTiming()` | `'padrone'` | Execution timing (`--time`; `Done in …` / `Failed after …`, `format` option) |
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking |
 | `padroneUpgrade(options?)` | `'padrone'` | Self-update command (`upgrade`, `--check`, `--to`, `--channel`) using the package manager the program was installed with |
-| `padroneAliases(options?)` | `'padrone'` | User-defined command aliases (`alias set co "checkout --force"`), expanded before routing |
+| `padroneAliases(options?)` | `'padrone'` | User-defined command aliases (`alias set co checkout --force`, `$1`/`$@` placeholders), expanded before routing |
 | `padroneResponseFiles(options?)` | `'padrone'` | Response files: `my-cli @args.txt` reads arguments from `args.txt` (`@@` escapes a leading `@`) |
 | `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support; `remote: 'exit'` returns an app's last frame to serve, MCP and `tool()` calls |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
@@ -688,7 +688,7 @@ Understanding how built-in features are implemented helps illustrate the interce
 
 **Interactive prompting** (`padroneInteractive`, order: -999) — In the validate phase, prompts for missing field values via `runtime.prompt()` and injects responses into `rawArgs` before validation.
 
-**Suggestions** (`padroneSuggestions`, order: -500) — In parse and validate error paths, enriches error messages with fuzzy-matched "Did you mean?" suggestions. With `builtins: { suggestions: { run: 'prompt' } }`, an unknown command in `cli()` or the REPL asks "Run "deploy" instead?" and, if accepted, parses again with the correction.
+**Suggestions** (`padroneSuggestions`, order: -500) — In parse and validate error paths, enriches error messages with fuzzy-matched "Did you mean?" suggestions: commands and their aliases (plus `padroneAliases()` names for a top-level command), and options, including those extensions declare (`--json`, `--yes`, `--interactive`; not help's own `--detail`/`--all`, nor hidden options). With `builtins: { suggestions: { run: 'prompt' } }`, an unknown command in `cli()` or the REPL asks "Run "deploy" instead?" and, if accepted, parses again with the correction.
 
 ## Disabling and Overriding Built-in Extensions
 

@@ -129,7 +129,7 @@ type ArgsMeta = {
   autoAlias?: boolean;                // auto kebab-case aliases for camelCase (default: true)
   exactlyOne?: string[] | string[][]; // exactly one of these options (several groups as arrays)
   atLeastOne?: string[] | string[][]; // at least one of these options
-  stdin?: string | { field: string; as?: 'text' | 'lines' };
+  stdin?: string | { field: string; trim?: boolean }; // text/lines inferred from the schema; a lone `-` value reads stdin
   fields?: Record<string, {
     flags?: string | string[];        // single-char short flags (-n, -v)
     alias?: string | string[];        // multi-char long aliases (--dry-run)

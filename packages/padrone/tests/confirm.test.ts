@@ -53,7 +53,7 @@ describe('padroneConfirm', () => {
   it('fails without a terminal to ask in, unless --yes is passed', async () => {
     const { ran, cli } = createProgram();
     const result = await cli('drop');
-    expect((result.error as Error).message).toBe('"drop" needs confirmation: pass --yes to run it without a prompt');
+    expect((result.error as Error).message).toBe('"drop" needs confirmation: pass --yes (or set DB_YES=1) to run it without a prompt');
     expect(ran).not.toHaveBeenCalled();
     await cli('drop', '--yes');
     expect(ran).toHaveBeenCalled();

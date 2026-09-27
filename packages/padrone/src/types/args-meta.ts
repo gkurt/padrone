@@ -139,11 +139,18 @@ type PositionalArgs<TObj> =
  */
 /**
  * Configuration for reading from stdin and mapping it to an argument field.
- * Simply specify the field name — the read mode is inferred from the schema:
+ * Specify the field name, or `{ field, trim }` — the read mode is inferred from the schema:
  * - `string` field → reads all stdin as text
  * - `string[]` field → reads stdin line-by-line
  */
-export type StdinConfig<TObj = Record<string, any>> = keyof TObj & string;
+export type StdinConfig<TObj = Record<string, any>> =
+  | (keyof TObj & string)
+  | {
+      /** The field stdin is read into. */
+      field: keyof TObj & string;
+      /** Trim whitespace around the text (around each line for arrays). Number and boolean fields are always trimmed. */
+      trim?: boolean;
+    };
 
 /**
  * Metadata for `.globalArgs()`: per-field config, auto-aliasing, and prompting for missing globals
@@ -202,6 +209,9 @@ export interface PadroneArgsSchemaMeta<TObj = Record<string, any>> {
    * - `string` field → reads all stdin as a single string
    * - `string[]` field → reads stdin line-by-line into an array
    *
+   * A lone `-` as the field's value (`cat -`, `--data -`) reads stdin too, even from a terminal.
+   * `{ field, trim: true }` trims the text; number and boolean fields are always trimmed (`echo 21 | my-cli double`).
+   *
    * Precedence: CLI flags > stdin > env vars > config file > schema defaults.
    *
    * @example
@@ -211,6 +221,9 @@ export interface PadroneArgsSchemaMeta<TObj = Record<string, any>> {
    *
    * // Read stdin lines into 'lines' field (inferred from array schema)
    * .arguments(z.object({ lines: z.string().array() }), { stdin: 'lines' })
+   *
+   * // Without the trailing newline
+   * .arguments(z.object({ token: z.string() }), { stdin: { field: 'token', trim: true } })
    * ```
    */
   stdin?: StdinConfig<TObj>;

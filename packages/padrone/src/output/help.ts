@@ -3,6 +3,7 @@ import {
   extractFieldRules,
   extractSchemaMetadata,
   getJsonSchema,
+  getStdinConfig,
   isSensitiveField,
   optionDisplayName,
   type PadroneArgsSchemaMeta,
@@ -267,7 +268,7 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
       hasSubcommands: !!(cmd.commands && cmd.commands.length > 0),
       hasPositionals,
       hasArguments: false, // updated below after extracting arguments
-      stdinField: cmd.meta?.stdin,
+      stdinField: getStdinConfig(cmd.meta)?.field,
       helpFlag: getHelpFlag(rootCmd),
     },
   };

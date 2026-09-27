@@ -2,6 +2,7 @@ import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { getGlobalArgs } from '../core/commands.ts';
 import { resolveStdinAlways } from '../core/default-runtime.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
+import { getNestedValue } from '../core/parse.ts';
 import { thenMaybe, usesInteractive } from '../core/results.ts';
 import {
   buildCommandArgs,
@@ -81,9 +82,12 @@ const interactiveInterceptor = defineInterceptor(
             argsResult?: StandardSchemaV1.Result<unknown>;
           }): InterceptorValidateResult | undefined => {
             if (!result.argsResult?.issues) return undefined;
+            // Issues about a provided value; a key missing from a provided object (`--db.host h` without `db.port`) can still be prompted
             const providedFieldIssues = result.argsResult.issues.filter((issue: StandardSchemaV1.Issue) => {
               const rootKey = issue.path?.[0];
-              return rootKey !== undefined && providedKeys.has(String(rootKey));
+              if (rootKey === undefined || !providedKeys.has(String(rootKey))) return false;
+              const path = issue.path!.map((segment) => String(typeof segment === 'object' ? segment.key : segment));
+              return getNestedValue(ownArgs, path) !== undefined;
             });
             if (providedFieldIssues.length > 0) return { args: undefined, argsResult: { issues: providedFieldIssues } as any };
             return undefined;

@@ -2,10 +2,13 @@ import { findCommandByName } from '../core/commands.ts';
 import { ActionError, ConfigError, PadroneError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { tokenizeInput } from '../core/parse.ts';
-import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneInput } from '../types/index.ts';
+import { thenMaybe } from '../core/results.ts';
+import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
 import { getProgramDirs } from '../util/dirs.ts';
 import { getRootCommand } from '../util/utils.ts';
-import { passthroughSchema, quoteToken } from './utils.ts';
+import { expandResponseFiles, responseFilesPrefix } from './response-files.ts';
+import { aliasNamesKey } from './suggestions.ts';
+import { inputTokens, isRemoteCaller, passthroughSchema, quoteToken } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -53,42 +56,63 @@ async function writeAliases(file: string, aliases: AliasMap): Promise<void> {
 
 // ── Expansion ────────────────────────────────────────────────────────────
 
-/**
- * Expands an alias in the first word of `tokens`: `$1`, `$2`, … take the words after it (too few is an error), and the rest are appended.
- * Aliases of aliases expand too; a command of the same name always wins.
- */
-export function expandAlias(tokens: readonly string[], aliases: AliasMap, root: AnyPadroneCommand): string[] | undefined {
-  let current = [...tokens];
-  const seen = new Set<string>();
-  while (current.length > 0) {
-    const [name, ...rest] = current;
-    if (!name || name.startsWith('-') || seen.has(name) || !Object.hasOwn(aliases, name) || findCommandByName(name, root.commands)) break;
-    seen.add(name);
-    const used = new Set<number>();
-    let needed = 0;
-    const expanded = tokenizeInput(aliases[name]!).map((token) =>
-      token.replace(/\$(\d+)/g, (placeholder, n: string) => {
-        const index = Number(n) - 1;
-        if (index < 0) return placeholder;
-        needed = Math.max(needed, index + 1);
-        used.add(index);
-        return rest[index] ?? placeholder;
-      }),
-    );
-    if (needed > rest.length) {
-      throw new PadroneError(`Alias "${name}" needs ${needed} argument${needed === 1 ? '' : 's'}: ${aliases[name]}`, { phase: 'parse' });
-    }
-    current = [...expanded, ...rest.filter((_, i) => !used.has(i))];
+const PLACEHOLDER = /\$(\d+|@)/g;
+
+/** The words of an alias with its placeholders filled from `rest`, the words typed after it. */
+function fillPlaceholders(name: string, alias: string, words: readonly string[], rest: readonly string[]): string[] {
+  const indexes = words.flatMap((word) => [...word.matchAll(PLACEHOLDER)].map((match) => Number(match[1])).filter((n) => n > 0));
+  const needed = Math.max(0, ...indexes);
+  if (needed > rest.length) {
+    throw new PadroneError(`Alias "${name}" needs ${needed} argument${needed === 1 ? '' : 's'}: ${alias}`, { phase: 'parse' });
   }
-  return seen.size > 0 ? current : undefined;
+  const used = new Set(indexes.map((n) => n - 1));
+  const remaining = rest.filter((_, i) => !used.has(i));
+  const filled = words.flatMap((word) =>
+    word === '$@'
+      ? remaining
+      : [
+          word.replace(PLACEHOLDER, (placeholder, key: string) =>
+            key === '@' ? remaining.join(' ') : (rest[Number(key) - 1] ?? placeholder),
+          ),
+        ],
+  );
+  return words.some((word) => word.includes('$@')) ? filled : [...filled, ...remaining];
 }
 
-/** The input as argv tokens (without a leading program name in a string from `eval()` / the REPL). */
-export function inputTokens(input: PadroneInput | undefined, root: AnyPadroneCommand): string[] {
-  if (input === undefined) return [];
-  if (Array.isArray(input)) return input;
-  const tokens = [...tokenizeInput(input)];
-  return tokens[0] === root.name && !findCommandByName(root.name, root.commands) ? tokens.slice(1) : tokens;
+/**
+ * Expands an alias in the first word of `tokens`: `$1`, `$2`, … take the words after it (too few is an error), `$@` takes
+ * the words no `$N` takes, and without `$@` those are appended. Aliases of aliases expand too; a command of the same name
+ * always wins. `expandWords` expands the alias's own words before the placeholders are filled (e.g. response files).
+ */
+export function expandAlias(
+  tokens: readonly string[],
+  aliases: AliasMap,
+  root: AnyPadroneCommand,
+  expandWords?: (words: string[]) => string[] | Promise<string[]>,
+): string[] | undefined | Promise<string[] | undefined> {
+  const seen = new Set<string>();
+  const expand = (current: string[]): string[] | undefined | Promise<string[] | undefined> => {
+    const [name, ...rest] = current;
+    if (!name || name.startsWith('-') || seen.has(name) || !Object.hasOwn(aliases, name) || findCommandByName(name, root.commands)) {
+      return seen.size > 0 ? current : undefined;
+    }
+    seen.add(name);
+    const words = [...tokenizeInput(aliases[name]!)];
+    return thenMaybe(expandWords ? expandWords(words) : words, (expanded) =>
+      expand(fillPlaceholders(name, aliases[name]!, expanded, rest)),
+    );
+  };
+  return expand([...tokens]);
+}
+
+/**
+ * `alias set <name> …` with everything after the name kept as the expansion, options included
+ * (`alias set co checkout --force`): a `--` goes after the name unless one is already there.
+ */
+function withLiteralExpansion(tokens: readonly string[], commandName: string): string[] | undefined {
+  const [command, sub, name, next] = tokens;
+  if (command !== commandName || sub !== 'set' || !name || name.startsWith('-') || next === undefined || next === '--') return undefined;
+  return [...tokens.slice(0, 3), '--', ...tokens.slice(3)];
 }
 
 /**
@@ -122,15 +146,23 @@ export function padroneAliases(options: PadroneAliasesOptions = {}): <T extends 
 
   const interceptor = defineInterceptor({ id: 'padrone:aliases', name: 'padrone:aliases', order: -1500, async: true }, () => ({
     parse(ctx, next) {
-      if (ctx.caller !== 'cli' && ctx.caller !== 'repl') return next();
+      if (isRemoteCaller(ctx.caller)) return next();
       const root = ctx.command;
       const tokens = inputTokens(ctx.input, root);
+      const literal = commandName !== false && withLiteralExpansion(tokens, commandName);
+      if (literal) return next({ input: literal });
+      if (ctx.caller !== 'cli' && ctx.caller !== 'repl') return next();
       const first = tokens[0];
       // Nothing to expand: a known command, an option, or no input
       if (!first || first.startsWith('-') || findCommandByName(first, root.commands)) return next();
+      const prefix = responseFilesPrefix(root);
+      const expandWords = prefix ? (words: string[]) => expandResponseFiles(words, prefix) : undefined;
       return readAliases(aliasFile(options, root, ctx.runtime.env())).then((userAliases) => {
-        const expanded = expandAlias(tokens, { ...staticAliases, ...userAliases }, root);
-        return expanded ? next({ input: expanded }) : next();
+        const aliases = { ...staticAliases, ...userAliases };
+        // An unknown command may have meant an alias, so suggestions offers their names
+        return thenMaybe(expandAlias(tokens, aliases, root, expandWords), (expanded) =>
+          expanded ? next({ input: expanded }) : next({ [aliasNamesKey]: Object.keys(aliases) }),
+        );
       });
     },
   }));

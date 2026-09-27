@@ -658,7 +658,7 @@ describe('Interactive', () => {
         configs.push(config);
         callCount++;
         if (config.name === 'email') {
-          return callCount === 1 ? '' : 'alice@example.com';
+          return callCount === 1 ? 'alice' : 'alice@example.com';
         }
         return undefined;
       });
@@ -669,12 +669,12 @@ describe('Interactive', () => {
           prompt: promptFn,
           error: () => {},
         })
-        .command('create', (c) => c.arguments(z.object({ email: z.string().min(1) }), { interactive: ['email'] }).action((args) => args));
+        .command('create', (c) => c.arguments(z.object({ email: z.string().min(6) }), { interactive: ['email'] }).action((args) => args));
 
       await program.eval('create');
 
       // Second prompt should have the invalid value as default
-      expect(configs[1]!.default).toBe('');
+      expect(configs[1]!.default).toBe('alice');
     });
 
     it('should validate optional interactive fields too', async () => {

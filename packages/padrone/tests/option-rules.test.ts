@@ -156,3 +156,23 @@ describe('variadic options', () => {
     expect(program().help('tag')).toContain('(takes multiple values)');
   });
 });
+
+describe('implies and conflicts with interactive prompting', () => {
+  it("doesn't count an implied value as a conflict", async () => {
+    const program = createPadrone('app')
+      .runtime({ interactive: 'supported', prompt: async () => 'typed' })
+      .command('x', (c) =>
+        c
+          .arguments(z.object({ name: z.string(), json: z.boolean().optional(), color: z.boolean().optional() }), {
+            interactive: true,
+            fields: { json: { conflicts: 'color', implies: { color: false } } },
+          })
+          .action((args) => args),
+      );
+    const res = await program.eval('x --json');
+    expect(res.argsResult?.issues).toBeUndefined();
+    expect(res.result).toMatchObject({ name: 'typed', json: true, color: false });
+    const both = await program.eval('x --json --color');
+    expect(both.argsResult?.issues?.[0]?.message).toContain('cannot be used with');
+  });
+});

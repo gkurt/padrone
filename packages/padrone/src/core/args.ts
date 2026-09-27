@@ -275,14 +275,20 @@ function toGroups(groups: PadroneFieldGroups | undefined): string[][] {
  */
 export function applyFieldRules(data: Record<string, unknown>, rules: FieldRules): { args: Record<string, unknown>; issues: string[] } {
   const provided = (key: string) => data[key] !== undefined;
+  // A value another given option implies isn't a conflict (args passed on again, e.g. after prompting, already hold it)
+  const implied = (key: string) =>
+    Object.entries(rules.implies).some(
+      ([source, values]) =>
+        source !== key && provided(source) && data[source] !== false && key in values && sameValue(values[key], data[key]),
+    );
   const issues: string[] = [];
   const reported = new Set<string>();
 
   for (const [key, others] of Object.entries(rules.conflicts)) {
-    if (!provided(key)) continue;
+    if (!provided(key) || implied(key)) continue;
     for (const other of others) {
       const pair = [key, other].sort().join('\0');
-      if (!provided(other) || reported.has(pair)) continue;
+      if (!provided(other) || implied(other) || reported.has(pair)) continue;
       reported.add(pair);
       issues.push(`Option "--${optionDisplayName(key)}" cannot be used with "--${optionDisplayName(other)}"`);
     }

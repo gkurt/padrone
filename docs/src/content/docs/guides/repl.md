@@ -193,7 +193,8 @@ This adds `| ` before each line of output, creating a visual distinction.
 
 ## Exit Behavior
 
-- Type `.exit` or `.quit` to exit gracefully
+- Type `.exit` or `.quit` to exit gracefully. Plain `exit` and `quit` work too, unless the program (or the current scope) has a command with that name, which then runs instead
+- Press Ctrl+D (end of input)
 - Press Ctrl+C once to see an exit hint
 - Press Ctrl+C twice to force exit
 

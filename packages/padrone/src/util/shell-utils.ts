@@ -7,6 +7,13 @@ export function camelToKebab(str: string): string | null {
   return str.replace(/[A-Z]/g, (ch) => `-${ch.toLowerCase()}`);
 }
 
+/** The long names an option is offered as, like help shows them: the kebab-case alias in place of a camelCase name, then the other aliases. */
+export function offeredLongNames(name: string, aliases: readonly string[]): string[] {
+  const kebab = camelToKebab(name);
+  const primary = kebab && aliases.includes(kebab) ? kebab : name;
+  return [primary, ...aliases.filter((alias) => alias !== primary)];
+}
+
 export type ShellType = 'bash' | 'zsh' | 'fish' | 'powershell';
 
 /**

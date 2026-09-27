@@ -172,6 +172,8 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
 
         // Dot-prefixed built-in REPL commands
         if (trimmed === '.exit' || trimmed === '.quit') break;
+        // Bare `exit`/`quit` too, unless the scope has a command by that name
+        if ((trimmed === 'exit' || trimmed === 'quit') && !findCommandByName(trimmed, getScopeCommand().commands)) break;
         if (trimmed === '.clear') {
           runtime.output('\x1B[2J\x1B[H');
           continue;
@@ -181,7 +183,7 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
             'REPL Commands:',
             '  .                 Execute the current scoped command',
             '  .help             Print this help message',
-            '  .exit             Exit the REPL',
+            '  .exit, exit       Exit the REPL (also .quit, quit)',
             '  .clear            Clear the screen',
             '  .history          Show command history',
             '  .scope <cmd>      Scope into a subcommand',

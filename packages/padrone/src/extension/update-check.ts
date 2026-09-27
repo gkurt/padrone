@@ -1,7 +1,13 @@
 import { thenMaybe } from '#src/core/results.ts';
 import type { ResolvedPadroneRuntime } from '#src/core/runtime.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
-import { fetchLatestVersion, formatUpdateMessage, isNewerVersion, type UpdateCheckConfig } from '../feature/update-check.ts';
+import {
+  createUpdateChecker,
+  fetchLatestVersion,
+  formatUpdateMessage,
+  isNewerVersion,
+  type UpdateCheckConfig,
+} from '../feature/update-check.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
 import { getRootCommand, readScriptVersion } from '../util/utils.ts';
 import { getUpgradeConfig, isUpgradeCommand } from './upgrade.ts';
@@ -65,8 +71,8 @@ function createUpdateCheckInterceptor(config: UpdateCheckConfig) {
 
         const rootCommand = getRootCommand(command);
         const runtime = ctx.runtime;
-        check = Promise.all([rootCommand.version ?? readScriptVersion(), import('../feature/update-check.ts')])
-          .then(([version, { createUpdateChecker }]) =>
+        check = Promise.resolve(rootCommand.version ?? readScriptVersion())
+          .then((version) =>
             version ? createUpdateChecker(rootCommand.name, version, updateSettings(rootCommand, config), runtime) : undefined,
           )
           .then((started) => started?.notify)

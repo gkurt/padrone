@@ -1,4 +1,5 @@
 import type { AnyPadroneCommand, PadroneGlobalArgsMeta, PadroneSchema } from '../types/index.ts';
+import { offeredLongNames } from '../util/shell-utils.ts';
 import { extractSchemaMetadata, getJsonSchema, markSensitiveProperties } from './args.ts';
 import { resolveRuntime } from './default-runtime.ts';
 import type { ResolvedPadroneRuntime } from './runtime.ts';
@@ -192,8 +193,9 @@ export function buildReplCompleter(
         } else break;
       }
 
-      // Options of this command, then its global options
+      // Options of this command, then its global options, named as help shows them; hidden ones never, deprecated ones last
       const options: string[] = [];
+      const deprecated: string[] = [];
       const globals = getGlobalArgs(targetCommand);
       for (const [schema, meta] of [
         [targetCommand.argsSchema, targetCommand.meta],
@@ -203,10 +205,20 @@ export function buildReplCompleter(
         try {
           const { flags, aliases } = extractSchemaMetadata(schema, meta?.fields, meta?.autoAlias);
           const jsonSchema = getJsonSchema(schema) as Record<string, any>;
-          if (jsonSchema.type === 'object' && jsonSchema.properties) {
-            for (const key of Object.keys(jsonSchema.properties)) options.push(`--${key}`);
-            for (const flag of Object.keys(flags)) options.push(`-${flag}`);
-            for (const alias of Object.keys(aliases)) options.push(`--${alias}`);
+          if (jsonSchema.type !== 'object' || !jsonSchema.properties) continue;
+          for (const [key, prop] of Object.entries(jsonSchema.properties as Record<string, any>)) {
+            const field = meta?.fields?.[key];
+            if (field?.hidden ?? prop?.hidden) continue;
+            const names = [
+              ...Object.keys(flags)
+                .filter((flag) => flags[flag] === key)
+                .map((flag) => `-${flag}`),
+              ...offeredLongNames(
+                key,
+                Object.keys(aliases).filter((alias) => aliases[alias] === key),
+              ).map((name) => `--${name}`),
+            ];
+            (field?.deprecated || prop?.deprecated ? deprecated : options).push(...names);
           }
         } catch {
           // Ignore schema parsing errors
@@ -221,7 +233,9 @@ export function buildReplCompleter(
 
       const unique = [...new Set(options)];
       const hits = unique.filter((o) => o.startsWith(lastPart));
-      return [hits.length ? hits : unique, lastPart];
+      if (hits.length) return [hits, lastPart];
+      const deprecatedHits = lastPart.replace(/^-+/, '') ? deprecated.filter((o) => o.startsWith(lastPart)) : [];
+      return [deprecatedHits.length ? deprecatedHits : unique, lastPart];
     }
 
     // Completing command names
@@ -238,15 +252,12 @@ export function buildReplCompleter(
     }
 
     const candidates: string[] = [];
+    const deprecated: string[] = [];
 
-    // Add subcommand names and aliases
-    if (targetCommand.commands) {
-      for (const cmd of targetCommand.commands) {
-        if (!cmd.hidden) {
-          candidates.push(cmd.name);
-          if (cmd.aliases) candidates.push(...cmd.aliases.filter(Boolean));
-        }
-      }
+    // Subcommand names and aliases; deprecated ones only when nothing else matches what's typed
+    for (const cmd of targetCommand.commands ?? []) {
+      if (cmd.hidden || !cmd.name) continue;
+      (cmd.deprecated ? deprecated : candidates).push(cmd.name, ...(cmd.aliases ?? []).filter(Boolean));
     }
 
     // Add dot-commands and `..` shorthand at the root level (relative to current scope)
@@ -257,7 +268,9 @@ export function buildReplCompleter(
     }
 
     const hits = candidates.filter((c) => c.startsWith(lastPart));
-    return [hits.length ? hits : candidates, lastPart];
+    if (hits.length) return [hits, lastPart];
+    const deprecatedHits = lastPart ? deprecated.filter((c) => c.startsWith(lastPart)) : [];
+    return [deprecatedHits.length ? deprecatedHits : candidates, lastPart];
   };
 }
 

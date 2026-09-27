@@ -3,7 +3,9 @@ import { findCommandByName, getGlobalArgs, resolveCommand } from '../core/comman
 import { getDryRunFlagKeys, getInterceptorOptions, parseCommand } from '../core/validate.ts';
 import { getHelpTopics } from '../output/help.ts';
 import type { AnyPadroneCommand, PadroneCompletionItem, PadroneFieldMeta, PadroneSchema, PadroneValueHint } from '../types/index.ts';
-import { camelToKebab, type ShellType } from '../util/shell-utils.ts';
+import { offeredLongNames, type ShellType } from '../util/shell-utils.ts';
+
+export { offeredLongNames };
 
 /** The hidden subcommand for completion: `<program> __complete <words typed after the program name>` prints one candidate per line. */
 export const COMPLETE_COMMAND = '__complete';
@@ -43,13 +45,6 @@ type CompletionField = {
 
 /** A candidate; deprecated ones are only offered when no other candidate matches what's typed. */
 type Candidate = PadroneCompletionItem & { deprecated?: boolean };
-
-/** The long names an option is offered as, like help shows them: the kebab-case alias in place of a camelCase name, then the other aliases. */
-export function offeredLongNames(name: string, aliases: readonly string[]): string[] {
-  const kebab = camelToKebab(name);
-  const primary = kebab && aliases.includes(kebab) ? kebab : name;
-  return [primary, ...aliases.filter((alias) => alias !== primary)];
-}
 
 /** Enum values, or the constants of a union of literals (`anyOf: [{ const, description }]`) with their descriptions. */
 function enumItems(prop: Record<string, any> | undefined): PadroneCompletionItem[] | undefined {

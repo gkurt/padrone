@@ -31,7 +31,7 @@ export function padroneMcp(defaults?: PadroneMcpPreferences): <T extends Command
   return ((builder: AnyPadroneBuilder) =>
     builder.command('mcp', (c) =>
       c
-        .configure({ description: 'Start a Model Context Protocol server', hidden: true })
+        .configure({ description: 'Start a Model Context Protocol server', hidden: true, builtin: true })
         .arguments(
           passthroughSchema({
             transport: { type: 'string', description: 'Transport to serve over', enum: ['http', 'stdio'] },

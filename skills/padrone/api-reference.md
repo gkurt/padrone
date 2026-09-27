@@ -296,9 +296,12 @@ import { createPadrone, padroneEnv } from 'padrone';
 // Or map args to variables directly (coerced by the command schema, shown in help as `Env: …`)
 .extend(padroneEnv({ vars: { port: 'MY_APP_PORT', host: ['MY_APP_HOST', 'HOST'] } }))
 
-// Or read every option from MY_APP_* variables (`dryRun` ← MY_APP_DRY_RUN), like yargs' .env('MY_APP')
+// Or read every option from MY_APP_* variables (`dryRun` ← MY_APP_DRY_RUN, `db.host` ← MY_APP_DB__HOST), like yargs' .env('MY_APP')
 .extend(padroneEnv({ prefix: 'MY_APP' }))
+.extend(padroneEnv({ prefix: 'MY_APP', allowEmpty: true })) // MY_APP_NAME= gives '' (by default empty variables are unset)
 ```
+
+Built-in commands (`help`, `config`, `serve`, …, or `.configure({ builtin: true })`) get no env values unless `builtins: true`. Validation errors name the variable: `… (from MY_APP_PORT)`.
 
 #### `padroneConfig(options)` extension
 
@@ -316,10 +319,14 @@ import { createPadrone, padroneConfig } from 'padrone';
 .extend(padroneConfig({ files: '.apprc.json', searchParents: true, packageJson: true })) // parent dirs + package.json "<program>" key
 .extend(padroneConfig({ files: 'config.json', xdg: true })) // also ~/.config/<program>/
 .extend(padroneConfig({ files: 'config.json', profiles: true })) // `profiles.<name>` via --profile, <PROGRAM>_PROFILE or a `profile` key
+.extend(padroneConfig({ files: 'config.json', profiles: { remote: true } })) // also let serve/MCP/tool() calls pass --profile
+.extend(padroneConfig({ files: 'config.json', sections: true })) // { port: 1, serve: { port: 2 }, db: { migrate: { dryRun: true } } }
 .extend(padroneConfig({ command: true })) // `config get|set|unset|list|path|edit` for the user config file (JSON)
 ```
 
-`command: true` adds a `config` group (a string renames it) and makes `xdg` default to `true` and `files` to `['config.json']`. `config set <key> <value>` (dotted keys for nested values) writes the user config file; the key must be an option of the command, a subcommand or the global args (unless a schema is loose, or matches the `schema` option), and the value is coerced and validated by that option's schema. With `profiles`, the `config` subcommands take `--profile <name>`.
+`command: true` adds a `config` group (a string renames it) and makes `xdg` default to `true` and `files` to `['config.json']`. `config set <key> <value>` (dotted keys for nested values) writes the user config file; the key must be an option of the command, a subcommand or the global args (unless a schema is loose, or matches the `schema` option), and the value is coerced and validated by that option's schema. With `profiles`, the `config` subcommands take `--profile <name>`; all of them take `--local` (the project config in cwd, or in a parent with `searchParents`) or `--file <path>`. `set`/`unset` change just that value, keeping comments in JSON, JSONC and rc files.
+
+`--config`/`-c` is listed in help. With `sections: true`, a key naming a subcommand is its section (never an option value), overriding the values above it for that command. Config numbers and booleans are coerced to the option's type (YAML `name: 123` → `"123"`), built-in commands get no config values unless `builtins: true`, and validation errors name the file: `… (from config.json)`. `--profile` is an unknown option for serve/MCP/`tool()` calls unless `profiles: { remote: true }`.
 
 ### `.wrap(config)` *(experimental)*
 

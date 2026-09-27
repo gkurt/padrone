@@ -144,7 +144,7 @@ export function padroneAliases(options: PadroneAliasesOptions = {}): <T extends 
 
     return result.command(commandName, (c) =>
       c
-        .configure({ description: 'Manage command aliases' })
+        .configure({ description: 'Manage command aliases', builtin: true })
         .command('set', (s) =>
           s
             .configure({ description: 'Add or replace an alias', mutation: true })

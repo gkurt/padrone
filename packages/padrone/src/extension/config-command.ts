@@ -4,17 +4,19 @@ import { getGlobalArgs, resolveCommand } from '../core/commands.ts';
 import { ActionError, ConfigError } from '../core/errors.ts';
 import { formatIssueMessages } from '../core/validate.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, PadroneInterceptorFn, PadroneSchema } from '../types/index.ts';
+import { removeJsoncValue, setJsoncValue } from '../util/jsonc.ts';
 import { getRootCommand } from '../util/utils.ts';
-import type { ConfigLayer, ConfigSearchOptions } from './config-loader.ts';
+import type { ConfigLayer, ConfigLoader, ConfigSearchOptions } from './config-loader.ts';
 import {
   applyProfile,
   configFileExtension,
-  deepMerge,
+  findLocalConfigFile,
   findUserConfigFile,
+  getPath,
   isConfigObject,
   isJsonConfigFile,
   isScriptConfigFile,
-  loadConfigLayers,
+  loadConfigData,
   parseConfigText,
 } from './config-loader.ts';
 import { isLooseSchema, passthroughSchema } from './utils.ts';
@@ -27,8 +29,10 @@ export type ConfigSource = {
   files: string[];
   schema?: StandardSchemaV1;
   /** A custom loader that replaces the built-in one. */
-  loadConfig?: (files: string | string[], xdgAppName?: string, search?: ConfigSearchOptions) => unknown;
+  loadConfig?: ConfigLoader;
   profileFlag?: string;
+  /** Whether keys naming subcommands are per-command sections (`sections`). */
+  sections: boolean;
   profileEnv: (command: AnyPadroneCommand) => string;
   locate: (command: AnyPadroneCommand, env: Env) => { xdgAppName?: string; search?: ConfigSearchOptions };
 };
@@ -42,10 +46,6 @@ function splitKey(key: string | undefined, usage: string): string[] {
   const path = key.split('.');
   if (path.some((segment) => !segment || UNSAFE_KEYS.has(segment))) throw new ActionError(`Invalid config key "${key}"`);
   return path;
-}
-
-function getPath(data: unknown, path: readonly string[]): unknown {
-  return path.reduce<unknown>((value, key) => (isConfigObject(value) && Object.hasOwn(value, key) ? value[key] : undefined), data);
 }
 
 function setPath(data: ConfigData, [head, ...rest]: readonly string[], value: unknown): ConfigData {
@@ -171,31 +171,53 @@ async function resolveSetValue(
     return { path, value };
   }
 
-  const { matches, loose } = findOptions(target, path[0]!, groupName);
-  if (matches.length === 0) {
-    if (!loose) throw new ActionError(`Unknown config key "${key}": no command has an option named "${path[0]}"`);
-    return { path, value: parseValue(raw, undefined, path) };
+  // With sections, leading keys that name subcommands (`serve.port`) are the section of that command
+  let command = target;
+  let section: string[] = [];
+  while (source.sections && section.length < path.length - 1) {
+    const found = command.commands?.map(resolveCommand).find((c) => c.name === path[section.length] && c.name !== groupName);
+    if (!found) break;
+    command = found;
+    section = path.slice(0, section.length + 1);
   }
-  const stored = [matches[0]!.name, ...path.slice(1)];
+  const rest = path.slice(section.length);
+  const scoped = getPath(effective, section);
+  const values = isConfigObject(scoped) ? scoped : {};
+
+  const { matches, loose } = findOptions(command, rest[0]!, groupName);
+  if (matches.length === 0) {
+    if (!loose) throw new ActionError(`Unknown config key "${key}": no command has an option named "${rest[0]}"`);
+    return { path, value: parseValue(raw, undefined, rest) };
+  }
+  const stored = [matches[0]!.name, ...rest.slice(1)];
   const value = parseValue(raw, matches[0]!.schema, stored);
   for (const { schema, name } of matches) {
-    const optionPath = [name, ...path.slice(1)];
-    const issues = await validationIssues(schema, { [name]: getPath(setPath(effective, optionPath, value), [name]) }, optionPath);
+    const optionPath = [name, ...rest.slice(1)];
+    const issues = await validationIssues(schema, { [name]: getPath(setPath(values, optionPath, value), [name]) }, optionPath);
     if (issues.length) fail(issues);
   }
-  return { path: stored, value };
+  return { path: [...section, ...stored], value };
 }
 
 // ── Files ────────────────────────────────────────────────────────────────
 
 async function loadLayers(source: ConfigSource, command: AnyPadroneCommand, env: Env) {
   const { xdgAppName, search } = source.locate(command, env);
-  if (source.loadConfig) {
-    const data = (await source.loadConfig(source.files, xdgAppName, search)) as ConfigData | undefined;
-    return { data: data ?? {} };
-  }
-  const layers = await loadConfigLayers(source.files, xdgAppName, search);
-  return { layers, data: layers.reduce<ConfigData>((acc, layer) => deepMerge(acc, layer.data), {}) };
+  const { data, layers } = await loadConfigData(source.loadConfig, source.files, xdgAppName, search);
+  return { layers, data: data ?? {} };
+}
+
+type FileArgs = { local?: boolean; file?: string };
+
+/** The file `--local` (the project config) or `--file <path>` picks, if either is given. */
+async function chosenFile(source: ConfigSource, command: AnyPadroneCommand, env: Env, args: FileArgs, anyText = false) {
+  if (args.local && args.file) throw new ActionError('Use --local or --file, not both');
+  if (args.file) return (await import('node:path')).resolve(args.file);
+  if (!args.local) return undefined;
+  const parents = !!source.locate(command, env).search?.parents;
+  const file = await findLocalConfigFile(source.files, parents, anyText ? (name) => !isScriptConfigFile(name) : undefined);
+  if (!file) throw new ActionError(`No ${anyText ? '' : 'JSON '}file name in the config \`files\` to create in the current directory`);
+  return file;
 }
 
 /** The user config file; one that doesn't exist yet gets the first name in `files` that `set` can write (or `edit`, any text). */
@@ -224,12 +246,29 @@ async function writeText(file: string, text: string): Promise<void> {
   fs.writeFileSync(file, text, 'utf-8');
 }
 
-/** Reads the user config file for `set`/`unset`, which rewrite it as JSON. */
-async function readWritable(file: string, groupName: string): Promise<ConfigData> {
+async function readData(file: string): Promise<ConfigData> {
+  const text = await readText(file);
+  return text === undefined ? {} : parseFile(text, file);
+}
+
+/** Reads a config file for `set`/`unset`, which only change JSON files. */
+async function readWritable(file: string, groupName: string): Promise<{ text?: string; data: ConfigData }> {
   if (!isJsonConfigFile(file))
     throw new ActionError(`Cannot write ${file}: only JSON config files can be changed, use \`${groupName} edit\``);
   const text = await readText(file);
-  return text === undefined ? {} : parseFile(text, file);
+  return { text, data: text === undefined ? {} : parseFile(text, file) };
+}
+
+/**
+ * The text of a JSON config file with `updated` data: the value at `path` changed in place, so comments and formatting
+ * stay, or else the data rewritten as JSON.
+ */
+function updatedText(file: string, text: string | undefined, updated: ConfigData, path: readonly string[], value?: unknown): string {
+  try {
+    const edited = value === undefined ? removeJsoncValue(text ?? '', path) : setJsoncValue(text ?? '', path, value);
+    if (edited !== undefined && JSON.stringify(parseFile(edited, file)) === JSON.stringify(updated)) return edited;
+  } catch {}
+  return `${JSON.stringify(updated, null, 2)}\n`;
 }
 
 // ── Command ──────────────────────────────────────────────────────────────
@@ -243,8 +282,12 @@ export function addConfigCommand(
 ): AnyPadroneBuilder {
   const { profileFlag } = source;
   const profileField = profileFlag ? { [profileFlag]: { type: 'string', description: 'Config profile' } as const } : {};
+  const fileFields = {
+    local: { type: 'boolean', description: 'Use the project config file in the current directory' },
+    file: { type: 'string', description: 'Use this config file' },
+  } as const;
   const keyField = { key: { type: 'string', description: 'Config key, dotted for nested values (`db.host`)' } } as const;
-  const keyArgs = passthroughSchema({ ...keyField, ...profileField });
+  const keyArgs = passthroughSchema({ ...keyField, ...profileField, ...fileFields });
 
   /** The command `padroneConfig()` was applied to (the group's parent). */
   const targetOf = (command: AnyPadroneCommand) => command.parent?.parent ?? getRootCommand(command);
@@ -266,7 +309,18 @@ export function addConfigCommand(
     return { ...loaded, data, profile: selected ?? (typeof loaded.data.profile === 'string' ? loaded.data.profile : undefined) };
   };
 
-  /** The key path in the user file: inside `profiles.<name>` with `--profile`. */
+  /** The values in one file (`--local`, `--file`), inside `profiles.<name>` with `--profile`. */
+  const fileValues = async (file: string, profile: string | undefined) => {
+    const data = await readData(file);
+    const values = profile ? getPath(data, ['profiles', profile]) : data;
+    return { data: isConfigObject(values) ? values : {}, layers: [{ file, data }] as ConfigLayer[] | undefined, profile };
+  };
+
+  /** The file `set`/`unset`/`edit` change: `--local`, `--file`, else the user config file. */
+  const fileToChange = async (command: AnyPadroneCommand, env: Env, args: FileArgs, anyText = false) =>
+    (await chosenFile(source, targetOf(command), env, args, anyText)) ?? (await userFile(source, targetOf(command), env, anyText));
+
+  /** The key path in the file: inside `profiles.<name>` with `--profile`. */
   const filePath = (path: string[], profile: string | undefined) => (profile ? ['profiles', profile, ...path] : path);
 
   /** The path `set` stores a key under: an alias or kebab-case name (`dry-run`) as its option name (`dryRun`). */
@@ -277,7 +331,7 @@ export function addConfigCommand(
 
   return builder.command(groupName, (group) =>
     group
-      .configure({ description: 'Manage configuration' })
+      .configure({ description: 'Manage configuration', builtin: true })
       .intercept(disabledInterceptor)
       .command('get', (c) =>
         c
@@ -286,29 +340,34 @@ export function addConfigCommand(
           .async()
           .action(async (args, ctx) => {
             const path = splitKey(args.key, `${groupName} get <key>`);
-            const { data } = await effective(ctx.command, ctx.runtime.env(), profileArg(args));
+            const env = ctx.runtime.env();
+            const file = await chosenFile(source, targetOf(ctx.command), env, args);
+            const profile = profileArg(args);
+            const { data } = file ? await fileValues(file, profile) : await effective(ctx.command, env, profile);
             const value = getPath(data, path) ?? getPath(data, optionPath(ctx.command, path));
-            if (value === undefined) throw new ActionError(`"${args.key}" is not set`);
+            if (value === undefined) throw new ActionError(`"${args.key}" is not set${file ? ` in ${file}` : ''}`);
             return value;
           }),
       )
       .command('set', (c) =>
         c
           .configure({ description: 'Set a value in the user config file', mutation: true })
-          .arguments(passthroughSchema({ ...keyField, value: { type: 'string', description: 'The value' }, ...profileField }), {
-            positional: ['key', 'value'],
-          })
+          .arguments(
+            passthroughSchema({ ...keyField, value: { type: 'string', description: 'The value' }, ...profileField, ...fileFields }),
+            { positional: ['key', 'value'] },
+          )
           .async()
           .action(async (args, ctx) => {
             const path = splitKey(args.key, `${groupName} set <key> <value>`);
             if (args.value === undefined) throw new ActionError(`Usage: ${groupName} set <key> <value>`);
             const env = ctx.runtime.env();
-            const file = await userFile(source, targetOf(ctx.command), env);
-            const data = await readWritable(file, groupName);
+            const file = await fileToChange(ctx.command, env, args);
+            const { text, data } = await readWritable(file, groupName);
             const profile = profileArg(args);
             const { data: current } = await effective(ctx.command, env, profile, true);
             const resolved = await resolveSetValue(source, targetOf(ctx.command), groupName, path, args.value, current);
-            await writeText(file, `${JSON.stringify(setPath(data, filePath(resolved.path, profile), resolved.value), null, 2)}\n`);
+            const stored = filePath(resolved.path, profile);
+            await writeText(file, updatedText(file, text, setPath(data, stored, resolved.value), stored, resolved.value));
             return `Set ${resolved.path.join('.')} = ${formatValue(resolved.value)}${profile ? ` in profile "${profile}"` : ''} (${file})`;
           }),
       )
@@ -319,22 +378,25 @@ export function addConfigCommand(
           .async()
           .action(async (args, ctx) => {
             const path = splitKey(args.key, `${groupName} unset <key>`);
-            const file = await userFile(source, targetOf(ctx.command), ctx.runtime.env());
+            const file = await fileToChange(ctx.command, ctx.runtime.env(), args);
             const profile = profileArg(args);
-            const data = await readWritable(file, groupName);
-            const updated = unsetPath(data, filePath(path, profile)) ?? unsetPath(data, filePath(optionPath(ctx.command, path), profile));
-            if (!updated) throw new ActionError(`"${args.key}" is not set${profile ? ` in profile "${profile}"` : ''} in ${file}`);
-            await writeText(file, `${JSON.stringify(updated, null, 2)}\n`);
+            const { text, data } = await readWritable(file, groupName);
+            const stored = [filePath(path, profile), filePath(optionPath(ctx.command, path), profile)].find((p) => unsetPath(data, p));
+            if (!stored) throw new ActionError(`"${args.key}" is not set${profile ? ` in profile "${profile}"` : ''} in ${file}`);
+            await writeText(file, updatedText(file, text, unsetPath(data, stored)!, stored));
             return `Unset ${args.key}${profile ? ` in profile "${profile}"` : ''} (${file})`;
           }),
       )
       .command(['list', 'ls'], (c) =>
         c
           .configure({ description: 'List the config values and the files they come from' })
-          .arguments(passthroughSchema(profileField), {})
+          .arguments(passthroughSchema({ ...profileField, ...fileFields }), {})
           .async()
           .action(async (args, ctx) => {
-            const { data, layers, profile } = await effective(ctx.command, ctx.runtime.env(), profileArg(args as Record<string, unknown>));
+            const env = ctx.runtime.env();
+            const file = await chosenFile(source, targetOf(ctx.command), env, args);
+            const profileName = profileArg(args as Record<string, unknown>);
+            const { data, layers, profile } = file ? await fileValues(file, profileName) : await effective(ctx.command, env, profileName);
             const entries = flatten(data);
             if (entries.length === 0) return 'No config values';
             // The last file that sets a value (inside the profile first) is where it comes from
@@ -357,10 +419,13 @@ export function addConfigCommand(
       .command('path', (c) =>
         c
           .configure({ description: 'Show the config files that are loaded and the one `set` writes' })
+          .arguments(passthroughSchema(fileFields), {})
           .async()
-          .action(async (_args, ctx) => {
+          .action(async (args, ctx) => {
             const env = ctx.runtime.env();
             const target = targetOf(ctx.command);
+            const chosen = await chosenFile(source, target, env, args, true);
+            if (chosen) return chosen;
             const file = await userFile(source, target, env, true);
             const { layers } = await loadLayers(source, target, env);
             const loaded = layers?.length
@@ -377,9 +442,10 @@ export function addConfigCommand(
       .command('edit', (c) =>
         c
           .configure({ description: 'Open the user config file in your editor', mutation: true })
+          .arguments(passthroughSchema(fileFields), {})
           .async()
-          .action(async (_args, ctx) => {
-            const file = await userFile(source, targetOf(ctx.command), ctx.runtime.env(), true);
+          .action(async (args, ctx) => {
+            const file = await fileToChange(ctx.command, ctx.runtime.env(), args, true);
             if (isScriptConfigFile(file)) throw new ActionError(`Cannot edit ${file}: it's a script, open it in your editor`);
             const json = isJsonConfigFile(file);
             const text = (await readText(file)) ?? (json ? '{\n}\n' : '');

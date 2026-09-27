@@ -2,7 +2,7 @@ import { extractSchemaMetadata, getJsonSchema, isSensitiveField, parsePositional
 import { getGlobalArgs } from '../core/commands.ts';
 import { REMOTE_CALLERS } from '../core/interceptors.ts';
 import { getKnownOptionNames } from '../core/validate.ts';
-import type { AnyPadroneCommand, PadroneFieldMeta, PadroneInput, PadroneSchema } from '../types/index.ts';
+import type { AnyPadroneCommand, InterceptorValidateResult, PadroneFieldMeta, PadroneInput, PadroneSchema } from '../types/index.ts';
 
 /**
  * Access to the framework flags an extension reads from `rawArgs` (`--color`, `--version`, …).
@@ -256,12 +256,45 @@ export function valuesForCommand(
   return result;
 }
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
+
+/** The key paths `after` has that `before` doesn't (a whole object counts as one path when `before` has none of it). */
+export function addedPaths(before: Record<string, unknown>, after: Record<string, unknown>, prefix: string[] = []): string[][] {
+  return Object.entries(after).flatMap(([key, value]) => {
+    const existing = before[key];
+    if (existing === undefined) return value === undefined ? [] : [[...prefix, key]];
+    return isPlainObject(existing) && isPlainObject(value) ? addedPaths(existing, value, [...prefix, key]) : [];
+  });
+}
+
+/**
+ * A validate result whose issues about values an outside source filled (the `filled` paths) name the source,
+ * e.g. `expected number, received string (from APP_PORT)`. `sourceOf` names the source of a filled path.
+ */
+export function withIssueSources(
+  result: InterceptorValidateResult,
+  filled: readonly string[][],
+  sourceOf: (path: readonly string[]) => string | undefined,
+): InterceptorValidateResult {
+  const issues = result.argsResult?.issues;
+  if (!issues?.length || filled.length === 0) return result;
+  const annotated = issues.map((issue) => {
+    const path = (issue.path ?? []).map((segment) => String(typeof segment === 'object' ? segment.key : segment));
+    const match = filled.find((f) => path.length > 0 && f.every((segment, i) => path[i] === segment));
+    const source = match && !/\(from [^)]*\)$/.test(issue.message) ? sourceOf(match) : undefined;
+    return source ? { ...issue, message: `${issue.message} (from ${source})` } : issue;
+  });
+  return { ...result, argsResult: { ...result.argsResult, issues: annotated } } as InterceptorValidateResult;
+}
+
 /** A token written so that tokenizing an input string gives it back as one token (`my branch` → `"my branch"`). */
 export function quoteToken(token: string): string {
   return token === '' || /[\s"'`]/.test(token) ? `"${token.replace(/[\\"]/g, '\\$&')}"` : token;
 }
 
-function schemaProperties(schema: PadroneSchema | undefined): Record<string, any> {
+/** The JSON Schema properties of an object schema (`{}` for anything else). */
+export function schemaProperties(schema: PadroneSchema | undefined): Record<string, any> {
   if (!schema) return {};
   try {
     const json = getJsonSchema(schema);

@@ -1,6 +1,8 @@
 import { ConfigError } from '../core/errors.ts';
 import { thenMaybe } from '../core/results.ts';
+import type { AnyPadroneCommand } from '../types/index.ts';
 import { getProgramDirs } from '../util/dirs.ts';
+import { getRootCommand } from '../util/utils.ts';
 
 type ConfigData = Record<string, unknown>;
 type MaybePromise<T> = T | Promise<T>;
@@ -216,6 +218,44 @@ export function applyProfile(data: ConfigData, name?: string): ConfigData {
   );
 }
 
+/** The commands from the root's first subcommand down to `command`. */
+export function commandChain(command: AnyPadroneCommand): AnyPadroneCommand[] {
+  const chain: AnyPadroneCommand[] = [];
+  for (let current: AnyPadroneCommand | undefined = command; current?.parent; current = current.parent) chain.unshift(current);
+  return chain;
+}
+
+/** The subcommand names of a command, which name sections in a config with `sections`. */
+function sectionNames(command: AnyPadroneCommand): Set<string> {
+  return new Set((command.commands ?? []).map((c) => c.name).filter(Boolean));
+}
+
+/**
+ * A config's values for `command` with per-command sections: top-level values, overridden by the section of each command
+ * on the way (`serve: { ... }`, `db: { migrate: { ... } }`). A key that names a subcommand is always its section, never a value.
+ */
+export function applySections(data: ConfigData, command: AnyPadroneCommand): ConfigData {
+  const without = (values: ConfigData, parent: AnyPadroneCommand) => {
+    const names = sectionNames(parent);
+    return Object.fromEntries(Object.entries(values).filter(([key]) => !names.has(key)));
+  };
+  let values = without(data, getRootCommand(command));
+  let level: unknown = data;
+  for (const current of commandChain(command)) {
+    level = isConfigObject(level) && Object.hasOwn(level, current.name) ? level[current.name] : undefined;
+    if (!isConfigObject(level)) break;
+    values = deepMerge(values, without(level, current));
+  }
+  return values;
+}
+
+/** A file path for messages: relative to cwd when inside it. */
+export function displayPath(file: string): string {
+  if (!_path || typeof process === 'undefined' || !_path.isAbsolute(file)) return file;
+  const relative = _path.relative(process.cwd(), file);
+  return relative && !relative.startsWith('..') && !_path.isAbsolute(relative) ? relative : file;
+}
+
 /** The environment variable that selects a profile by default: `my-cli` → `MY_CLI_PROFILE`. */
 export function profileEnvVar(programName: string): string {
   return `${programName.replace(/[^a-z0-9]+/gi, '_').toUpperCase()}_PROFILE`;
@@ -281,6 +321,31 @@ export function loadConfigLayers(files: string | string[], xdgAppName?: string, 
   return initNodeModules().then(load, () => []);
 }
 
+/** A custom `loadConfig` of `padroneConfig()`. */
+export type ConfigLoader = (
+  files: string | string[],
+  xdgAppName?: string,
+  search?: ConfigSearchOptions,
+) => ConfigData | undefined | Promise<ConfigData | undefined>;
+
+/** Loaded configs, merged: with the custom loader (`data` only), else with the built-in one (`layers` too). */
+export function loadConfigData(
+  loader: ConfigLoader | undefined,
+  files: string | string[],
+  xdgAppName?: string,
+  search?: ConfigSearchOptions,
+): MaybePromise<{ data?: ConfigData; layers?: ConfigLayer[] }> {
+  if (loader) return thenMaybe(loader(files, xdgAppName, search), (data) => ({ data }));
+  return thenMaybe(loadConfigLayers(files, xdgAppName, search), (layers) => ({
+    data: layers.length === 0 ? undefined : layers.reduce<ConfigData>((acc, layer) => deepMerge(acc, layer.data), {}),
+    layers,
+  }));
+}
+
+export function getPath(data: unknown, path: readonly string[]): unknown {
+  return path.reduce<unknown>((value, key) => (isConfigObject(value) && Object.hasOwn(value, key) ? value[key] : undefined), data);
+}
+
 /**
  * Built-in config file loader. Directly accesses the file system.
  * Returns `undefined` in non-CLI environments where `node:fs` is unavailable.
@@ -291,9 +356,7 @@ export function loadConfig(
   xdgAppName?: string,
   search?: ConfigSearchOptions,
 ): MaybePromise<ConfigData | undefined> {
-  return thenMaybe(loadConfigLayers(files, xdgAppName, search), (layers) =>
-    layers.length === 0 ? undefined : layers.reduce<ConfigData>((acc, layer) => deepMerge(acc, layer.data), {}),
-  );
+  return thenMaybe(loadConfigData(undefined, files, xdgAppName, search), ({ data }) => data);
 }
 
 const NON_JSON_EXTENSIONS = new Set(['.yaml', '.yml', '.toml', ...SCRIPT_EXTENSIONS]);
@@ -311,6 +374,26 @@ export function isJsonConfigFile(file: string): boolean {
 /** Whether a config file is a script (`.js`, `.ts`, …) that is imported rather than parsed. */
 export function isScriptConfigFile(file: string): boolean {
   return SCRIPT_EXTENSIONS.has(configFileExtension(file));
+}
+
+/**
+ * The project config file (`config --local`): the first of `files` in cwd (or, with `parents`, the nearest parent that has one),
+ * else the first relative one that `creatable` accepts, in cwd.
+ */
+export async function findLocalConfigFile(
+  files: readonly string[],
+  parents: boolean,
+  creatable: (file: string) => boolean = isJsonConfigFile,
+): Promise<string | undefined> {
+  await initNodeModules();
+  const cwd = process.cwd();
+  const names = files.filter((file) => !_path!.isAbsolute(file));
+  for (const dir of parents ? ancestorDirs(_path!, cwd) : [cwd]) {
+    const found = names.map((name) => _path!.join(dir, name)).find((file) => _fs!.existsSync(file));
+    if (found) return found;
+  }
+  const name = names.find(creatable);
+  return name && _path!.join(cwd, name);
 }
 
 /**

@@ -31,7 +31,7 @@ export function padroneServe(defaults?: PadroneServePreferences): <T extends Com
   return ((builder: AnyPadroneBuilder) =>
     builder.command('serve', (c) =>
       c
-        .configure({ description: 'Start a REST HTTP server', hidden: true })
+        .configure({ description: 'Start a REST HTTP server', hidden: true, builtin: true })
         .arguments(
           passthroughSchema({
             port: { type: 'string', description: 'Port to listen on' },

@@ -541,7 +541,7 @@ z.object({
 
 ## Values from Files
 
-`fromFile: true` on a string (or string array) option or positional lets its value be read from a file, like `gh -F body=@file` or `curl -d @file`:
+`fromFile: true` on a string (or string array) option or positional, or an object option (read as JSON), lets its value be read from a file, like `gh -F body=@file` or `curl -d @file`:
 
 ```typescript
 .arguments(z.object({ title: z.string(), body: z.string() }), {
@@ -554,6 +554,7 @@ z.object({
 - `--body -` (or `@-`) reads stdin, through the runtime's `stdin`. Only one value per run can read stdin, and not when the command's `stdin` field would read it too.
 - `--body @@me` passes `@me`: a leading `@@` escapes the `@`. Other values are taken as given.
 - For array options, each value is read on its own: `--tag @a.txt --tag b`.
+- An object, record or array-of-objects option reads a JSON file: `--db @db.json` parses the file's JSON into the object (see [Supported Types](/padrone/guides/commands-arguments/#supported-types)).
 - Only values typed on the command line (`cli()`, `eval()`, the REPL) are read. Values from env variables and config files, and args from serve, MCP and `tool()` calls, are taken literally, so a remote client can't read the server's files.
 
 Help marks the option `(@file or - for stdin)`. Reading stdin is async, so a command with a `fromFile` field in its `fields` meta is typed as async; set with `.meta({ fromFile: true })` on the schema, mark the command `.async()`.

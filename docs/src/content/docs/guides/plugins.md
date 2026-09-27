@@ -511,7 +511,7 @@ Built-in extensions use negative orders to ensure they wrap user interceptors:
 
 #### Deduplication with `id`
 
-When multiple interceptors share the same `id`, the **last one wins**. This lets you override built-in behavior:
+When multiple interceptors share the same `id`, the **last one wins**. This lets you override built-in behavior. It holds across the root and a command too: a command-level interceptor with the id of a root one replaces it for the route, validate, execute, error and shutdown phases of that command (the root one still runs start and parse, which only root interceptors take part in):
 
 ```typescript
 // The built-in auto-output interceptor has id: 'padrone:auto-output'
@@ -635,7 +635,7 @@ program
   );
 ```
 
-`ctx.emit()` runs the handlers of the interceptors on the running command's chain (root and command-level, skipping disabled ones, non-inherited ones from parents and those `callers` filters out), one after another in interceptor order, and resolves once they've all run; a handler's error rejects it. Handlers get the payload and a context with the `command`, `runtime`, `context`, `caller`, `signal`, `program` and `emit`. `program.emit(event, payload)` emits outside any execution, to the root's interceptors (`caller: 'run'`). Handlers can also be given in the meta: `on: { [deployed.id]: handler }` (the payload is then untyped).
+`ctx.emit()` runs the handlers of the interceptors on the running command's chain (root and command-level, skipping disabled ones, non-inherited ones from parents and those `callers` filters out), one after another in interceptor order, and resolves once they've all run; a handler's error rejects it. Handlers get the payload and a context with the `command`, `runtime`, `context`, `caller`, `signal`, `program` and `emit`. `program.emit(event, payload)` emits outside any execution, to the root's interceptors (`caller: 'run'`). Handlers can also be given in the meta: `on: { [deployed.id]: handler }` (the payload is then untyped). `.on()` returns a new interceptor (same `id`, meta and factory) and leaves the one it's called on unchanged, so adding a handler to a shared, exported interceptor doesn't affect other programs using it; the same goes for `.requires()`.
 
 ### Sync Preservation
 

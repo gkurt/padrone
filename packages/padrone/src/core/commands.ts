@@ -443,10 +443,27 @@ export function getNegativeKeywords(cmd: AnyPadroneCommand): Record<string, stri
   return keywords;
 }
 
+/** Whether an object can be passed as dotted keys (`--a.b=x`): non-empty, with plain keys, and scalars or such objects as values. */
+function isDottable(value: object): boolean {
+  const entries = Object.entries(value);
+  return (
+    entries.length > 0 &&
+    entries.every(
+      ([key, v]) =>
+        key !== '' &&
+        !key.includes('.') &&
+        key !== '__proto__' &&
+        !Array.isArray(v) &&
+        (typeof v !== 'object' || v === null || isDottable(v)),
+    )
+  );
+}
+
 /**
  * Serializes args into argv tokens (`--key=value`, one per token, unquoted), for passing to `eval()` as an array:
  * `null` and `undefined` are left out, booleans become `--key` / `--no-key` (or the custom negative keyword, or `--key=false`),
- * arrays repeat the flag (`--key=[]` when empty), objects become `--a.b=`.
+ * arrays repeat the flag (`--key=[]` when empty), objects become `--a.b=`, or JSON (`--a={...}`) when dotted keys can't
+ * express them (keys with dots, arrays inside, empty objects). Array items that are objects are JSON too.
  */
 export function serializeArgsToFlags(args: Record<string, unknown>, cmd?: AnyPadroneCommand): string[] {
   const negatives = cmd ? getNegativeKeywords(cmd) : {};
@@ -466,7 +483,8 @@ export function serializeArgsToFlags(args: Record<string, unknown>, cmd?: AnyPad
         else parts.push(`--${key}=${text}`);
       }
     } else if (typeof value === 'object' && value !== null) {
-      for (const [nestedKey, nestedValue] of Object.entries(value)) add(`${key}.${nestedKey}`, nestedValue);
+      if (!isDottable(value)) parts.push(`--${key}=${JSON.stringify(value)}`);
+      else for (const [nestedKey, nestedValue] of Object.entries(value)) add(`${key}.${nestedKey}`, nestedValue);
     } else {
       parts.push(`--${key}=${String(value)}`);
     }

@@ -1413,7 +1413,7 @@ const withDb = defineInterceptor({ name: 'with-db' })
 |----------|------|-------------|
 | `name` | `string` | Display name |
 | `order` | `number` | Execution order — lower = outermost (default: `0`) |
-| `id` | `string` | Deduplication key — when multiple interceptors share an `id`, the last one wins |
+| `id` | `string` | Deduplication key — when multiple interceptors share an `id`, the last one wins (a command's replaces the root's, error and shutdown included) |
 | `disabled` | `boolean` | Skip this interceptor during execution |
 | `requires` | `string[]` | Ids of interceptors this one needs; running a command without them fails with an error naming the missing one |
 | `async` | `boolean` | The interceptor may make validation async |
@@ -1425,7 +1425,7 @@ const withDb = defineInterceptor({ name: 'with-db' })
 - `.requires<T>(...ids)` — Declare what this interceptor expects on the context; interceptor ids passed (`.requires<{ logger: PadroneLogger }>('padrone:logger')`) are also checked at runtime
 - `.factory(fn)` — Set the factory function
 
-The returned interceptor also has `.on(event, handler)`, which adds a typed handler for a custom event.
+The returned interceptor also has `.on(event, handler)`, which adds a typed handler for a custom event. `.on()` and `.requires()` return a new interceptor with the same `id`, meta and factory, leaving the original unchanged.
 
 ## defineEvent\<T\>(id)
 

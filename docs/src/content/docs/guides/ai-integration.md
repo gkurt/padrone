@@ -228,7 +228,7 @@ await program.serve({
 { "ok": false, "error": "action_error", "message": "Database unavailable" }
 ```
 
-Validation errors go through `onError` when it's set. Arguments reach the command intact: strings with spaces or quotes, arrays (empty ones too, and items like `[x]`), nested objects (as `--a.b=`) and `false` for booleans with a custom `negative` keyword or none. An empty POST body means no arguments. Serve, MCP and `tool()` callers can't pick a config file: `--config`/`-c` is an unknown option for them, so they can't make the server read local files.
+Validation errors go through `onError` when it's set. Arguments reach the command intact: strings with spaces or quotes, arrays (empty ones too, and items like `[x]`), nested objects (as `--a.b=`, or as JSON when dotted keys can't express them: record keys with dots, arrays inside, empty objects), arrays of objects (as JSON) and `false` for booleans with a custom `negative` keyword or none. An empty POST body means no arguments. Serve, MCP and `tool()` callers can't pick a config file: `--config`/`-c` is an unknown option for them, so they can't make the server read local files.
 
 The `serve` command is hidden from help. Leave out `padroneServe()` to go without it; `program.serve()` works either way.
 

@@ -10,6 +10,7 @@ import type {
   InterceptorShutdownContext,
   InterceptorStartContext,
   PadroneCaller,
+  PadroneEventHandler,
   PadroneInput,
   PadroneInterceptorFn,
   RegisteredInterceptor,
@@ -33,29 +34,30 @@ export const REMOTE_CALLERS = ['serve', 'mcp', 'tool'] as const satisfies readon
 /** Meta fields stored as own properties of an interceptor function (`name` is the function's name). */
 const META_KEYS = ['id', 'order', 'disabled', 'inherit', 'options', 'env', 'async', 'helpOptions', 'callers'] as const;
 
+/**
+ * Wraps the factory in a new function carrying the meta. `.on()` and `.requires()` build a new interceptor
+ * (same id, meta and factory), so a shared, exported interceptor is never changed.
+ */
 function buildInterceptorFn(meta: InterceptorMeta, factory: InterceptorFactory<any, any, any>): PadroneInterceptorFn<any, any, any> {
-  Object.defineProperty(factory, 'name', { value: meta.name, configurable: true });
-  for (const key of META_KEYS) if (meta[key] !== undefined) (factory as any)[key] = meta[key];
-  (factory as any).provides = () => factory;
+  const fn: any = () => factory();
+  Object.defineProperty(fn, 'name', { value: meta.name, configurable: true });
+  for (const key of META_KEYS) if (meta[key] !== undefined) fn[key] = meta[key];
+  if (meta.requires) fn['~requires'] = [...meta.requires];
+  if (meta.on) fn['~on'] = { ...meta.on };
+  fn.provides = () => fn;
   // `.requires<T>('padrone:logger')`: the ids are checked when the command runs
-  (factory as any).requires = (...ids: string[]) => {
-    if (ids.length > 0) (factory as any)['~requires'] = [...((factory as any)['~requires'] ?? []), ...ids];
-    return factory;
-  };
-  if (meta.requires) (factory as any)['~requires'] = [...meta.requires];
-  if (meta.on) (factory as any)['~on'] = { ...meta.on };
-  (factory as any).on = (event: { id: string }, handler: (...args: any[]) => unknown) => {
-    const handlers = ((factory as any)['~on'] ??= {});
-    const previous = handlers[event.id];
-    handlers[event.id] = previous
-      ? async (payload: unknown, ctx: unknown) => {
+  fn.requires = (...ids: string[]) => buildInterceptorFn({ ...meta, requires: [...(meta.requires ?? []), ...ids] }, factory);
+  fn.on = (event: { id: string }, handler: PadroneEventHandler) => {
+    const previous = meta.on?.[event.id];
+    const combined: PadroneEventHandler = previous
+      ? async (payload, ctx) => {
           await previous(payload, ctx);
           await handler(payload, ctx);
         }
       : handler;
-    return factory;
+    return buildInterceptorFn({ ...meta, on: { ...meta.on, [event.id]: combined } }, factory);
   };
-  return factory as PadroneInterceptorFn<any, any, any>;
+  return fn;
 }
 
 /**
@@ -256,6 +258,7 @@ function runErrorChain(
  * - `start` interceptors wrap the pipeline (onion pattern, root interceptors only).
  * - On error: `error` interceptors run (can transform/suppress the error).
  * - Always: `shutdown` interceptors run (success or failure).
+ * - `overridden`: root interceptors a same-id one on the routed command replaces; they skip error and shutdown.
  */
 export function wrapWithLifecycle<T>(
   interceptors: ResolvedInterceptor[],
@@ -269,6 +272,7 @@ export function wrapWithLifecycle<T>(
   program?: AnyPadroneProgram,
   caller: PadroneCaller = 'eval',
   pipelineState?: { phase: InterceptorPipelinePhase; rawArgs?: Record<string, unknown>; positionalArgs?: string[]; args?: unknown },
+  overridden?: ReadonlySet<ResolvedInterceptor>,
 ): T | Promise<T> {
   const defaultSignal = typeof AbortSignal !== 'undefined' ? AbortSignal.abort() : (undefined as unknown as AbortSignal);
   const hasStart = interceptors.some((p) => p.start);
@@ -283,6 +287,7 @@ export function wrapWithLifecycle<T>(
   // and the overrides propagate to error/shutdown contexts.
   let effectiveSignal = signal ?? defaultSignal;
   let effectiveContext = context;
+  const lifecycleInterceptors = () => (overridden?.size ? interceptors.filter((i) => !overridden.has(i)) : interceptors);
 
   const runShutdown = (error?: unknown, result?: unknown) => {
     if (!hasShutdown) return;
@@ -298,7 +303,7 @@ export function wrapWithLifecycle<T>(
       caller,
       ...effectivePipelineState,
     });
-    return runInterceptorChain('shutdown', interceptors, ctx, () => {});
+    return runInterceptorChain('shutdown', lifecycleInterceptors(), ctx, () => {});
   };
 
   const runError = (error: unknown): T | Promise<T> => {
@@ -321,7 +326,7 @@ export function wrapWithLifecycle<T>(
       caller,
       ...effectivePipelineState,
     });
-    const errorResult = runErrorChain(interceptors, ctx, error);
+    const errorResult = runErrorChain(lifecycleInterceptors(), ctx, error);
     return thenMaybe(errorResult, (er) => {
       if (er.error !== undefined) {
         const s = runShutdown(er.error);

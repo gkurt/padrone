@@ -2,6 +2,7 @@ import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { AnyPadroneCommand, InterceptorValidateResult, PadroneGlobalArgsMeta, PadroneInput, PadroneSchema } from '../types/index.ts';
 import { camelToKebab } from '../util/shell-utils.ts';
 import {
+  acceptsArray,
   applyFieldRules,
   checkFieldRequirements,
   coerceArgs,
@@ -11,7 +12,9 @@ import {
   extractSchemaMetadata,
   type FieldRules,
   getJsonSchema,
-  getOptionArity,
+  isPlainObject,
+  mergeObjects,
+  parseJsonArg,
   parsePositionalConfig,
   preprocessArgs,
 } from './args.ts';
@@ -80,7 +83,7 @@ function getSchemaOptionInfo(schema: PadroneSchema | undefined, meta: PadroneGlo
       const jsonSchema = getJsonSchema(schema) as Record<string, any>;
       if (jsonSchema.type === 'object' && jsonSchema.properties) {
         for (const [key, prop] of Object.entries(jsonSchema.properties as Record<string, any>)) {
-          if (getOptionArity(prop) === 'array') arrayArguments.add(key);
+          if (acceptsArray(prop)) arrayArguments.add(key);
         }
       }
     } catch {
@@ -270,7 +273,7 @@ export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPa
     if (defaultCommand) curCommand = defaultCommand;
   }
 
-  const { flags, aliases, negatives, customNegation, arrayArguments, rules, properties, interceptorOptions } =
+  const { flags, aliases, negatives, customNegation, arrayArguments, rules, properties, interceptorOptions, schemaArity } =
     getCommandOptionInfo(curCommand);
 
   const rawArgs: Record<string, unknown> = {};
@@ -295,9 +298,9 @@ export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPa
     }
 
     const rootKey = key[0]!;
+    const display = arg.type === 'alias' ? `-${arg.key[0]}` : `--${arg.key.join('.')}`;
 
     if (arg.missing) {
-      const display = arg.type === 'alias' ? `-${arg.key[0]}` : `--${arg.key.join('.')}`;
       (issues ??= []).push({ path: key, message: `Option "${display}" requires a value` });
       continue;
     }
@@ -323,16 +326,27 @@ export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPa
       continue;
     }
 
-    const value = arg.value ?? true;
+    let value: unknown = arg.value ?? true;
+    if (schemaArity(key, false) === 'json') {
+      const parsed = parseJsonArg(value);
+      if ('error' in parsed) {
+        (issues ??= []).push({ path: key, message: `Option "${display}" has invalid JSON: ${parsed.error}` });
+        continue;
+      }
+      value = parsed.value;
+    }
 
+    const existing = getNestedValue(rawArgs, key);
     if (arrayArguments.has(rootKey)) {
       // Array options accumulate across repeats: --tag a --tag b. A single value stays as given;
       // coercion wraps it when the schema only accepts arrays.
-      const existing = getNestedValue(rawArgs, key);
       const values = Array.isArray(value) ? value : [value];
-      if (existing === undefined) setNestedValue(rawArgs, key, value);
+      if (existing === undefined) setNestedValue(rawArgs, key, isPlainObject(value) ? values : value);
       else if (Array.isArray(existing)) existing.push(...values);
       else setNestedValue(rawArgs, key, [existing, ...values]);
+    } else if (isPlainObject(existing) && isPlainObject(value)) {
+      // A JSON object merges with dotted keys given before it (`--db.port 1 --db '{"host":"x"}'`)
+      setNestedValue(rawArgs, key, mergeObjects(existing, value));
     } else {
       // Other options take the last value given, like most CLIs: --name a --name b → "b"
       setNestedValue(rawArgs, key, value);

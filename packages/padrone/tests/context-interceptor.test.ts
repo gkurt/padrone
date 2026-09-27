@@ -307,10 +307,11 @@ describe('context requires — types', () => {
 // ---------------------------------------------------------------------------
 
 describe('context requires — runtime', () => {
-  it('.requires() returns the same function (no-op at runtime)', () => {
-    const base = defineInterceptor({ name: 'test' }, () => ({}));
+  it('.requires() returns a new interceptor with the same meta', () => {
+    const base = defineInterceptor({ id: 'test', name: 'test' }, () => ({}));
     const branded = base.requires<{ db: DbConnection }>();
-    expect(branded).toBe(base as any);
+    expect(branded).not.toBe(base as any);
+    expect([branded.id, branded.name]).toEqual(['test', 'test']);
   });
 
   it('requires-interceptor works at runtime when context is provided', () => {

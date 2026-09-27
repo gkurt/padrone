@@ -1,5 +1,5 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
-import { applyValues } from '../core/args.ts';
+import { applyValues, getOptionArity, isPlainObject } from '../core/args.ts';
 import { getGlobalArgs, isBuiltinCommand } from '../core/commands.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
@@ -42,10 +42,18 @@ export type PadroneEnvOptions = {
   vars?: Record<string, string | readonly string[]>;
   /**
    * Read every option from a prefixed variable, like yargs' `.env('MY_APP')`: with `prefix: 'MY_APP'`,
-   * `--dry-run` / `dryRun` reads `MY_APP_DRY_RUN`, and a double underscore reaches into objects
+   * `--dry-run` / `dryRun` reads `MY_APP_DRY_RUN`, and a double underscore (`nestedSeparator`) reaches into objects
    * (`MY_APP_DB__HOST` → `db.host`). Variables named in `vars` take precedence. Shown in help.
    */
   prefix?: string;
+  /** What separates the keys of a nested value in a prefixed variable name (`MY_APP_DB__HOST` → `db.host`). @default '__' */
+  nestedSeparator?: string;
+  /**
+   * What splits a variable for an array option into items, like viper's string slices: `MY_APP_TAGS=a,b` → `['a', 'b']`
+   * (items are trimmed, empty ones dropped). A value in brackets is read as a JSON array (`["a,b", "c"]`), and arrays of
+   * objects always take JSON. `false` keeps the value as one item. @default ','
+   */
+  arraySeparator?: string | false;
   /** Read variables set to an empty string (`APP_PORT=`) as empty values; by default they count as unset. @default false */
   allowEmpty?: boolean;
   /** Also fill the options of built-in commands (`help`, `version`, `config`, `serve`, …). @default false */
@@ -103,14 +111,25 @@ function readEnvVars(env: Record<string, string | undefined>, args: readonly str
   }
 }
 
-/** Nested values from prefixed variables with `__` between the keys: `MY_APP_DB__MAX_CONNS` → `db.maxConns`. */
-function readNestedEnvVars(env: Record<string, string | undefined>, prefix: string, command: AnyPadroneCommand, into: EnvValues): void {
+/** The properties of a command's options, its global ones included. */
+function commandProperties(command: AnyPadroneCommand): Record<string, any> {
+  return { ...schemaProperties(getGlobalArgs(command)?.schema), ...schemaProperties(command.argsSchema) };
+}
+
+/** Nested values from prefixed variables with `separator` between the keys: `MY_APP_DB__MAX_CONNS` → `db.maxConns`. */
+function readNestedEnvVars(
+  env: Record<string, string | undefined>,
+  prefix: string,
+  separator: string,
+  command: AnyPadroneCommand,
+  into: EnvValues,
+): void {
   const head = prefixedEnvName(prefix, '');
-  const properties = { ...schemaProperties(getGlobalArgs(command)?.schema), ...schemaProperties(command.argsSchema) };
+  const properties = commandProperties(command);
   const options = getKnownOptionNames(command);
   for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || !name.startsWith(head) || !name.includes('__')) continue;
-    const [first, ...rest] = name.slice(head.length).split('__');
+    if (value === undefined || !name.startsWith(head) || !name.includes(separator)) continue;
+    const [first, ...rest] = name.slice(head.length).split(separator);
     const option = options.find((o) => prefixedEnvName('', o) === first);
     if (!option || rest.some((segment) => !segment)) continue;
     let prop = properties[option];
@@ -122,6 +141,29 @@ function readNestedEnvVars(env: Record<string, string | undefined>, prefix: stri
       prop = nested[key];
     }
     setEnvValue(into, path, value, name);
+  }
+}
+
+/** The string values of array options (in nested objects too) split into items: a JSON array as is, else on `separator`. */
+function splitArrays(values: Record<string, unknown>, properties: Record<string, any>, separator: string): Record<string, unknown> {
+  const result = { ...values };
+  for (const [key, value] of Object.entries(values)) {
+    const prop = Object.hasOwn(properties, key) ? properties[key] : undefined;
+    if (!prop) continue;
+    if (isPlainObject(value) && prop.properties) result[key] = splitArrays(value, prop.properties, separator);
+    if (typeof value !== 'string' || getOptionArity(prop) !== 'array') continue;
+    const json = value.trim().startsWith('[') ? jsonArray(value) : undefined;
+    result[key] = json ?? value.split(separator).flatMap((item) => item.trim() || []);
+  }
+  return result;
+}
+
+function jsonArray(text: string): unknown[] | undefined {
+  try {
+    const value = JSON.parse(text);
+    return Array.isArray(value) ? value : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -183,6 +225,8 @@ export function padroneEnv(
 
   const vars = options?.vars;
   const prefix = options?.prefix;
+  const nestedSeparator = options?.nestedSeparator || '__';
+  const arraySeparator = options?.arraySeparator === undefined ? ',' : options.arraySeparator || false;
   const mapsArgs = !!vars || prefix !== undefined;
   const envVarNames: EnvVarNames = (arg) =>
     (vars && Object.hasOwn(vars, arg) ? vars[arg] : undefined) ?? (prefix !== undefined ? prefixedEnvName(prefix, arg) : undefined);
@@ -210,7 +254,7 @@ export function padroneEnv(
           const env = options?.allowEmpty ? rawEnv : Object.fromEntries(Object.entries(rawEnv).filter(([, value]) => value !== ''));
           const read: EnvValues = { values: {}, sources: {} };
           if (mapsArgs) readEnvVars(env, argsToRead(ctx.command), envVarNames, read);
-          if (prefix !== undefined) readNestedEnvVars(env, prefix, ctx.command, read);
+          if (prefix !== undefined) readNestedEnvVars(env, prefix, nestedSeparator, ctx.command, read);
           // Without `vars`, `prefix` or a schema: file variables named like the command's options fill them, with process env values
           // winning unless `override`
           if (!mapsArgs && !schema)
@@ -222,7 +266,11 @@ export function padroneEnv(
             thenMaybe(next({ rawArgs, runtime }), (result) =>
               withIssueSources(result, addedPaths(ctx.rawArgs, rawArgs), (path) => sourceIn(sources, path) ?? 'environment'),
             );
-          const rawArgs = applyValues(ctx.rawArgs, forCommand(read.values));
+          const fromVars = forCommand(read.values);
+          const rawArgs = applyValues(
+            ctx.rawArgs,
+            arraySeparator === false ? fromVars : splitArrays(fromVars, commandProperties(ctx.command), arraySeparator),
+          );
           if (!schema) return proceed(rawArgs);
 
           return thenMaybe(schema['~standard'].validate(env), (result) => {

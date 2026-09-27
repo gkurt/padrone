@@ -101,7 +101,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 
 **Arguments** — positional args, variadic args, short flags (`-v`), long aliases (`--dry-run`), auto kebab-case aliases, negatable booleans (`--no-verbose`), custom negation keywords (`--remote` → sets `local` to `false`).
 
-**Env & Config** — load from environment variables with `.extend(padroneEnv(schema))` (or `padroneEnv({ prefix: 'MY_APP' })` for every option, `MY_APP_DB__HOST` for nested ones) and config files with `.extend(padroneConfig({ files, schema }))`, with `--profile` profiles (`profiles: true`), per-command sections (`sections: true`) and a `config get|set|list|edit` command (`command: true`, with `--local`/`--file`, keeping comments). Precedence: CLI > stdin > env > config > defaults.
+**Env & Config** — load from environment variables with `.extend(padroneEnv(schema))` (or `padroneEnv({ prefix: 'MY_APP' })` for every option, `MY_APP_DB__HOST` for nested ones, `MY_APP_TAGS=a,b` for arrays) and config files with `.extend(padroneConfig({ files, schema }))` (a script config can export a function, typed with `defineConfig()`; `$production: { ... }` overrides apply by `NODE_ENV`), with `--profile` profiles (`profiles: true`), per-command sections (`sections: true`) and a `config get|set|list|edit` command (`command: true`, with `--local`/`--file`, keeping comments). Precedence: CLI > stdin > env > config > defaults.
 
 **Interactive prompts** — auto-prompt for missing fields. Booleans become confirm, enums become select, arrays become multi-select.
 
@@ -141,7 +141,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.runtime(runtime)` | Custom I/O (for non-terminal use) |
 | `.extend(padroneUpdateCheck(config?))` | Background version check (extension) |
 | `.extend(padroneUpgrade(options?))` | `upgrade` self-update command (extension) |
-| `.extend(padroneAliases(options?))` | User-defined command aliases with `$1`/`$@` placeholders (extension) |
+| `.extend(padroneAliases(options?))` | User-defined command aliases with `$1`/`$@` placeholders, shared with `alias import`/`export` (extension) |
 | `.extend(padroneResponseFiles(options?))` | `@file` arguments expand into the file's arguments (extension) |
 | `.async()` | Mark as async validation |
 

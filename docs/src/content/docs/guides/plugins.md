@@ -38,8 +38,8 @@ Additional opt-in extensions are available for advanced features:
 
 | Extension | Import | What it does |
 |-----------|--------|-------------|
-| `padroneEnv(schema)` | `'padrone'` | Parse environment variables into args (`vars`, or `prefix` for every option, `APP_DB__HOST` for nested ones; empty variables count as unset unless `allowEmpty`) |
-| `padroneConfig(options)` | `'padrone'` | Load args from config files (`xdg`, `searchParents`, `packageJson`, `merge`, `extends` options), `--profile` profiles (`profiles`), per-command sections (`sections`), and a `config get\|set\|unset\|list\|path\|edit` command (`command`, with `--local`/`--file`) |
+| `padroneEnv(schema)` | `'padrone'` | Parse environment variables into args (`vars`, or `prefix` for every option, `APP_DB__HOST` for nested ones (`nestedSeparator`); `APP_TAGS=a,b` for arrays (`arraySeparator`); empty variables count as unset unless `allowEmpty`) |
+| `padroneConfig(options)` | `'padrone'` | Load args from config files (`xdg`, `searchParents` (`'project'`, `stopDir`), `packageJson`, `merge`, `extends` options; function configs with `defineConfig()`; `$production` overrides by `envName`), `--profile` profiles (`profiles`), per-command sections (`sections`), and a `config get\|set\|unset\|list\|path\|edit` command (`command`, with `--local`/`--file`) |
 | `padroneProgress(config)` | `'padrone'` | Auto-managed progress indicators and `progress.tasks()` task lists (no-op for serve, MCP and `tool()` calls) |
 | `padroneLogger(options)` | `'padrone'` | Structured logging to stderr with levels (`--verbose` repeatable; `shortFlags`, `env`, `stdout`, `format: 'json'`, `redact`, `destination` options; `child({ requestId })` bindings) |
 | `padroneJson(options?)` | `'padrone'` | `--json` flag: results and errors as JSON; `--jq` and `--template` filter and format the result; `fields` adds gh-style `--json name,url` |
@@ -48,8 +48,8 @@ Additional opt-in extensions are available for advanced features:
 | `padroneTiming()` | `'padrone'` | Execution timing (`--time`; `Done in …` / `Failed after …`, `format` option) |
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking (notice from the cached latest version; a stale cache refreshes in a detached process, so exit is never delayed) |
 | `padroneUpgrade(options?)` | `'padrone'` | Self-update command (`upgrade`, `--check`, `--exit-code`, `--to`, `--channel`; asks `padroneConfirm()` only when there is something to install; `verify` checks the release first) using the package manager the program was installed with |
-| `padroneAliases(options?)` | `'padrone'` | User-defined command aliases (`alias set co checkout --force`, `$1`/`$@` placeholders), expanded before routing |
-| `padroneResponseFiles(options?)` | `'padrone'` | Response files: `my-cli @args.txt` reads arguments from `args.txt` (`@@` escapes a leading `@`) |
+| `padroneAliases(options?)` | `'padrone'` | User-defined command aliases (`alias set co checkout --force`, `$1`/`$@` placeholders), expanded before routing; `alias import`/`export` share them as YAML or JSON |
+| `padroneResponseFiles(options?)` | `'padrone'` | Response files: `my-cli @args.txt` reads arguments from `args.txt` (`@@` escapes a leading `@`; `relativeTo: 'file'` for nested ones) |
 | `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support; `remote: 'exit'` returns an app's last frame to serve, MCP and `tool()` calls |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |

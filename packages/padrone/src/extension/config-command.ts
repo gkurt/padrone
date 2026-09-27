@@ -6,9 +6,9 @@ import { formatIssueMessages } from '../core/validate.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, PadroneInterceptorFn, PadroneSchema } from '../types/index.ts';
 import { removeJsoncValue, setJsoncValue } from '../util/jsonc.ts';
 import { getRootCommand } from '../util/utils.ts';
-import type { ConfigLayer, ConfigLoader, ConfigSearchOptions } from './config-loader.ts';
+import type { ConfigLayer, ConfigLoader, ConfigSearchOptions, PadroneConfigContext } from './config-loader.ts';
 import {
-  applyProfile,
+  applyOverrides,
   configFileExtension,
   findLocalConfigFile,
   findUserConfigFile,
@@ -17,6 +17,7 @@ import {
   isJsonConfigFile,
   isScriptConfigFile,
   loadConfigData,
+  overridePrefixes,
   parseConfigText,
 } from './config-loader.ts';
 import { isLooseSchema, localOnlyInterceptor, passthroughSchema } from './utils.ts';
@@ -34,7 +35,13 @@ export type ConfigSource = {
   /** Whether keys naming subcommands are per-command sections (`sections`). */
   sections: boolean;
   profileEnv: (command: AnyPadroneCommand) => string;
-  locate: (command: AnyPadroneCommand, env: Env) => { xdgAppName?: string; search?: ConfigSearchOptions };
+  /** The environment name that selects `$<name>` overrides (`envName`). */
+  envName: (env: Env) => string | undefined;
+  locate: (
+    command: AnyPadroneCommand,
+    env: Env,
+    profile?: string,
+  ) => { xdgAppName?: string; search?: ConfigSearchOptions; context: PadroneConfigContext };
 };
 
 // ── Keys and values ──────────────────────────────────────────────────────
@@ -201,9 +208,9 @@ async function resolveSetValue(
 
 // ── Files ────────────────────────────────────────────────────────────────
 
-async function loadLayers(source: ConfigSource, command: AnyPadroneCommand, env: Env) {
-  const { xdgAppName, search } = source.locate(command, env);
-  const { data, layers } = await loadConfigData(source.loadConfig, source.files, xdgAppName, search);
+async function loadLayers(source: ConfigSource, command: AnyPadroneCommand, env: Env, profile?: string) {
+  const { xdgAppName, search, context } = source.locate(command, env, profile);
+  const { data, layers } = await loadConfigData(source.loadConfig, source.files, xdgAppName, search, context);
   return { layers, data: data ?? {} };
 }
 
@@ -214,8 +221,8 @@ async function chosenFile(source: ConfigSource, command: AnyPadroneCommand, env:
   if (args.local && args.file) throw new ActionError('Use --local or --file, not both');
   if (args.file) return (await import('node:path')).resolve(args.file);
   if (!args.local) return undefined;
-  const parents = !!source.locate(command, env).search?.parents;
-  const file = await findLocalConfigFile(source.files, parents, anyText ? (name) => !isScriptConfigFile(name) : undefined);
+  const { search } = source.locate(command, env);
+  const file = await findLocalConfigFile(source.files, search, anyText ? (name) => !isScriptConfigFile(name) : undefined);
   if (!file) throw new ActionError(`No ${anyText ? '' : 'JSON '}file name in the config \`files\` to create in the current directory`);
   return file;
 }
@@ -300,12 +307,18 @@ export function addConfigCommand(
   /** The values commands get: merged configs with the selected profile applied (`--profile`, the env variable, the `profile` key). */
   const effective = async (command: AnyPadroneCommand, env: Env, profile: string | undefined, create = false) => {
     const target = targetOf(command);
-    const loaded = await loadLayers(source, target, env);
-    if (!profileFlag) return { ...loaded, profile: undefined };
-    const selected = profile || env[source.profileEnv(target)] || undefined;
+    const selected = profileFlag ? profile || env[source.profileEnv(target)] || undefined : undefined;
+    const loaded = await loadLayers(source, target, env, selected);
+    const envName = source.envName(env);
+    if (!profileFlag) return { ...loaded, data: applyOverrides(loaded.data, envName, false), profile: undefined };
     // `set --profile` may create the profile
     const exists = !selected || isConfigObject(getPath(loaded.data, ['profiles', selected]));
-    const data = applyProfile(create && !exists ? setPath(loaded.data, ['profiles', selected!], {}) : loaded.data, selected);
+    const data = applyOverrides(
+      create && !exists ? setPath(loaded.data, ['profiles', selected!], {}) : loaded.data,
+      envName,
+      true,
+      selected,
+    );
     return { ...loaded, data, profile: selected ?? (typeof loaded.data.profile === 'string' ? loaded.data.profile : undefined) };
   };
 
@@ -400,10 +413,12 @@ export function addConfigCommand(
             const { data, layers, profile } = file ? await fileValues(file, profileName) : await effective(ctx.command, env, profileName);
             const entries = flatten(data);
             if (entries.length === 0) return 'No config values';
-            // The last file that sets a value (inside the profile first) is where it comes from
+            // The last file that sets a value (inside the profile and the environment overrides first) is where it comes from
+            const prefixes = overridePrefixes(profile, file ? undefined : source.envName(env)).reverse();
             const sourceOf = (path: string[]) =>
-              layers?.findLast((layer) => profile && getPath(layer.data, ['profiles', profile, ...path]) !== undefined)?.file ??
-              layers?.findLast((layer) => getPath(layer.data, path) !== undefined)?.file;
+              prefixes
+                .map((prefix) => layers?.findLast((layer) => getPath(layer.data, [...prefix, ...path]) !== undefined)?.file)
+                .find(Boolean);
             const target = targetOf(ctx.command);
             const sensitive = (key: string) =>
               source.schema

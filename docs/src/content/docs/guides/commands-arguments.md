@@ -307,7 +307,9 @@ For a simple one-to-one mapping, skip the schema and use `vars`. Values are coer
 .extend(padroneEnv({ vars: { port: 'APP_PORT', apiKey: ['API_KEY', 'APP_API_KEY'] } }))
 ```
 
-To also read `.env` files, pass any file option: `modes` (loads `.env.{mode}` files too), `dir`, `local`, `base` or `override`. `padroneEnv({ dir: '.', vars })` loads `.env` and `.env.local` from the current directory; values already in the environment win unless `override: true`.
+To also read `.env` files, pass any file option: `modes` (loads `.env.{mode}` files too), `dir`, `local`, `base` or `override`. `padroneEnv({ dir: '.', vars })` loads `.env` and `.env.local` from the current directory; values already in the environment win unless `override: true`. References expand like a shell's: `${PORT:-3000}` gives a default, `${DEBUG:+--verbose}` an alternative, and `${DB_HOST:?set DB_HOST in .env.local}` stops with that message when `DB_HOST` is missing.
+
+For array options, a variable is split on commas: `APP_TAGS=web,api` gives `['web', 'api']` (`arraySeparator` changes the separator; a JSON array `["a,b"]` works too).
 
 A variable that is set but invalid (e.g. `APP_PORT=abc`) is reported as a validation error. A variable that isn't set is skipped, leaving the argument to the CLI or its default, so keep env fields `.optional()`.
 
@@ -346,6 +348,20 @@ const program = createPadrone('app')
 ```
 
 Multiple config file paths can be provided in the `files` array — the first existing file is used. The `--config <path>` / `-c <path>` flag picks a file explicitly (not for serve, MCP and `tool()` calls, which can't point the program at a local file); a missing or unparsable file is a `ConfigError`, and an empty one is an empty config. JSON (with comments and trailing commas), JavaScript and TypeScript modules work everywhere; YAML and TOML need Bun, or a custom `loadConfig`. If no schema is provided, config values are matched against the argument schema directly. `padroneConfig` can be applied at the program level (inherited by all commands) or at the command level.
+
+A script config can export a function instead of an object, called with the command being run, the environment variables, the environment name and the profile; `defineConfig()` types it:
+
+```typescript
+// app.config.ts
+import { defineConfig } from 'padrone';
+
+export default defineConfig(({ command, envName }) => ({
+  port: envName === 'production' ? 80 : 3000,
+  host: command === 'serve' ? '0.0.0.0' : 'localhost',
+}));
+```
+
+A config can also hold per-environment overrides, applied by `NODE_ENV` (or the `envName` option): `{ "port": 3000, "$production": { "port": 80 } }`. With `searchParents: 'project'`, parent directories are searched only up to the project root (the nearest directory with `.git` or `package.json`); `stopDir` sets the last directory to search.
 
 Priority order: CLI argument > Stdin > Environment variable > Config file > Interactive prompt > Default value
 

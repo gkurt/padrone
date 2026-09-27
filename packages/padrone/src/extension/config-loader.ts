@@ -8,9 +8,39 @@ import { programEnvVar } from './utils.ts';
 type ConfigData = Record<string, unknown>;
 type MaybePromise<T> = T | Promise<T>;
 
+/** What a function config (`export default (ctx) => ({ ... })`) is called with. */
+export type PadroneConfigContext = {
+  /** The command that runs, as its path: `'db migrate'`, or `''` for the program itself. */
+  command: string;
+  /** The environment variables (with those `padroneEnv()` loads from `.env` files). */
+  env: Record<string, string | undefined>;
+  /** The environment name that selects `$<name>` overrides (`envName`, `NODE_ENV` by default), if any. */
+  envName?: string;
+  /** The profile selected with `--profile` or its environment variable (with `profiles`), if any. */
+  profile?: string;
+};
+
+/** A config file's default export: its values, or a function (sync or async) that returns them. */
+export type PadroneConfigExport<T extends object = Record<string, unknown>> = T | ((ctx: PadroneConfigContext) => T | Promise<T>);
+
+/**
+ * Types a script config (`app.config.ts`), like vite's and c12's `defineConfig`: an object, or a function of the
+ * {@link PadroneConfigContext} that returns one (or a promise of one). Returns its argument as is.
+ *
+ * ```ts
+ * export default defineConfig(({ command, envName }) => ({ port: envName === 'production' ? 80 : 3000 }));
+ * ```
+ */
+export function defineConfig<T extends object = Record<string, unknown>>(config: PadroneConfigExport<T>): PadroneConfigExport<T> {
+  return config;
+}
+
 /** Where and how the built-in loader looks beyond the first file in cwd (`searchParents`, `packageJson`, `merge`, `extends`). */
 export type ConfigSearchOptions = {
-  parents?: boolean;
+  /** Search the parents of cwd too: up to the filesystem root, or `'project'` up to the project root. */
+  parents?: boolean | 'project';
+  /** The last directory to search with `parents` (relative to cwd). */
+  stopDir?: string;
   packageJsonKey?: string;
   /** Merge every config found instead of using the first one. */
   merge?: boolean;
@@ -72,18 +102,38 @@ function* ancestorDirs(path: typeof import('node:path'), dir: string): Generator
   }
 }
 
+/** Whether `dir` is a project root: it has `.git` (a directory, or a file in a worktree) or `package.json`. */
+const isProjectRoot = ({ fs, path }: NodeModules, dir: string) =>
+  fs.existsSync(path.join(dir, '.git')) || fs.existsSync(path.join(dir, 'package.json'));
+
+/**
+ * The directories to search, nearest first: cwd, and with `parents` its parents up to `stopDir` (inclusive) or the
+ * filesystem root; with `'project'`, up to the nearest project root (inclusive), or only cwd outside a project.
+ */
+function searchDirs(modules: NodeModules, cwd: string, search?: Pick<ConfigSearchOptions, 'parents' | 'stopDir'>): string[] {
+  if (!search?.parents) return [cwd];
+  const stop = search.stopDir === undefined ? undefined : modules.path.resolve(cwd, search.stopDir);
+  const dirs: string[] = [];
+  for (const dir of ancestorDirs(modules.path, cwd)) {
+    dirs.push(dir);
+    if (dir === stop || (search.parents === 'project' && isProjectRoot(modules, dir))) return dirs;
+  }
+  return search.parents === 'project' ? [cwd] : dirs;
+}
+
 /**
  * The config files to load, lowest precedence first: the user config directory, then the searched directories from
  * the farthest to cwd. Each directory contributes its first matching file (or `package.json` key).
  * Without `merge`, only the highest-precedence one.
  */
 function findConfigs(
-  { fs, path }: NodeModules,
+  modules: NodeModules,
   cwd: string,
   files: string | string[],
   xdgAppName?: string,
   search?: ConfigSearchOptions,
 ): FoundConfig[] {
+  const { fs, path } = modules;
   // A single path comes from `--config`: it must exist, and it's the only config
   if (typeof files === 'string') {
     const abs = path.isAbsolute(files) ? files : path.resolve(cwd, files);
@@ -103,7 +153,7 @@ function findConfigs(
   };
 
   // Nearest first: cwd (and its parents with `searchParents`), then the user config directory
-  for (const dir of search?.parents ? ancestorDirs(path, cwd) : [cwd]) {
+  for (const dir of searchDirs(modules, cwd, search)) {
     const config = inDir(dir, search?.packageJsonKey);
     if (!config || found.some((f) => f.file === config.file)) continue;
     found.push(config);
@@ -173,7 +223,7 @@ export function isConfigObject(value: unknown): value is ConfigData {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readConfig({ fs, path }: NodeModules, { file, key }: FoundConfig): MaybePromise<ConfigData> {
+function readConfig({ fs, path }: NodeModules, { file, key }: FoundConfig, context: PadroneConfigContext): MaybePromise<ConfigData> {
   const check = (data: unknown): ConfigData => {
     if (isConfigObject(data)) return data;
     throw new ConfigError(`Invalid config in ${file}${key ? `: "${key}"` : ''} must be an object`);
@@ -184,7 +234,10 @@ function readConfig({ fs, path }: NodeModules, { file, key }: FoundConfig): Mayb
   if (SCRIPT_EXTENSIONS.has(ext)) {
     // A file URL: Node's ESM loader rejects Windows paths like `C:\...`
     const specifier = _url ? _url.pathToFileURL(file).href : file;
-    return import(/* @vite-ignore */ specifier).then((mod) => check(mod.default ?? mod));
+    return import(/* @vite-ignore */ specifier).then((mod) => {
+      const exported = mod.default ?? mod;
+      return typeof exported === 'function' ? thenMaybe(exported(context), check) : check(exported);
+    });
   }
   // Unknown extensions are read as JSON (comments and trailing commas allowed)
   return check(parseConfigText(fs.readFileSync(file, 'utf-8'), ext, file));
@@ -219,6 +272,39 @@ export function applyProfile(data: ConfigData, name?: string): ConfigData {
   );
 }
 
+const withoutDollarKeys = (data: ConfigData): ConfigData =>
+  Object.fromEntries(Object.entries(data).filter(([key]) => !key.startsWith('$')));
+
+/**
+ * A config with the overrides for environment `name` applied, like c12's: `$<name>: { ... }` and then
+ * `$env: { <name>: { ... } }` override the top-level values. Every `$` key is removed, so none is ever an option value.
+ */
+export function applyEnvOverrides(data: ConfigData, name?: string): ConfigData {
+  const base = withoutDollarKeys(data);
+  if (!name) return base;
+  const envs = data.$env;
+  const overrides = [getPath(data, [`$${name}`]), isConfigObject(envs) ? getPath(envs, [name]) : undefined];
+  return overrides.reduce<ConfigData>((acc, values) => (isConfigObject(values) ? deepMerge(acc, withoutDollarKeys(values)) : acc), base);
+}
+
+/**
+ * A config's values with its overrides applied, lowest precedence first: the top level, its `$<envName>` overrides, then
+ * with `profiles` the selected profile (`applyProfile`) and the profile's own `$<envName>` overrides.
+ */
+export function applyOverrides(data: ConfigData, envName: string | undefined, profiles: boolean, profile?: string): ConfigData {
+  const base = applyEnvOverrides(data, envName);
+  return profiles ? applyEnvOverrides(applyProfile(base, profile), envName) : base;
+}
+
+/**
+ * Where a config sets the values commands get, lowest precedence first: the top level, the `$<envName>` and
+ * `$env.<envName>` overrides, then the same inside `profiles.<profile>`.
+ */
+export function overridePrefixes(profile?: string, envName?: string): string[][] {
+  const scopes = [[], ...(envName ? [[`$${envName}`], ['$env', envName]] : [])];
+  return [...scopes, ...(profile ? scopes.map((scope) => ['profiles', profile, ...scope]) : [])];
+}
+
 /** The commands from the root's first subcommand down to `command`. */
 export function commandChain(command: AnyPadroneCommand): AnyPadroneCommand[] {
   const chain: AnyPadroneCommand[] = [];
@@ -238,7 +324,7 @@ function sectionNames(command: AnyPadroneCommand): Set<string> {
 export function applySections(data: ConfigData, command: AnyPadroneCommand): ConfigData {
   const without = (values: ConfigData, parent: AnyPadroneCommand) => {
     const names = sectionNames(parent);
-    return Object.fromEntries(Object.entries(values).filter(([key]) => !names.has(key)));
+    return Object.fromEntries(Object.entries(values).filter(([key]) => !names.has(key) && !key.startsWith('$')));
   };
   let values = without(data, getRootCommand(command));
   let level: unknown = data;
@@ -286,9 +372,15 @@ function resolveExtends({ fs, path }: NodeModules, specifier: string, from: stri
 }
 
 /** Reads a config and the configs it `extends` (in order, each overridden by the next and by the config itself). */
-function loadWithExtends(modules: NodeModules, found: FoundConfig, followExtends: boolean, chain: string[] = []): MaybePromise<ConfigData> {
+function loadWithExtends(
+  modules: NodeModules,
+  found: FoundConfig,
+  followExtends: boolean,
+  context: PadroneConfigContext,
+  chain: string[] = [],
+): MaybePromise<ConfigData> {
   if (chain.includes(found.file)) throw new ConfigError(`Circular config extends: ${[...chain, found.file].join(' -> ')}`);
-  return thenMaybe(readConfig(modules, found), (config) => {
+  return thenMaybe(readConfig(modules, found, context), (config) => {
     if (!followExtends || config.extends === undefined) return config;
     const { extends: bases, ...own } = config;
     const list = Array.isArray(bases) ? bases : [bases];
@@ -301,7 +393,7 @@ function loadWithExtends(modules: NodeModules, found: FoundConfig, followExtends
       if (isScriptConfigFile(file) && (found.key || !isScriptConfigFile(found.file))) {
         throw new ConfigError(`Invalid config in ${found.file}: "extends" names ${base}, and only a script config can extend a script`);
       }
-      return thenMaybe(loadWithExtends(modules, { file }, followExtends, [...chain, found.file]), (data) => deepMerge(acc, data));
+      return thenMaybe(loadWithExtends(modules, { file }, followExtends, context, [...chain, found.file]), (data) => deepMerge(acc, data));
     });
     return thenMaybe(merged, (base) => deepMerge(base, own));
   });
@@ -311,13 +403,19 @@ function loadWithExtends(modules: NodeModules, found: FoundConfig, followExtends
 export type ConfigLayer = FoundConfig & { data: ConfigData };
 
 /** The configs `loadConfig` merges, lowest precedence first. Empty in non-CLI environments. */
-export function loadConfigLayers(files: string | string[], xdgAppName?: string, search?: ConfigSearchOptions): MaybePromise<ConfigLayer[]> {
+export function loadConfigLayers(
+  files: string | string[],
+  xdgAppName?: string,
+  search?: ConfigSearchOptions,
+  context?: PadroneConfigContext,
+): MaybePromise<ConfigLayer[]> {
   if (typeof process === 'undefined') return [];
   const load = () => {
     const modules = { fs: _fs!, path: _path! };
     const followExtends = search?.extends !== false;
+    const ctx = context ?? { command: '', env: search?.env ?? process.env };
     return reduceMaybe(findConfigs(modules, process.cwd(), files, xdgAppName, search), [] as ConfigLayer[], (layers, config) =>
-      thenMaybe(loadWithExtends(modules, config, followExtends), (data) => [...layers, { ...config, data }]),
+      thenMaybe(loadWithExtends(modules, config, followExtends, ctx), (data) => [...layers, { ...config, data }]),
     );
   };
   if (_fs && _path) return load();
@@ -331,15 +429,19 @@ export type ConfigLoader = (
   search?: ConfigSearchOptions,
 ) => ConfigData | undefined | Promise<ConfigData | undefined>;
 
-/** Loaded configs, merged: with the custom loader (`data` only), else with the built-in one (`layers` too). */
+/**
+ * Loaded configs, merged: with the custom loader (`data` only), else with the built-in one (`layers` too), which calls
+ * function configs with `context`.
+ */
 export function loadConfigData(
   loader: ConfigLoader | undefined,
   files: string | string[],
   xdgAppName?: string,
   search?: ConfigSearchOptions,
+  context?: PadroneConfigContext,
 ): MaybePromise<{ data?: ConfigData; layers?: ConfigLayer[] }> {
   if (loader) return thenMaybe(loader(files, xdgAppName, search), (data) => ({ data }));
-  return thenMaybe(loadConfigLayers(files, xdgAppName, search), (layers) => ({
+  return thenMaybe(loadConfigLayers(files, xdgAppName, search, context), (layers) => ({
     data: layers.length === 0 ? undefined : layers.reduce<ConfigData>((acc, layer) => deepMerge(acc, layer.data), {}),
     layers,
   }));
@@ -380,18 +482,18 @@ export function isScriptConfigFile(file: string): boolean {
 }
 
 /**
- * The project config file (`config --local`): the first of `files` in cwd (or, with `parents`, the nearest parent that has one),
- * else the first relative one that `creatable` accepts, in cwd.
+ * The project config file (`config --local`): the first of `files` in cwd (or, with `parents`, the nearest searched parent
+ * that has one), else the first relative one that `creatable` accepts, in cwd.
  */
 export async function findLocalConfigFile(
   files: readonly string[],
-  parents: boolean,
+  search: Pick<ConfigSearchOptions, 'parents' | 'stopDir'> | undefined,
   creatable: (file: string) => boolean = isJsonConfigFile,
 ): Promise<string | undefined> {
   await initNodeModules();
   const cwd = process.cwd();
   const names = files.filter((file) => !_path!.isAbsolute(file));
-  for (const dir of parents ? ancestorDirs(_path!, cwd) : [cwd]) {
+  for (const dir of searchDirs({ fs: _fs!, path: _path! }, cwd, search)) {
     const found = names.map((name) => _path!.join(dir, name)).find((file) => _fs!.existsSync(file));
     if (found) return found;
   }

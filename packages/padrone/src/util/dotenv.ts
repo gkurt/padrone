@@ -1,3 +1,5 @@
+import { ConfigError } from '../core/errors.ts';
+
 // ── File resolution ─────────────────────────────────────────────────────
 
 /** Returns ordered list of `.env` file names to load (no fs access). */
@@ -121,9 +123,22 @@ function variable(env: Record<string, string | undefined>, name: string): string
   return typeof value === 'string' ? value : undefined;
 }
 
+/** Thrown by `${VAR:?message}` and `${VAR?message}` when the variable is missing. */
+export class MissingVariableError extends Error {
+  constructor(
+    readonly variable: string,
+    readonly detail: string,
+  ) {
+    super(`${variable}: ${detail}`);
+    this.name = 'MissingVariableError';
+  }
+}
+
 /**
- * Expand `$VAR`, `${VAR}`, `${VAR:-default}`, `${VAR-default}` in a string.
- * Escaped `\$` produces a literal `$`. Undefined variables resolve to `""`.
+ * Expand `$VAR`, `${VAR}` and the shell's operators in a string: `${VAR:-default}` (unset or empty) and `${VAR-default}`
+ * (unset) substitute a default, `${VAR:+alt}` (set and non-empty) and `${VAR+alt}` (set) substitute `alt`, and
+ * `${VAR:?message}` (unset or empty) and `${VAR?message}` (unset) throw a `MissingVariableError`. Defaults, alternatives
+ * and messages are expanded too. Escaped `\$` produces a literal `$`. Undefined variables resolve to `""`.
  */
 export function expandVariables(value: string, env: Record<string, string | undefined>): string {
   let result = '';
@@ -144,7 +159,6 @@ export function expandVariables(value: string, env: Record<string, string | unde
       }
 
       if (value[i] === '{') {
-        // ${VAR}, ${VAR:-default}, ${VAR-default}
         i++;
         const closeIdx = findClosingBrace(value, i);
         if (closeIdx === -1) {
@@ -156,19 +170,22 @@ export function expandVariables(value: string, env: Record<string, string | unde
         i = closeIdx + 1;
 
         // The operator right after the name, so a default may hold other operators (`${A-${B:-x}}`)
-        const [, varName = '', operator] = /^(\w*)(:-|-)?/.exec(expr)!;
-        const fallback = expr.slice(varName.length + (operator?.length ?? 0));
-
-        if (operator === ':-') {
-          // ${VAR:-default} — use default if unset or empty
-          const val = variable(env, varName);
-          result += val ? val : expandVariables(fallback, env);
-        } else if (operator === '-') {
-          // ${VAR-default} — use default only if unset
-          const val = variable(env, varName);
-          result += val !== undefined ? val : expandVariables(fallback, env);
-        } else {
+        const [, varName = '', operator] = /^(\w*)(:?[-+?])?/.exec(expr)!;
+        if (!operator) {
           result += variable(env, expr) ?? '';
+          continue;
+        }
+        const word = expr.slice(varName.length + operator.length);
+        const val = variable(env, varName);
+        // With `:`, an empty value counts as unset
+        const set = operator.startsWith(':') ? !!val : val !== undefined;
+        const kind = operator.at(-1);
+        if (kind === '-') result += set ? val : expandVariables(word, env);
+        else if (kind === '+') result += set ? expandVariables(word, env) : '';
+        else if (set) result += val;
+        else {
+          const detail = expandVariables(word, env) || (operator === ':?' ? 'is not set or empty' : 'is not set');
+          throw new MissingVariableError(varName, detail);
         }
       } else {
         // $VAR — collect word chars
@@ -216,13 +233,18 @@ export function loadEnvFiles(
 ): Record<string, string> | Promise<Record<string, string>> {
   if (typeof process === 'undefined') return {};
 
+  // A missing required variable (`${VAR:?message}`) is an error; anything else (no file system) loads nothing
+  const fallback = (err: unknown): Record<string, string> => {
+    if (err instanceof ConfigError) throw err;
+    return {};
+  };
   try {
     if (_fs && _path) return loadEnvFilesSync(_fs, _path, options, processEnv);
     return initNodeModules()
       .then(() => loadEnvFilesSync(_fs!, _path!, options, processEnv))
-      .catch(() => ({}) as Record<string, string>);
-  } catch {
-    return {};
+      .catch(fallback);
+  } catch (err) {
+    return fallback(err);
   }
 }
 
@@ -248,12 +270,16 @@ function loadEnvFilesSync(
   const dir = options.dir ?? process.cwd();
   const fileNames = resolveEnvFiles(options.modes, options.local ?? true, options.base ?? true);
   // Later files win; values are expanded after merging, so `.env` can use a variable `.env.local` overrides
-  const entries = new Map<string, EnvEntry>();
+  const entries = new Map<string, EnvEntry & { file: string }>();
   for (const name of fileNames) {
     const filePath = path.resolve(dir, name);
     if (!fs.existsSync(filePath)) continue;
-    for (const entry of parseEnvEntries(fs.readFileSync(filePath, 'utf-8'))) entries.set(entry.key, entry);
+    for (const entry of parseEnvEntries(fs.readFileSync(filePath, 'utf-8'))) entries.set(entry.key, { ...entry, file: filePath });
   }
+  const displayPath = (file: string) => {
+    const relative = path.relative(process.cwd(), file);
+    return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative : file;
+  };
 
   // Expanded on demand, so chained and forward references work; processEnv wins in the lookup unless `override`.
   // A reference back to a variable being expanded (`PATH=$PATH:/bin`) reads processEnv.
@@ -265,10 +291,16 @@ function loadEnvFilesSync(
     if (expanded.has(key)) return expanded.get(key);
     if (expanding.has(key)) return processEnv[key] ?? '';
     expanding.add(key);
-    const value = entry.literal ? entry.value : expandVariables(entry.value, lookup);
-    expanding.delete(key);
-    expanded.set(key, value);
-    return value;
+    try {
+      const value = entry.literal ? entry.value : expandVariables(entry.value, lookup);
+      expanded.set(key, value);
+      return value;
+    } catch (err) {
+      if (!(err instanceof MissingVariableError)) throw err;
+      throw new ConfigError(`${displayPath(entry.file)}: ${key} needs ${err.variable}: ${err.detail}`, { cause: err });
+    } finally {
+      expanding.delete(key);
+    }
   };
   const lookup = new Proxy({} as Record<string, string | undefined>, {
     get: (_, key) => {
@@ -278,6 +310,14 @@ function loadEnvFilesSync(
   });
 
   const merged: Record<string, string> = {};
-  for (const key of entries.keys()) merged[key] = expand(key)!;
+  for (const key of entries.keys()) {
+    try {
+      merged[key] = expand(key)!;
+    } catch (err) {
+      // A value the process environment overrides is never used, so neither is the variable it's missing
+      if (options.override || processEnv[key] === undefined) throw err;
+      merged[key] = processEnv[key];
+    }
+  }
   return merged;
 }

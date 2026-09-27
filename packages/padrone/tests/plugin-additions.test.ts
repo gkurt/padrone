@@ -249,7 +249,7 @@ describe('padroneAliases', () => {
     await cli(program, 'alias', 'set', 'pr', 'checkout pr/$1 --force');
     expect(JSON.parse(readFileSync(join(dir, 'aliases.json'), 'utf-8'))).toEqual({ pr: 'checkout pr/$1 --force' });
     expect((await cli(program, 'pr', '42')).result).toEqual({ branch: 'pr/42', force: true });
-    expect((await cli(program, 'alias', 'list')).result).toBe('co  checkout\npr  checkout pr/$1 --force');
+    expect((await cli(program, 'alias', 'list')).result).toBe('co: checkout\npr: "checkout pr/$1 --force"');
     await cli(program, 'alias', 'delete', 'pr');
     expect(JSON.parse(readFileSync(join(dir, 'aliases.json'), 'utf-8'))).toEqual({});
   });

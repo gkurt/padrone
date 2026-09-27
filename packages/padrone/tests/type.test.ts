@@ -1,7 +1,7 @@
 // biome-ignore-all lint/correctness/noUnusedVariables: This file is for testing TypeScript types, so unused variables are intentional.
 
 import { expectTypeOf, test } from 'bun:test';
-import type { DefineCommand, DefineCommandContext, PadroneBuilder, PadroneLogger, PadroneProgram, PadroneProgress } from 'padrone';
+import type { DefineCommand, DefineCommandContext, PadroneBuilder, PadroneLogger, PadroneProgram, PadroneProgressContext } from 'padrone';
 import { asyncSchema, createPadrone, defineCommand, defineInterceptor, padroneProgress } from 'padrone';
 import type { PadroneTracer } from 'padrone/tracing';
 import * as z from 'zod/v4';
@@ -466,7 +466,7 @@ test.skip('Types - DefineCommand with extensions', () => {
       .extend(padroneProgress('Loading...'))
       .arguments(z.object({ id: z.string() }))
       .action((args, ctx) => {
-        expectTypeOf(ctx.context.progress).toEqualTypeOf<PadroneProgress>();
+        expectTypeOf(ctx.context.progress).toEqualTypeOf<PadroneProgressContext>();
         ctx.context.progress.update('halfway');
         return args.id;
       }),
@@ -483,14 +483,14 @@ test.skip('Types - DefineCommandContext default context', () => {
   expectTypeOf<DefineCommandContext>().toHaveProperty('logger');
   expectTypeOf<DefineCommandContext['logger']>().toEqualTypeOf<PadroneLogger | undefined>();
   expectTypeOf<DefineCommandContext['tracing']>().toEqualTypeOf<PadroneTracer | undefined>();
-  expectTypeOf<DefineCommandContext['progress']>().toEqualTypeOf<PadroneProgress | undefined>();
+  expectTypeOf<DefineCommandContext['progress']>().toEqualTypeOf<PadroneProgressContext | undefined>();
 
   // defineCommand action handler has access to optional logger, tracing, progress
   defineCommand((c) =>
     c.action((_args, ctx) => {
       expectTypeOf(ctx.context.logger).toEqualTypeOf<PadroneLogger | undefined>();
       expectTypeOf(ctx.context.tracing).toEqualTypeOf<PadroneTracer | undefined>();
-      expectTypeOf(ctx.context.progress).toEqualTypeOf<PadroneProgress | undefined>();
+      expectTypeOf(ctx.context.progress).toEqualTypeOf<PadroneProgressContext | undefined>();
     }),
   );
 

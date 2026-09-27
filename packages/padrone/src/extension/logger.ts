@@ -2,6 +2,9 @@ import { defineInterceptor } from '#src/core/interceptors.ts';
 import { thenMaybe } from '#src/core/results.ts';
 import type { ResolvedPadroneRuntime } from '#src/core/runtime.ts';
 import { getKnownOptionNames } from '#src/core/validate.ts';
+import type { AnsiStyle } from '#src/output/colorizer.ts';
+import { makeStyleFn } from '#src/output/colorizer.ts';
+import { shouldUseAnsi } from '#src/output/styling.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '#src/types/index.ts';
 import { safeJsonStringify } from '#src/util/json.ts';
 import type { WithInterceptor } from '#src/util/type-utils.ts';
@@ -33,8 +36,14 @@ export type PadroneLoggerConfig = {
   level?: PadroneLogLevel;
   /** Prefix prepended to every log message. */
   prefix?: string;
-  /** Include timestamps in log output. Defaults to `false`. */
+  /** Include timestamps in log output. Defaults to `false`. JSON lines always have a `time`. */
   timestamps?: boolean;
+  /**
+   * `'json'` writes one JSON object per line, like pino: `{"time":"…","level":"info","msg":"…"}`.
+   * A plain object as the first argument adds its fields (`logger.info({ userId }, 'signed in')`),
+   * errors are written as `err: { name, message, stack }`, and child labels as `name`. Defaults to `'text'`.
+   */
+  format?: 'text' | 'json';
   /**
    * Environment variable that sets the level (e.g. `'MYAPP_LOG_LEVEL'`). CLI flags take precedence over it,
    * and it takes precedence over `level`. Invalid values are ignored.
@@ -46,11 +55,11 @@ export type PadroneLoggerConfig = {
    */
   shortFlags?: boolean;
   /**
-   * Write every level to the runtime's `error` stream (stderr), keeping `output` (stdout) for command results.
-   * Defaults to `false`: `trace`, `debug` and `info` go to `output`; `warn` and `error` to `error`.
-   * Under JSON output (`--json`, `format: 'json'`) every level goes to `error`, so stdout stays valid JSON.
+   * Write `trace`, `debug` and `info` to the runtime's `output` (stdout); `warn` and `error` stay on `error` (stderr).
+   * Defaults to `false`: every level goes to stderr, keeping stdout for command results (and piping) clean.
+   * Ignored under JSON output (`--json`), so stdout stays valid JSON.
    */
-  stderr?: boolean;
+  stdout?: boolean;
 };
 
 /** Builder/program type after applying `padroneLogger()`. Adds `{ logger: PadroneLogger }` to the command context. */
@@ -69,6 +78,50 @@ const LEVEL_LABELS: Record<Exclude<PadroneLogLevel, 'silent'>, string> = {
   error: 'ERROR',
 };
 const VALID_LEVELS = new Set<string>(Object.keys(LEVEL_ORDER));
+const LEVEL_STYLES: Record<Exclude<PadroneLogLevel, 'silent'>, AnsiStyle[]> = {
+  trace: ['gray'],
+  debug: ['cyan'],
+  info: ['green'],
+  warn: ['yellow'],
+  error: ['red', 'bold'],
+};
+const LEVEL_COLORS = Object.fromEntries(Object.entries(LEVEL_STYLES).map(([level, styles]) => [level, makeStyleFn(styles)])) as Record<
+  Exclude<PadroneLogLevel, 'silent'>,
+  (text: string) => string
+>;
+
+/** Whether log lines get colored level labels: follows `--color` / `--no-color`, `NO_COLOR`/`FORCE_COLOR` and the terminal. */
+function colorsEnabled(runtime: ResolvedPadroneRuntime): boolean {
+  if (runtime.format === 'ansi') return true;
+  if (runtime.format !== 'auto' && runtime.format !== 'console') return false;
+  return shouldUseAnsi(runtime.env(), runtime.terminal?.isTTY);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+const errorJson = (error: Error) => ({ name: error.name, message: error.message, stack: error.stack });
+
+/** One JSON log line: a leading plain object's fields, the first error as `err`, the rest as `msg`. */
+function formatJsonLine(level: Exclude<PadroneLogLevel, 'silent'>, names: string[], prefix: string, args: unknown[]): string {
+  const fields = isPlainObject(args[0]) ? args[0] : undefined;
+  const rest = fields ? args.slice(1) : args;
+  const error = rest.find((arg): arg is Error => arg instanceof Error);
+  const msgArgs = rest.map((arg) => (error && arg === error ? error.message : arg));
+  const line: Record<string, unknown> = {
+    time: new Date().toISOString(),
+    level,
+    ...(prefix && { prefix }),
+    ...(names.length > 0 && { name: names.join('.') }),
+    ...(msgArgs.length > 0 && { msg: formatArgs(msgArgs) }),
+    ...(fields && Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, v instanceof Error ? errorJson(v) : v]))),
+    ...(error && { err: errorJson(error) }),
+  };
+  return safeJsonStringify(line) ?? JSON.stringify({ time: line.time, level, msg: String(line.msg ?? '') });
+}
 
 /** Format specifier pattern: matches %s, %d, %i, %f, %o, %O, %j, %% */
 const FORMAT_PATTERN = /%%|%[sdifjoO]/g;
@@ -167,25 +220,28 @@ function createLogger(
 ): PadroneLogger {
   const threshold = LEVEL_ORDER[level];
 
-  function format(lvl: Exclude<PadroneLogLevel, 'silent'>, prefix: string, args: unknown[]): string {
+  function formatText(lvl: Exclude<PadroneLogLevel, 'silent'>, names: string[], args: unknown[]): string {
     const parts: string[] = [];
     if (config.timestamps) parts.push(new Date().toISOString());
-    parts.push(`[${LEVEL_LABELS[lvl]}]`);
-    if (prefix) parts.push(prefix);
+    const label = `[${LEVEL_LABELS[lvl]}]`;
+    parts.push(colorsEnabled(runtime) ? LEVEL_COLORS[lvl](label) : label);
+    if (config.prefix) parts.push(config.prefix);
+    for (const name of names) parts.push(`[${name}]`);
     parts.push(formatArgs(args));
     return parts.join(' ');
   }
 
-  function makeLogger(prefix: string): PadroneLogger {
+  function makeLogger(names: string[]): PadroneLogger {
     const emit = (lvl: Exclude<PadroneLogLevel, 'silent'>, args: unknown[]) => {
       if (LEVEL_ORDER[lvl] < threshold) return;
-      const message = format(lvl, prefix, args);
+      const message = config.format === 'json' ? formatJsonLine(lvl, names, config.prefix, args) : formatText(lvl, names, args);
       tracing?.rootSpan.addEvent('log', {
         'log.level': lvl,
         'log.message': formatArgs(args),
       });
-      if (config.stderr || lvl === 'error' || lvl === 'warn' || runtime.format === 'json') runtime.error(message);
-      else runtime.output(message);
+      const toStdout = config.stdout && lvl !== 'error' && lvl !== 'warn' && runtime.format !== 'json';
+      if (toStdout) runtime.output(message);
+      else runtime.error(message);
     };
 
     return {
@@ -195,18 +251,18 @@ function createLogger(
       warn: (...args) => emit('warn', args),
       error: (...args) => emit('error', args),
       level,
-      child: (label) => makeLogger(prefix ? `${prefix} [${label}]` : `[${label}]`),
+      child: (label) => makeLogger([...names, label]),
     };
   }
 
-  return makeLogger(config.prefix);
+  return makeLogger([]);
 }
 
 // ---------------------------------------------------------------------------
 // Interceptor
 // ---------------------------------------------------------------------------
 
-type ResolvedLoggerConfig = { level: PadroneLogLevel; prefix: string; timestamps: boolean; stderr: boolean };
+type ResolvedLoggerConfig = { level: PadroneLogLevel; prefix: string; timestamps: boolean; stdout: boolean; format: 'text' | 'json' };
 
 function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
   return defineInterceptor({
@@ -258,7 +314,8 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
               'info',
             prefix: rawConfig?.prefix ?? '',
             timestamps: rawConfig?.timestamps ?? ctxCfg?.timestamps ?? false,
-            stderr: rawConfig?.stderr ?? ctxCfg?.stderr ?? false,
+            stdout: rawConfig?.stdout ?? ctxCfg?.stdout ?? false,
+            format: rawConfig?.format ?? ctxCfg?.format ?? 'text',
           };
           const logger = createLogger(ctx.runtime, resolved.level, resolved, ctx.context?.tracing);
           return next({ context: { logger } });
@@ -275,8 +332,9 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
  * Extension that injects a structured logger into the command context.
  *
  * The logger respects a configurable log level threshold, supports prefixed
- * child loggers, and routes output through the runtime's `output`/`error`
- * functions so it works in any environment (terminal, test, web).
+ * child loggers, and writes through the runtime's `error` function (stderr), so it
+ * works in any environment (terminal, test, web) and never mixes with command results.
+ * Level labels are colored on color terminals; `format: 'json'` writes JSON lines.
  *
  * Supports CLI flags for runtime level overrides:
  * - `--trace` → sets level to `trace`

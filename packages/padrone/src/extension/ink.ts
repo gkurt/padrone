@@ -1,6 +1,7 @@
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { AnyPadroneBuilder, CommandTypesBase } from '../types/index.ts';
 import type { InterceptorExecuteResult } from '../types/interceptor.ts';
+import { isRemoteCaller } from './utils.ts';
 
 // ── React element detection ─────────────────────────────────────────────
 
@@ -41,7 +42,15 @@ function createInkInterceptor(rawOptions?: InkOptions) {
           if (value instanceof Promise) value = await value;
           if (!isReactElement(value)) return e;
 
-          const { render } = await import('ink');
+          const ink = await import('ink');
+          // Serve, MCP and tool calls have no terminal: they get the first frame as text
+          if (isRemoteCaller(ctx.caller)) {
+            const { renderToString } = ink as { renderToString?: (node: unknown, options?: { columns?: number }) => string };
+            if (!renderToString)
+              throw new Error('Returning Ink elements from serve, MCP or tool calls needs an Ink version with renderToString');
+            return { result: renderToString(value) };
+          }
+          const { render } = ink;
           const instance = render(value as import('react').ReactElement, options.render);
 
           // Unmount on abort so Ink cleans up stdin/stdout
@@ -74,6 +83,8 @@ function createInkInterceptor(rawOptions?: InkOptions) {
  *
  * When a command's action returns a React element (JSX), this extension
  * renders it using Ink instead of passing it to the normal output path.
+ * For serve, MCP and `tool()` calls, which have no terminal, the result is the element's first frame
+ * as text (Ink's `renderToString`).
  *
  * Requires `ink` and `react` as peer dependencies.
  *

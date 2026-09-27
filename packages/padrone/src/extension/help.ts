@@ -166,7 +166,8 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
         },
         error(ctx, next) {
           return thenMaybe(next(), (er) => {
-            if (ctx.caller !== 'cli' || !er.error || isErrorReported(er.error)) return er;
+            // Under JSON output, auto-output prints the error as JSON
+            if (ctx.caller !== 'cli' || !er.error || isErrorReported(er.error) || ctx.runtime.format === 'json') return er;
             if (!(er.error instanceof RoutingError) && !(er.error instanceof ValidationError)) return er;
 
             const rootCommand = getRootCommand(ctx.command);

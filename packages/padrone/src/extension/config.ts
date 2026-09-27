@@ -7,7 +7,11 @@ import { formatIssueMessages } from '../core/validate.ts';
 import type { AnyPadroneBuilder, CommandTypesBase, InterceptorValidateContext } from '../types/index.ts';
 import type { WithAsync } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
+import type { ConfigSearchOptions } from './config-loader.ts';
+import { loadConfig } from './config-loader.ts';
 import { frameworkFlags } from './utils.ts';
+
+export type { ConfigSearchOptions } from './config-loader.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -47,6 +51,17 @@ export type PadroneConfigOptions = {
    */
   packageJson?: string | boolean;
   /**
+   * Merge every config found instead of using the first: the user config directory (`xdg`), then the searched
+   * directories from the farthest to cwd, each overriding the last (like git's global and local config).
+   * Objects merge key by key; arrays are replaced. An explicit `--config` file is still used alone. Defaults to `false`.
+   */
+  merge?: boolean;
+  /**
+   * Follow `extends` keys in config files: `"extends": "./base.json"` (or a list, or a package name) loads those configs
+   * first, relative to the extending file, and the file's own values override them. Defaults to `true`.
+   */
+  extends?: boolean;
+  /**
    * Custom config loader. When provided, replaces the built-in file system loader.
    * Useful for testing or non-CLI environments.
    */
@@ -57,208 +72,6 @@ export type PadroneConfigOptions = {
   ) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
 };
 
-/** Where the built-in loader looks beyond cwd, from `searchParents` and `packageJson`. */
-export type ConfigSearchOptions = { parents?: boolean; packageJsonKey?: string };
-
-// ── File system config loader ───────────────────────────────────────────
-
-// Lazily resolved Node.js modules — cached after first import to keep loadConfig sync after initialization.
-let _fs: typeof import('node:fs') | undefined;
-let _path: typeof import('node:path') | undefined;
-let _url: typeof import('node:url') | undefined;
-
-async function initNodeModules(): Promise<void> {
-  if (_fs && _path && _url) return;
-  _fs = await import('node:fs');
-  _path = await import('node:path');
-  _url = await import('node:url');
-}
-
-// Eagerly start caching node modules so loadConfig is sync by the time it's called.
-try {
-  if (typeof process !== 'undefined') initNodeModules();
-} catch {
-  // Non-CLI environments (browser, edge) — ignore
-}
-
-function getUserConfigDir(path: typeof import('node:path'), appName: string): string | undefined {
-  const platform = process.platform;
-
-  // Respect XDG_CONFIG_HOME on all platforms when explicitly set
-  const xdgHome = process.env.XDG_CONFIG_HOME;
-  if (xdgHome) return path.join(xdgHome, appName);
-
-  const home = process.env.HOME || process.env.USERPROFILE;
-  if (!home) return undefined;
-
-  if (platform === 'win32') {
-    const appData = process.env.APPDATA;
-    return appData ? path.join(appData, appName) : path.join(home, 'AppData', 'Roaming', appName);
-  }
-  if (platform === 'darwin') return path.join(home, 'Library', 'Application Support', appName);
-
-  // Linux and other Unix — default XDG path
-  return path.join(home, '.config', appName);
-}
-
-/** A config file, or a `package.json` whose `key` holds the config. */
-type FoundConfig = { file: string; key?: string };
-
-/** `package.json` at `file` has `key` (an unreadable one counts as not having it). */
-function packageJsonHasKey(fs: typeof import('node:fs'), file: string, key: string): boolean {
-  try {
-    const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
-    return !!data && typeof data === 'object' && Object.hasOwn(data, key);
-  } catch {
-    return false;
-  }
-}
-
-/** `dir`, then each of its parents up to the filesystem root. */
-function* ancestorDirs(path: typeof import('node:path'), dir: string): Generator<string> {
-  for (let current = dir, parent = path.dirname(dir); ; current = parent, parent = path.dirname(parent)) {
-    yield current;
-    if (parent === current) return;
-  }
-}
-
-function resolveConfigPath(
-  fs: typeof import('node:fs'),
-  path: typeof import('node:path'),
-  cwd: string,
-  files: string | string[],
-  xdgAppName?: string,
-  search?: ConfigSearchOptions,
-): FoundConfig | undefined {
-  // A single path comes from `--config`: it must exist
-  if (typeof files === 'string') {
-    const abs = path.isAbsolute(files) ? files : path.resolve(cwd, files);
-    if (!fs.existsSync(abs)) throw new ConfigError(`Config file not found: ${abs}`);
-    return { file: abs };
-  }
-
-  // Search in cwd (and its parents with `searchParents`) first
-  for (const dir of search?.parents ? ancestorDirs(path, cwd) : [cwd]) {
-    for (const candidate of files) {
-      const abs = path.isAbsolute(candidate) ? candidate : path.resolve(dir, candidate);
-      if (fs.existsSync(abs)) return { file: abs };
-    }
-    const key = search?.packageJsonKey;
-    const pkg = path.join(dir, 'package.json');
-    if (key && fs.existsSync(pkg) && packageJsonHasKey(fs, pkg, key)) return { file: pkg, key };
-  }
-
-  // Then search in the user config directory (XDG / platform-specific)
-  if (xdgAppName) {
-    const configDir = getUserConfigDir(path, xdgAppName);
-    if (configDir) {
-      for (const candidate of files) {
-        const abs = path.join(configDir, candidate);
-        if (fs.existsSync(abs)) return { file: abs };
-      }
-    }
-  }
-
-  return undefined;
-}
-
-/** Removes comments and trailing commas so JSONC parses with `JSON.parse` (runtimes without a native JSONC parser). */
-function stripJsonc(text: string): string {
-  let out = '';
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i]!;
-    if (ch === '"') {
-      const startIndex = i;
-      for (i++; i < text.length && text[i] !== '"'; i++) if (text[i] === '\\') i++;
-      out += text.slice(startIndex, i + 1);
-    } else if (ch === '/' && text[i + 1] === '/') {
-      while (i < text.length && text[i] !== '\n') i++;
-      out += '\n';
-    } else if (ch === '/' && text[i + 1] === '*') {
-      const close = text.indexOf('*/', i + 2);
-      i = close === -1 ? text.length : close + 1;
-    } else if (ch === ',' && /^\s*(?:\/\/[^\n]*\s*|\/\*[\s\S]*?\*\/\s*)*[}\]]/.test(text.slice(i + 1))) {
-      // trailing comma
-    } else {
-      out += ch;
-    }
-  }
-  return out;
-}
-
-type BunParsers = {
-  YAML?: { parse(text: string): unknown };
-  TOML?: { parse(text: string): unknown };
-  JSONC?: { parse(text: string): unknown };
-};
-
-function parseConfigText(text: string, ext: string, file: string): Record<string, unknown> {
-  const bun = (globalThis as { Bun?: BunParsers }).Bun;
-  const parser =
-    ext === '.yaml' || ext === '.yml'
-      ? bun?.YAML
-      : ext === '.toml'
-        ? bun?.TOML
-        : ext === '.json' || ext === '.jsonc'
-          ? bun?.JSONC
-          : undefined;
-  if (!parser && (ext === '.yaml' || ext === '.yml' || ext === '.toml')) {
-    throw new ConfigError(`Cannot read ${file}: ${ext.slice(1).toUpperCase()} config files need Bun, or a custom \`loadConfig\``);
-  }
-  try {
-    return (parser ? parser.parse(text) : JSON.parse(ext === '.jsonc' || ext === '.json' ? stripJsonc(text) : text)) as Record<
-      string,
-      unknown
-    >;
-  } catch (err) {
-    throw new ConfigError(`Invalid config file ${file}: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
-  }
-}
-
-function loadConfigSync(
-  fs: typeof import('node:fs'),
-  path: typeof import('node:path'),
-  files: string | string[],
-  xdgAppName?: string,
-  search?: ConfigSearchOptions,
-): Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined> {
-  const found = resolveConfigPath(fs, path, process.cwd(), files, xdgAppName, search);
-  if (!found) return undefined;
-  const absolutePath = found.file;
-  if (found.key) {
-    const data = parseConfigText(fs.readFileSync(absolutePath, 'utf-8'), '.json', absolutePath)[found.key];
-    if (data && typeof data === 'object' && !Array.isArray(data)) return data as Record<string, unknown>;
-    throw new ConfigError(`Invalid config in ${absolutePath}: "${found.key}" must be an object`);
-  }
-
-  const ext = path.extname(absolutePath).toLowerCase();
-  if (ext === '.js' || ext === '.cjs' || ext === '.mjs' || ext === '.ts' || ext === '.cts' || ext === '.mts') {
-    // A file URL: Node's ESM loader rejects Windows paths like `C:\...`
-    const specifier = _url ? _url.pathToFileURL(absolutePath).href : absolutePath;
-    return import(/* @vite-ignore */ specifier).then((mod) => mod.default ?? mod);
-  }
-  // Unknown extensions are read as JSON
-  return parseConfigText(fs.readFileSync(absolutePath, 'utf-8'), ext, absolutePath);
-}
-
-/**
- * Built-in config file loader. Directly accesses the file system.
- * Returns `undefined` in non-CLI environments where `node:fs` is unavailable.
- * Throws a `ConfigError` when an explicit `--config` file is missing or a config file can't be parsed.
- */
-function loadConfig(
-  files: string | string[],
-  xdgAppName?: string,
-  search?: ConfigSearchOptions,
-): Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined> {
-  if (typeof process === 'undefined') return undefined;
-  if (_fs && _path) return loadConfigSync(_fs, _path, files, xdgAppName, search);
-  return initNodeModules().then(
-    () => loadConfigSync(_fs!, _path!, files, xdgAppName, search),
-    () => undefined,
-  );
-}
-
 // ── Extension ────────────────────────────────────────────────────────────
 
 /**
@@ -266,8 +79,9 @@ function loadConfig(
  *
  * Features:
  * - `--config` / `-c` flag for explicit config file path (can be disabled via `flag: false`)
- * - Auto-detection of config files from a list of candidate names, optionally in parent directories (`searchParents`)
- *   and in a `package.json` key (`packageJson`)
+ * - Auto-detection of config files from a list of candidate names, optionally in parent directories (`searchParents`),
+ *   in a `package.json` key (`packageJson`) and in the user config directory (`xdg`)
+ * - Layered configs: `merge: true` merges every config found, and `extends` keys pull in base configs
  * - Optional schema validation and transformation of config data
  * - Directly accesses the file system (gracefully no-ops in non-CLI environments)
  *
@@ -323,7 +137,14 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
         const packageJsonKey =
           typeof packageJsonOption === 'string' ? packageJsonOption : packageJsonOption === true ? programName() : undefined;
         const search: ConfigSearchOptions | undefined =
-          options?.searchParents || packageJsonKey ? { parents: options?.searchParents, packageJsonKey } : undefined;
+          options?.searchParents || packageJsonKey || options?.merge || options?.extends === false
+            ? {
+                parents: options?.searchParents,
+                packageJsonKey,
+                merge: options?.merge,
+                ...(options?.extends === false && { extends: false }),
+              }
+            : undefined;
 
         // Load config data: explicit --config flag takes priority, then auto-detect
         const configDataOrPromise = configLoader(explicitConfigPath ?? configFiles ?? [], xdgAppName, search);

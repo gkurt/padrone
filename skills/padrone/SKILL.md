@@ -162,14 +162,14 @@ Padrone's core is minimal — most features are implemented as extensions compos
 | `color` | -1001 | `--color[=always\|never\|auto\|<theme>]`/`--no-color` flag support |
 | `stdin` | -1001 | Pipe stdin into argument fields |
 | `help` | -1000 | `--help` flag, `help` command, error-phase help display |
-| `version` | -1000 | `--version` flag |
+| `version` | -1000 | `--version` flag (any command; `-v`/`-V` on the root), `version --verbose` shows runtime/platform/shell |
 | `repl` | -1000 | `--repl` flag, `repl` command |
 | `interactive` | -999 | `--interactive` flag, auto-prompting |
 | `suggestions` | -500 | "Did you mean?" for unknown commands/options |
 
 Each can be disabled: `createPadrone('myapp', { builtins: { help: false } })`. `help` also takes options: `{ help: { showHelpOnError: true } }` prints full help after errors (default: a one-line `--help` hint on stderr); `{ help: { flags: ['help', '?'] } }` and `{ version: { flags: ['version'] } }` rename the flags. Customize help per command with `.configure({ help: { usage, before, after } })`, or with a function `(info, ctx) => info | string` that also applies to subcommands.
 
-Advanced opt-in extensions imported from `'padrone'`: `padroneLogger()`, `padroneTiming()`, `padroneProgress()`, `padroneUpdateCheck()`, `padroneEnv()`, `padroneConfig()`, `padroneJson()` (`--json` output), `padroneConfirm()` (confirm `mutation: true` commands, `--yes` skips). Optional integrations live behind subpath imports to keep their dependencies out of the main bundle: `padroneInk` from `'padrone/ink'`, `padroneMcp` from `'padrone/mcp'`, `padroneServe` from `'padrone/serve'`, `padroneTracing` from `'padrone/tracing'`, `padroneCompletion` from `'padrone/completion'` (dynamic completion; `fields: { x: { complete: () => [...] } }` supplies values), `padroneMan` from `'padrone/man'`.
+Advanced opt-in extensions imported from `'padrone'`: `padroneLogger()` (logs to stderr; `format: 'json'` for JSON lines, `stdout: true` for info on stdout), `padroneTiming()`, `padroneProgress()`, `padroneUpdateCheck()`, `padroneEnv()`, `padroneConfig()` (`merge: true` layers configs, `extends` keys pull in base configs), `padroneJson()` (`--json` output; `--jq '<expr>'` and `--template '{{.name}}'`), `padroneConfirm()` (confirm `mutation: true` commands, `--yes` skips). Optional integrations live behind subpath imports to keep their dependencies out of the main bundle: `padroneInk` from `'padrone/ink'`, `padroneMcp` from `'padrone/mcp'`, `padroneServe` from `'padrone/serve'`, `padroneTracing` from `'padrone/tracing'`, `padroneCompletion` from `'padrone/completion'` (dynamic completion; `fields: { x: { complete: () => [...] } }` supplies values), `padroneMan` from `'padrone/man'`.
 
 ## Testing
 
@@ -219,7 +219,8 @@ Auto-managed spinners for long-running commands via `padroneProgress()` context-
 - **Auto-managed**: `padroneProgress()` starts before execution, calls `succeed`/`fail` automatically
 - **Messages**: `message` accepts a string (progress message) or `{ validation?, progress?, success?, error? }`. Can also be provided from context via `progressConfig.message` — command-level fields take precedence
 - **Manual control**: Use `ctx.context.progress` in action handlers — `update(string | number | { message?, progress?, indeterminate?, time? })`, `succeed`, `fail`, `stop`, `pause`, `resume`
-- **Typed context**: `padroneProgress()` uses `.provides<{ progress: PadroneProgress }>()` — `ctx.context.progress` is fully typed
+- **Typed context**: `padroneProgress()` uses `.provides<{ progress: PadroneProgressContext }>()` — `ctx.context.progress` is fully typed
+- **Task lists**: `await ctx.context.progress.tasks([{ title, task: (t) => ..., skip? }], { concurrent?, exitOnError? })` runs tasks drawn as a live list (listr2-style); `t.update(msg)`, `t.setTitle()`, `t.skip(reason)`, `t.tasks([...])` for subtasks, `t.signal`. `taskRenderer` replaces the drawing
 - **Dynamic messages**: `success`/`error` can be callbacks returning `string | null | { message, indicator }`
 - **Spinner config**: `spinner` accepts preset name (`'dots'`, `'line'`, etc.), `true` (always show), `false` (disable), or `{ frames, interval, show }` object
 - **Progress bar**: `bar: true` or `bar: { width, filled, empty, animation, show }` — renders percentage + bar. Indeterminate animations: `'bounce'`, `'slide'`, `'pulse'`

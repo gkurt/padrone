@@ -17,7 +17,7 @@ When you call `createPadrone('myapp')`, built-in extensions are automatically ap
 | Extension | What it does | Interceptor Order |
 |-----------|-------------|-------------------|
 | **help** | `--help`/`-h` flag, `help` command and `<cmd> help`, error-phase help display | -1000 |
-| **version** | `--version`/`-v` flag, `version` command | -1000 |
+| **version** | `--version` flag (any command), `-v`/`-V` (root), `version [--verbose]` command | -1000 |
 | **repl** | `--repl` flag, `repl` command | -1000 |
 | **color** | `--color[=always\|never\|auto\|<theme>]`/`--no-color` flag | -1001 |
 | **suggestions** | "Did you mean?" for unknown commands/options | -500 |
@@ -39,10 +39,10 @@ Additional opt-in extensions are available for advanced features:
 | Extension | Import | What it does |
 |-----------|--------|-------------|
 | `padroneEnv(schema)` | `'padrone'` | Parse environment variables into args (`vars`, or `prefix` for every option) |
-| `padroneConfig(options)` | `'padrone'` | Load args from config files (`xdg`, `searchParents`, `packageJson` options) |
-| `padroneProgress(config)` | `'padrone'` | Auto-managed progress indicators (no-op for serve, MCP and `tool()` calls) |
-| `padroneLogger(options)` | `'padrone'` | Structured logging with levels (`--verbose` repeatable; `shortFlags`, `env`, `stderr` options) |
-| `padroneJson()` | `'padrone'` | `--json` flag: results and errors as JSON |
+| `padroneConfig(options)` | `'padrone'` | Load args from config files (`xdg`, `searchParents`, `packageJson`, `merge`, `extends` options) |
+| `padroneProgress(config)` | `'padrone'` | Auto-managed progress indicators and `progress.tasks()` task lists (no-op for serve, MCP and `tool()` calls) |
+| `padroneLogger(options)` | `'padrone'` | Structured logging to stderr with levels (`--verbose` repeatable; `shortFlags`, `env`, `stdout`, `format: 'json'` options) |
+| `padroneJson(options?)` | `'padrone'` | `--json` flag: results and errors as JSON; `--jq` and `--template` filter and format the result |
 | `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`) before `mutation: true` commands |
 | `padroneTiming()` | `'padrone'` | Execution timing (`--time`) |
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking |
@@ -603,7 +603,7 @@ Understanding how built-in features are implemented helps illustrate the interce
 
 **Signal handling** (`padroneSignalHandling`, order: -2000) — The outermost interceptor. In the start phase, creates an `AbortController` and subscribes to OS signals via `runtime.onSignal()`; it also aborts when the caller's `signal` (`eval(input, { signal })`) does. Passes the signal to all downstream phases via `next({ signal })`. In the error phase, wraps errors with signal info. In shutdown, cleans up subscriptions. Implements double-tap SIGINT force-exit using closure state shared across phases.
 
-**Auto-output** (`padroneAutoOutput`, order: -1100) — In the execute phase, intercepts the action result and writes it to `runtime.output()`. Handles promises (awaits), iterators (consumes and outputs each value), and plain values. In the error phase of `cli()`, prints the message of any error that no inner extension printed (help prints routing and validation errors), whichever phase threw it. Extensions that print an error themselves call `markErrorReported(error)` so it isn't printed twice.
+**Auto-output** (`padroneAutoOutput`, order: -1100) — In the execute phase, intercepts the action result and writes it to `runtime.output()`. Handles promises (awaits), iterators (consumes and outputs each value), and plain values. In the error phase of `cli()`, prints the message of any error that no inner extension printed (help prints routing and validation errors), whichever phase threw it. Under JSON output (`--json`), it prints every error as `{ "error": { ... } }` on stdout instead. Extensions that print an error themselves call `markErrorReported(error)` so it isn't printed twice.
 
 **Help** (`padroneHelp`, order: -1000) — Adds a `help` command and registers an interceptor with parse, validate, execute, and error phases. The parse phase detects `--help` flags; the execute phase renders the help, so flags read later in parsing (`--no-color`, `--json`) apply. Under JSON output the help is returned as an object. The error phase formats routing/validation errors with help text in CLI mode.
 

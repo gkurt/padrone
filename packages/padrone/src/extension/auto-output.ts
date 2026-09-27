@@ -1,3 +1,4 @@
+import { ValidationError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { isAsyncIterator, isIterator } from '../core/results.ts';
 import type { OutputConfig } from '../output/output-indicator.ts';
@@ -12,7 +13,7 @@ import type {
   InterceptorExecuteResult,
 } from '../types/index.ts';
 import { safeJsonStringify } from '../util/json.ts';
-import { isErrorReported, markErrorReported } from './utils.ts';
+import { getJsonOutputFilter, isErrorReported, markErrorReported } from './utils.ts';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -72,6 +73,28 @@ function isDebugEnv(env: Record<string, string | undefined>): boolean {
   return !!debug && debug !== '0' && debug !== 'false';
 }
 
+/** The JSON shape of an error: `{ error: { name, message, command?, exitCode?, suggestions?, issues?, stack? } }`. */
+function toErrorJson(error: unknown, stack: boolean): { error: Record<string, unknown> } {
+  if (!(error instanceof Error)) return { error: { message: String(error) } };
+  const { exitCode, suggestions, command } = error as { exitCode?: number; suggestions?: string[]; command?: string };
+  return {
+    error: {
+      name: error.name,
+      message: error.message,
+      ...(command !== undefined && { command }),
+      ...(exitCode !== undefined && { exitCode }),
+      ...(suggestions?.length && { suggestions }),
+      ...(error instanceof ValidationError && {
+        issues: error.issues.map((issue) => ({
+          path: issue.path?.map((segment) => (typeof segment === 'symbol' ? String(segment) : segment)),
+          message: issue.message,
+        })),
+      }),
+      ...(stack && { stack: formatErrorStack(error) }),
+    },
+  };
+}
+
 /** The error's stack, followed by the stacks of its `cause` chain. */
 function formatErrorStack(error: unknown): string {
   const parts: string[] = [];
@@ -91,7 +114,9 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
       const handleResult = (er: InterceptorErrorResult): InterceptorErrorResult => {
         if (!er.error || errorOutput === false || ctx.caller !== 'cli' || isErrorReported(er.error)) return er;
         const showStack = errorStack ?? isDebugEnv(ctx.runtime.env());
-        ctx.runtime.error(showStack ? formatErrorStack(er.error) : er.error instanceof Error ? er.error.message : String(er.error));
+        // Under JSON output (e.g. `--json`), errors go to stdout as JSON, like results
+        if (ctx.runtime.format === 'json') ctx.runtime.output(safeJsonStringify(toErrorJson(er.error, showStack), 2));
+        else ctx.runtime.error(showStack ? formatErrorStack(er.error) : er.error instanceof Error ? er.error.message : String(er.error));
         markErrorReported(er.error);
         return er;
       };
@@ -122,6 +147,14 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
 
           // `format: 'json'` (e.g. from `--json`): values as JSON, iterator items one per line (NDJSON)
           if (ctx.runtime.format === 'json' && TERMINAL_CALLERS.has(ctx.caller)) {
+            // `--jq` / `--template` turn each value into lines of their own
+            const filter = getJsonOutputFilter(ctx.runtime);
+            if (filter) {
+              const writeLines = (v: unknown) => {
+                for (const line of filter(v)) ctx.runtime.output(line);
+              };
+              return outputAndCollect(value, writeLines);
+            }
             const write = (space?: number) => (v: unknown) => ctx.runtime.output(safeJsonStringify(v, space) ?? String(v));
             return outputAndCollect(value, write(2), write());
           }
@@ -167,6 +200,8 @@ export type PadroneAutoOutputOptions = {
   /**
    * Automatically print errors to stderr in CLI mode, whichever phase threw them.
    * Skips errors another extension already printed (routing and validation errors are printed by help).
+   * Under JSON output (`--json`, `format: 'json'`), every error is printed to stdout as
+   * `{ "error": { "name", "message", ... } }` (validation errors include their `issues`).
    * @default true
    */
   errorOutput?: boolean;

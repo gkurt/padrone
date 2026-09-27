@@ -70,3 +70,17 @@ describe('padroneInk extension', () => {
     expect(result.error).toBeUndefined();
   });
 });
+
+describe('padroneInk for serve, MCP and tool calls', () => {
+  test('returns the first frame as text instead of mounting the app', async () => {
+    function Greeting() {
+      return React.createElement(Text, null, 'Hello from Ink!');
+    }
+    const program = createPadrone('test-tui')
+      .extend(padroneInk())
+      .command('greet', (c) => c.action(() => React.createElement(Greeting)));
+
+    const result = await program.eval('greet', { caller: 'mcp', runtime: { output: () => {} } });
+    expect(result.result as unknown).toBe('Hello from Ink!');
+  });
+});

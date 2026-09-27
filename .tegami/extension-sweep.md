@@ -9,7 +9,7 @@ packages:
 - `padroneUpdateCheck()` shows its notice (it never did), including after sync commands. The check only runs in `cli()`, is skipped with `--no-update-check` or `NO_UPDATE_NOTIFIER`, and times out after 3 seconds. A release now counts as newer than its own pre-releases. New `updateCommand` option customizes the suggested command.
 - `padroneConfig()`: a missing `--config` file or an unparsable config file is a `ConfigError` instead of being ignored. JSON config files load outside Bun, with comments and trailing commas allowed.
 - `--no-color` and `--color=false` disable colors, and `--color` forces them; they only changed the theme before. `FORCE_COLOR` is honored.
-- `padroneLogger()` prints errors with their stack instead of `{}`, and no longer throws on bigints or circular objects. New `env` option reads the level from an environment variable, and `stderr: true` sends every level to stderr.
+- `padroneLogger()` prints errors with their stack instead of `{}`, and no longer throws on bigints or circular objects. New `env` option reads the level from an environment variable.
 - `padroneTracing()` works with `run()`, names spans by the full command path, and adds `padrone.command` and `padrone.caller` attributes.
 - A command's own `--repl` option is no longer taken over by the REPL flag, and `--repl` after positional values scopes to the command.
 - A stdin field given as a positional argument is no longer reported as ambiguous when stdin is piped.

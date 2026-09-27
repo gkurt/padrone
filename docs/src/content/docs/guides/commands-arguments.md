@@ -401,6 +401,8 @@ program.configure({
 
 `ctx` also has the `command`, the requested `format` and the `detail` level. The customization is used everywhere help is shown: `--help`, `help <command>`, `program.help()`, errors with `showHelpOnError`, and generated docs.
 
+`--version` works on every command that doesn't define a `version` option itself; single-character version flags (`-v`, `-V`) only on the root command, since subcommands often use `-v` for verbose. `my-cli version --verbose` also shows the runtime, platform, architecture and shell (an object under `--json`); `version: { info: () => ({ Channel: 'beta' }) }` adds fields.
+
 The help and version flags can be renamed, or removed by passing `[]` (the `help` and `version` commands remain):
 
 ```typescript

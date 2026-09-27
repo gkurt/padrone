@@ -166,6 +166,22 @@ describe('tracing', () => {
     expect(rootSpan._ended).toBe(true);
   });
 
+  it('should record errors thrown while parsing in a root span', () => {
+    const { provider, spans } = createMockProvider();
+    const { runtime } = createCapture();
+    const program = createPadrone('app')
+      .runtime(runtime)
+      .extend(padroneTracing({ provider }))
+      .command('test', (c) => c.action(() => 'ok'));
+
+    const result = program.eval('nope');
+    expect(result.error).toBeDefined();
+    expect(spans).toHaveLength(1);
+    expect(spans[0]!._name).toBe('cli app');
+    expect(spans[0]!._exception).toBe(result.error);
+    expect(spans[0]!._ended).toBe(true);
+  });
+
   it('should allow creating child spans via tracing.span()', () => {
     const { provider, spans } = createMockProvider();
     const { runtime } = createCapture();
@@ -329,8 +345,8 @@ describe('tracing', () => {
         );
 
       program.eval('test');
-      expect(output).toEqual(['[INFO] visible']);
-      expect(errors).toEqual(['[ERROR] also visible']);
+      expect(output).toEqual([]);
+      expect(errors).toEqual(['[INFO] visible', '[ERROR] also visible']);
     });
 
     it('should bridge child logger calls', () => {

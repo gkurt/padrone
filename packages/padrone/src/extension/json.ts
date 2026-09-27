@@ -1,100 +1,133 @@
 import { ValidationError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
-import { thenMaybe } from '../core/results.ts';
-import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, InterceptorParseResult } from '../types/index.ts';
+import type { OptionArity } from '../core/parse.ts';
+import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
+import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
+import { compileJq, compileTemplate, formatJqOutput } from '../util/jq.ts';
 import { safeJsonStringify } from '../util/json.ts';
-import { frameworkFlags, markErrorReported } from './utils.ts';
+import type { JsonOutputFilter } from './utils.ts';
+import { frameworkFlags, parseWithFallback, rawInputFlag, setJsonOutputFilter } from './utils.ts';
 
-// ── Helpers ─────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────
 
-/** The JSON shape of an error: `{ error: { name, message, exitCode?, suggestions?, issues? } }`. */
-function toErrorJson(error: unknown): { error: Record<string, unknown> } {
-  if (!(error instanceof Error)) return { error: { message: String(error) } };
-  const { exitCode, suggestions, command } = error as { exitCode?: number; suggestions?: string[]; command?: string };
-  return {
-    error: {
-      name: error.name,
-      message: error.message,
-      ...(command !== undefined && { command }),
-      ...(exitCode !== undefined && { exitCode }),
-      ...(suggestions?.length && { suggestions }),
-      ...(error instanceof ValidationError && {
-        issues: error.issues.map((issue) => ({
-          path: issue.path?.map((segment) => (typeof segment === 'symbol' ? String(segment) : segment)),
-          message: issue.message,
-        })),
-      }),
-    },
-  };
-}
+/** A full jq implementation to use for `--jq` instead of the built-in subset: every output for the input. Must be synchronous. */
+export type PadroneJqFunction = (input: unknown, expression: string) => unknown[];
+
+export type PadroneJsonOptions = {
+  /**
+   * Add `--jq <expression>` to filter the JSON result, like `gh --jq`: each output is printed on its own line,
+   * strings raw. The built-in engine supports a subset of jq (paths, `[]`, pipes, `select`, `map`, object
+   * construction, common builtins); pass a function to plug in a full implementation. Defaults to `true`.
+   */
+  jq?: boolean | PadroneJqFunction;
+  /**
+   * Add `--template <template>` to print the result through a template with `{{ jq expression }}` placeholders,
+   * e.g. `--template '{{.name}}: {{.status}}'`. Arrays and streamed items print one line per item. Defaults to `true`.
+   */
+  template?: boolean;
+};
 
 // ── Interceptor ─────────────────────────────────────────────────────────
 
-const jsonInterceptor = defineInterceptor({ id: 'padrone:json', name: 'padrone:json', order: -1101, options: { json: 'flag' } }, () => {
-  let enabled = false;
-  const read = (rawArgs: Record<string, unknown>, command: AnyPadroneCommand, runtime: { format?: string }) => {
-    const flags = frameworkFlags(rawArgs, command);
-    if (!flags.has('json')) return;
-    enabled = flags.get('json') !== false;
-    flags.delete('json');
-    if (enabled) runtime.format = 'json';
+/** Arrays print one line per item; each item through `render`. */
+const perItem =
+  (render: (value: unknown) => string): JsonOutputFilter =>
+  (value) =>
+    (Array.isArray(value) ? value : [value]).map(render);
+
+function createJsonInterceptor(options: PadroneJsonOptions) {
+  const jqEnabled = options.jq !== false;
+  const templateEnabled = options.template !== false;
+  const flagOptions: Record<string, OptionArity> = {
+    json: 'flag',
+    ...(jqEnabled && { jq: 'value' as const }),
+    ...(templateEnabled && { template: 'value' as const }),
   };
 
-  return {
-    // Registered on the program: read in parse, so routing errors are printed as JSON too
-    parse(ctx, next) {
-      // Parsing failed (e.g. an unknown command), so the flag is only in the raw input
-      const onError = (err: unknown): never => {
-        const { input } = ctx;
-        const isFlag = (token: string) => token === '--json' || token === '--json=true';
-        if (Array.isArray(input) ? input.some(isFlag) : /(^|\s)--json(=true)?(\s|$)/.test(input ?? '')) enabled = true;
-        throw err;
-      };
-      let parsed: InterceptorParseResult | Promise<InterceptorParseResult>;
-      try {
-        parsed = next();
-      } catch (err) {
-        return onError(err);
+  /** Compiled up front, so a bad expression fails before the command runs. */
+  const outputFilter = (jq: unknown, template: unknown): JsonOutputFilter | undefined => {
+    try {
+      if (typeof jq === 'string') {
+        if (typeof options.jq === 'function') {
+          const run = options.jq;
+          return (value) => run(JSON.parse(safeJsonStringify(value) ?? 'null'), jq).map((v) => formatJqOutput(v, 2));
+        }
+        const filter = compileJq(jq);
+        // The filter sees the value as JSON (bigints as strings, no functions)
+        return (value) => filter(JSON.parse(safeJsonStringify(value) ?? 'null')).map((v) => formatJqOutput(v, 2));
       }
-      const handle = (res: InterceptorParseResult) => {
-        read(res.rawArgs, res.command, ctx.runtime);
-        return res;
-      };
-      return parsed instanceof Promise ? parsed.then(handle, onError) : handle(parsed);
-    },
-    // Registered on a command: its parse handler doesn't run
-    validate(ctx, next) {
-      read(ctx.rawArgs, ctx.command, ctx.runtime);
-      return next();
-    },
-    error(ctx, next) {
-      if (!enabled || ctx.caller !== 'cli') return next();
-      // Keep help and auto-output from printing it as text
-      markErrorReported(ctx.error);
-      return thenMaybe(next(), (er) => {
-        if (er.error !== undefined) ctx.runtime.output(safeJsonStringify(toErrorJson(er.error), 2));
-        return er;
-      });
-    },
+      if (typeof template === 'string') {
+        const render = compileTemplate(template);
+        return perItem((value) => render(JSON.parse(safeJsonStringify(value) ?? 'null')));
+      }
+    } catch (err) {
+      const flag = typeof jq === 'string' ? 'jq' : 'template';
+      const message = err instanceof Error ? err.message : String(err);
+      throw new ValidationError(`Invalid --${flag}: ${message}`, [{ path: [flag], message }], { cause: err });
+    }
+    return undefined;
   };
-});
+
+  return defineInterceptor({ id: 'padrone:json', name: 'padrone:json', order: -1101, options: flagOptions }, () => {
+    const read = (rawArgs: Record<string, unknown>, command: AnyPadroneCommand, runtime: ResolvedPadroneRuntime) => {
+      const flags = frameworkFlags(rawArgs, command);
+      const jq = jqEnabled ? flags.get('jq') : undefined;
+      const template = templateEnabled ? flags.get('template') : undefined;
+      const json = flags.has('json') ? flags.get('json') !== false : undefined;
+      flags.delete(...Object.keys(flagOptions));
+
+      // JSON first, so an invalid expression is reported as JSON too
+      if (json || typeof jq === 'string' || typeof template === 'string') runtime.format = 'json';
+      const filter = outputFilter(jq, template);
+      if (filter) setJsonOutputFilter(runtime, filter);
+    };
+
+    return {
+      // Registered on the program: read in parse, so routing errors are printed as JSON too
+      parse(ctx, next) {
+        return parseWithFallback(
+          next,
+          (res) => {
+            read(res.rawArgs, res.command, ctx.runtime);
+            return res;
+          },
+          // Parsing failed (e.g. an unknown command), so the flag is only in the raw input
+          () => {
+            const json = rawInputFlag(ctx.input, 'json');
+            if (json === true || json === 'true') ctx.runtime.format = 'json';
+          },
+        );
+      },
+      // Registered on a command: its parse handler doesn't run
+      validate(ctx, next) {
+        read(ctx.rawArgs, ctx.command, ctx.runtime);
+        return next();
+      },
+    };
+  });
+}
 
 // ── Extension ────────────────────────────────────────────────────────────
 
 /**
- * Extension that adds a `--json` flag, like oclif's `enableJsonFlag` or `gh --json`:
+ * Extension that adds a `--json` flag, like oclif's `enableJsonFlag` or `gh --json`. It sets the output format to JSON:
  * - The command's result is printed as JSON (iterator items as one JSON value per line), and output
  *   primitives (`ctx.context.output.table()` etc.) render JSON.
  * - In `cli()`, errors are printed to stdout as `{ "error": { "name", "message", ... } }`
  *   (validation errors include their `issues`) instead of text.
+ * - `--jq <expression>` filters the result (like `gh --jq`), and `--template <template>` formats it
+ *   with `{{ expression }}` placeholders. Both imply `--json`.
  *
  * Apply to the program for every command, or inside `.command()` for one command.
  *
  * ```ts
  * createPadrone('my-cli').extend(padroneJson())
  * // my-cli users list --json
+ * // my-cli users list --jq '.[] | select(.admin) | .name'
+ * // my-cli users list --template '{{.id}}: {{.name}}'
  * ```
  */
-export function padroneJson(): <T extends CommandTypesBase>(builder: T) => T {
-  return ((builder: AnyPadroneBuilder) => builder.intercept(jsonInterceptor)) as any;
+export function padroneJson(options: PadroneJsonOptions = {}): <T extends CommandTypesBase>(builder: T) => T {
+  const interceptor = createJsonInterceptor(options);
+  return ((builder: AnyPadroneBuilder) => builder.intercept(interceptor)) as any;
 }

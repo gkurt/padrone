@@ -127,7 +127,7 @@ export const colorThemes: Record<ColorTheme, Required<ColorConfig>> = {
   monochrome: monochromeTheme,
 };
 
-function makeStyleFn(styles: AnsiStyle[]): (text: string) => string {
+export function makeStyleFn(styles: AnsiStyle[]): (text: string) => string {
   const prefix = styles.map((s) => ansiCodes[s]).join('');
   return (text: string) => `${prefix}${text}${ansiCodes.reset}`;
 }

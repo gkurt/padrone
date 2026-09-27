@@ -52,12 +52,12 @@ describe('logger', () => {
       );
 
     program.eval('test');
-    expect(output).toEqual(['[INFO] visible']);
-    expect(errors).toEqual(['[WARN] also visible', '[ERROR] error visible']);
+    expect(output).toEqual([]);
+    expect(errors).toEqual(['[INFO] visible', '[WARN] also visible', '[ERROR] error visible']);
   });
 
   it('should show debug messages when level is debug', () => {
-    const { output, runtime } = createCapture();
+    const { errors, runtime } = createCapture();
     const program = createPadrone('app')
       .runtime(runtime)
       .extend(padroneLogger({ level: 'debug' }))
@@ -69,7 +69,7 @@ describe('logger', () => {
       );
 
     program.eval('test');
-    expect(output).toEqual(['[DEBUG] debug msg', '[INFO] info msg']);
+    expect(errors).toEqual(['[DEBUG] debug msg', '[INFO] info msg']);
   });
 
   it('should suppress all messages when level is silent', () => {
@@ -110,7 +110,7 @@ describe('logger', () => {
   });
 
   it('should support prefix', () => {
-    const { output, runtime } = createCapture();
+    const { errors, runtime } = createCapture();
     const program = createPadrone('app')
       .runtime(runtime)
       .extend(padroneLogger({ level: 'info', prefix: '[my-app]' }))
@@ -121,11 +121,11 @@ describe('logger', () => {
       );
 
     program.eval('test');
-    expect(output).toEqual(['[INFO] [my-app] hello']);
+    expect(errors).toEqual(['[INFO] [my-app] hello']);
   });
 
   it('should support timestamps', () => {
-    const { output, runtime } = createCapture();
+    const { errors, runtime } = createCapture();
     const program = createPadrone('app')
       .runtime(runtime)
       .extend(padroneLogger({ level: 'info', timestamps: true }))
@@ -136,13 +136,13 @@ describe('logger', () => {
       );
 
     program.eval('test');
-    expect(output).toHaveLength(1);
+    expect(errors).toHaveLength(1);
     // Should contain an ISO timestamp
-    expect(output[0]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[INFO\] hello$/);
+    expect(errors[0]).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z \[INFO\] hello$/);
   });
 
   it('should support child loggers with labels', () => {
-    const { output, errors, runtime } = createCapture();
+    const { errors, runtime } = createCapture();
     const program = createPadrone('app')
       .runtime(runtime)
       .extend(padroneLogger({ level: 'debug' }))
@@ -157,12 +157,11 @@ describe('logger', () => {
       );
 
     program.eval('test');
-    expect(output).toEqual(['[DEBUG] [db] connecting', '[INFO] [db] connected']);
-    expect(errors).toEqual(['[WARN] [db] slow query', '[ERROR] [db] connection lost']);
+    expect(errors).toEqual(['[DEBUG] [db] connecting', '[INFO] [db] connected', '[WARN] [db] slow query', '[ERROR] [db] connection lost']);
   });
 
   it('should support nested child loggers', () => {
-    const { output, runtime } = createCapture();
+    const { errors, runtime } = createCapture();
     const program = createPadrone('app')
       .runtime(runtime)
       .extend(padroneLogger({ level: 'info' }))
@@ -175,11 +174,11 @@ describe('logger', () => {
       );
 
     program.eval('test');
-    expect(output).toEqual(['[INFO] [db] [pool] acquired connection']);
+    expect(errors).toEqual(['[INFO] [db] [pool] acquired connection']);
   });
 
   it('should serialize non-string arguments as JSON', () => {
-    const { output, runtime } = createCapture();
+    const { errors, runtime } = createCapture();
     const program = createPadrone('app')
       .runtime(runtime)
       .extend(padroneLogger({ level: 'info' }))
@@ -190,7 +189,7 @@ describe('logger', () => {
       );
 
     program.eval('test');
-    expect(output).toEqual(['[INFO] data: {"key":"value"}']);
+    expect(errors).toEqual(['[INFO] data: {"key":"value"}']);
   });
 
   it('should expose the current log level', () => {
@@ -227,7 +226,7 @@ describe('logger', () => {
   });
 
   it('should show trace messages when level is trace', () => {
-    const { output, runtime } = createCapture();
+    const { errors, runtime } = createCapture();
     const program = createPadrone('app')
       .runtime(runtime)
       .extend(padroneLogger({ level: 'trace' }))
@@ -240,11 +239,11 @@ describe('logger', () => {
       );
 
     program.eval('test');
-    expect(output).toEqual(['[TRACE] trace msg', '[DEBUG] debug msg', '[INFO] info msg']);
+    expect(errors).toEqual(['[TRACE] trace msg', '[DEBUG] debug msg', '[INFO] info msg']);
   });
 
   it('should hide trace messages at debug level', () => {
-    const { output, runtime } = createCapture();
+    const { errors, runtime } = createCapture();
     const program = createPadrone('app')
       .runtime(runtime)
       .extend(padroneLogger({ level: 'debug' }))
@@ -256,12 +255,12 @@ describe('logger', () => {
       );
 
     program.eval('test');
-    expect(output).toEqual(['[DEBUG] shown']);
+    expect(errors).toEqual(['[DEBUG] shown']);
   });
 
   describe('context-based config', () => {
     it('should read log level from context', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .context<{ loggerConfig: { level: 'debug' } }>()
@@ -274,11 +273,11 @@ describe('logger', () => {
         );
 
       program.eval('test', { context: { loggerConfig: { level: 'debug' } } });
-      expect(output).toEqual(['[DEBUG] debug msg', '[INFO] info msg']);
+      expect(errors).toEqual(['[DEBUG] debug msg', '[INFO] info msg']);
     });
 
     it('should let constructor config override context config', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .context<{ loggerConfig: { level: 'debug' } }>()
@@ -292,11 +291,11 @@ describe('logger', () => {
         );
 
       program.eval('test', { context: { loggerConfig: { level: 'debug' } } });
-      expect(output).toEqual([]);
+      expect(errors).toEqual(['[WARN] shown']);
     });
 
     it('should read timestamps from context', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .context<{ loggerConfig: { timestamps: boolean } }>()
@@ -308,8 +307,8 @@ describe('logger', () => {
         );
 
       program.eval('test', { context: { loggerConfig: { timestamps: true } } });
-      expect(output).toHaveLength(1);
-      expect(output[0]).toMatch(/^\d{4}-\d{2}-\d{2}T.*\[INFO\] hello$/);
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/^\d{4}-\d{2}-\d{2}T.*\[INFO\] hello$/);
     });
 
     it('should let CLI flags override context config', () => {
@@ -333,7 +332,7 @@ describe('logger', () => {
 
   describe('format specifiers', () => {
     it('should substitute %s with string value', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -344,11 +343,11 @@ describe('logger', () => {
         );
 
       program.eval('test');
-      expect(output).toEqual(['[INFO] hello world']);
+      expect(errors).toEqual(['[INFO] hello world']);
     });
 
     it('should substitute %d and %i with truncated integers', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -359,11 +358,11 @@ describe('logger', () => {
         );
 
       program.eval('test');
-      expect(output).toEqual(['[INFO] count: 3, index: 2']);
+      expect(errors).toEqual(['[INFO] count: 3, index: 2']);
     });
 
     it('should substitute %f with float value', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -374,11 +373,11 @@ describe('logger', () => {
         );
 
       program.eval('test');
-      expect(output).toEqual(['[INFO] value: 3.14']);
+      expect(errors).toEqual(['[INFO] value: 3.14']);
     });
 
     it('should substitute %j with JSON', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -389,11 +388,11 @@ describe('logger', () => {
         );
 
       program.eval('test');
-      expect(output).toEqual(['[INFO] data: {"a":1}']);
+      expect(errors).toEqual(['[INFO] data: {"a":1}']);
     });
 
     it('should substitute %o and %O with object representation', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -404,11 +403,11 @@ describe('logger', () => {
         );
 
       program.eval('test');
-      expect(output).toEqual(['[INFO] {"x":1} [2]']);
+      expect(errors).toEqual(['[INFO] {"x":1} [2]']);
     });
 
     it('should escape %% as literal percent', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -419,11 +418,11 @@ describe('logger', () => {
         );
 
       program.eval('test');
-      expect(output).toEqual(['[INFO] 100% complete']);
+      expect(errors).toEqual(['[INFO] 100% complete']);
     });
 
     it('should append extra args after specifiers are consumed', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -434,11 +433,11 @@ describe('logger', () => {
         );
 
       program.eval('test');
-      expect(output).toEqual(['[INFO] hello world extra 42']);
+      expect(errors).toEqual(['[INFO] hello world extra 42']);
     });
 
     it('should leave unconsumed specifiers as-is when args are exhausted', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -449,11 +448,11 @@ describe('logger', () => {
         );
 
       program.eval('test');
-      expect(output).toEqual(['[INFO] one and %s']);
+      expect(errors).toEqual(['[INFO] one and %s']);
     });
 
     it('should not interpret specifiers when first arg is not a string', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -464,11 +463,11 @@ describe('logger', () => {
         );
 
       program.eval('test');
-      expect(output).toEqual(['[INFO] 42 %s hello']);
+      expect(errors).toEqual(['[INFO] 42 %s hello']);
     });
 
     it('should work with multiple mixed specifiers', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -479,13 +478,13 @@ describe('logger', () => {
         );
 
       program.eval('test');
-      expect(output).toEqual(['[INFO] user alice has 3 items worth 29.99 total']);
+      expect(errors).toEqual(['[INFO] user alice has 3 items worth 29.99 total']);
     });
   });
 
   describe('CLI flag overrides', () => {
     it('should set trace level with --trace', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -497,11 +496,11 @@ describe('logger', () => {
         );
 
       program.eval('test --trace');
-      expect(output).toEqual(['[TRACE] trace msg', '[DEBUG] debug msg']);
+      expect(errors).toEqual(['[TRACE] trace msg', '[DEBUG] debug msg']);
     });
 
     it('should set debug level with --verbose', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -512,11 +511,11 @@ describe('logger', () => {
         );
 
       program.eval('test --verbose');
-      expect(output).toEqual(['[DEBUG] debug msg']);
+      expect(errors).toEqual(['[DEBUG] debug msg']);
     });
 
     it('should set debug level with --debug', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -527,7 +526,7 @@ describe('logger', () => {
         );
 
       program.eval('test --debug');
-      expect(output).toEqual(['[DEBUG] seen']);
+      expect(errors).toEqual(['[DEBUG] seen']);
     });
 
     it('should set silent level with --silent', () => {
@@ -583,7 +582,7 @@ describe('logger', () => {
     });
 
     it('should override config level with CLI flag', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger({ level: 'error' }))
@@ -594,7 +593,7 @@ describe('logger', () => {
         );
 
       program.eval('test --verbose');
-      expect(output).toEqual(['[DEBUG] seen via --verbose']);
+      expect(errors).toEqual(['[DEBUG] seen via --verbose']);
     });
 
     it('should reflect CLI-overridden level in logger.level', () => {
@@ -630,7 +629,7 @@ describe('logger', () => {
     });
 
     it('should ignore --no-verbose (negated flag)', () => {
-      const { output, runtime } = createCapture();
+      const { errors, runtime } = createCapture();
       const program = createPadrone('app')
         .runtime(runtime)
         .extend(padroneLogger())
@@ -642,7 +641,7 @@ describe('logger', () => {
         );
 
       program.eval('test --no-verbose');
-      expect(output).toEqual(['[INFO] shown']);
+      expect(errors).toEqual(['[INFO] shown']);
     });
   });
 });
@@ -666,25 +665,55 @@ describe('padroneLogger value formatting', () => {
   it('does not throw on bigints or circular objects', async () => {
     const value: Record<string, unknown> = { n: 1n };
     value.self = value;
-    const { output } = await run((logger) => logger.info(value));
-    expect(output).toEqual(['[INFO] {"n":"1","self":"[Circular]"}']);
+    const { errors } = await run((logger) => logger.info(value));
+    expect(errors).toEqual(['[INFO] {"n":"1","self":"[Circular]"}']);
   });
 
   it('keeps repeated references that are not circular', async () => {
     const shared = { a: 1 };
-    const { output } = await run((logger) => logger.info({ x: shared, y: shared }));
-    expect(output).toEqual(['[INFO] {"x":{"a":1},"y":{"a":1}}']);
+    const { errors } = await run((logger) => logger.info({ x: shared, y: shared }));
+    expect(errors).toEqual(['[INFO] {"x":{"a":1},"y":{"a":1}}']);
   });
 
   it('reads the level from the env variable', async () => {
-    const { output } = await run((logger) => logger.debug('hidden?'), { env: 'TEST_LOG_LEVEL' }, { TEST_LOG_LEVEL: 'DEBUG' });
-    expect(output).toEqual(['[DEBUG] hidden?']);
+    const { errors } = await run((logger) => logger.debug('hidden?'), { env: 'TEST_LOG_LEVEL' }, { TEST_LOG_LEVEL: 'DEBUG' });
+    expect(errors).toEqual(['[DEBUG] hidden?']);
   });
 
-  it('writes every level to stderr with stderr: true', async () => {
-    const { output, errors } = await run((logger) => logger.info('to stderr'), { stderr: true });
-    expect(output).toEqual([]);
-    expect(errors).toEqual(['[INFO] to stderr']);
+  it('writes trace, debug and info to stdout with stdout: true', async () => {
+    const { output, errors } = await run(
+      (logger) => {
+        logger.info('to stdout');
+        logger.warn('to stderr');
+      },
+      { stdout: true },
+    );
+    expect(output).toEqual(['[INFO] to stdout']);
+    expect(errors).toEqual(['[WARN] to stderr']);
+  });
+
+  it('writes JSON lines with format: json', async () => {
+    const { errors } = await run(
+      (logger) => {
+        logger.child('db').info({ userId: 7 }, 'signed in as %s', 'ann');
+        logger.error(new Error('boom'));
+      },
+      { format: 'json', prefix: 'app' },
+    );
+    const [info, error] = errors.map((line) => JSON.parse(line));
+    expect(info).toEqual({ time: expect.any(String), level: 'info', prefix: 'app', name: 'db', msg: 'signed in as ann', userId: 7 });
+    expect(error).toMatchObject({ level: 'error', msg: 'boom', err: { name: 'Error', message: 'boom' } });
+    expect(error.err.stack).toContain('boom');
+  });
+
+  it('colors level labels on color terminals', async () => {
+    const errors: string[] = [];
+    const program = createPadrone('test')
+      .extend(padroneLogger())
+      .command('x', (c) => c.action((_args, ctx) => ctx.context.logger.warn('careful')));
+    program.eval('x', { runtime: { format: 'ansi', error: (t) => errors.push(t), output: () => {} } });
+    program.eval('x --no-color', { runtime: { format: 'ansi', error: (t) => errors.push(t), output: () => {} } });
+    expect(errors).toEqual(['\x1b[33m[WARN]\x1b[0m careful', '[WARN] careful']);
   });
 });
 
@@ -720,7 +749,7 @@ describe('padroneLogger verbosity stacking', () => {
 
 describe('padroneLogger registered on a command', () => {
   it('reads the log-level flags', () => {
-    const { output, runtime } = createCapture();
+    const { errors, runtime } = createCapture();
     const program = createPadrone('app')
       .runtime(runtime)
       .command('sync', (c) =>
@@ -731,7 +760,7 @@ describe('padroneLogger registered on a command', () => {
 
     const result = program.eval('sync --verbose');
     expect(result.argsResult?.issues).toBeUndefined();
-    expect(output).toEqual(['[DEBUG] debug msg']);
+    expect(errors).toEqual(['[DEBUG] debug msg']);
   });
 });
 

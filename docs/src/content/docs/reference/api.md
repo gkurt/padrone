@@ -256,6 +256,10 @@ program.extend(padroneConfig({ files: ['app.config.json', '.apprc'] }));
 // Look in parent directories too, and in the "myapp" key of package.json
 program.extend(padroneConfig({ files: ['.myapprc.json'], searchParents: true, packageJson: 'myapp' }));
 
+// Layered: ~/.config/myapp/config.json < project root config < cwd config (objects merge, arrays are replaced)
+program.extend(padroneConfig({ files: ['config.json'], xdg: true, searchParents: true, merge: true }));
+// A config file can build on others: { "extends": ["./base.json", "@company/cli-config"], "port": 8080 }
+
 // Disable config loading
 program.extend(padroneConfig({ files: 'app.config.json', disabled: true }));
 ```
@@ -271,7 +275,9 @@ program.extend(padroneConfig({ files: 'app.config.json', disabled: true }));
 | `xdg` | `boolean \| string` | Also search the user config directory (`~/.config/<app>`, `~/Library/Application Support/<app>`, `%APPDATA%\<app>`) after cwd. `true` uses the program name |
 | `searchParents` | `boolean` | Also search the parent directories of cwd, nearest first, like cosmiconfig (default: `false`) |
 | `packageJson` | `boolean \| string` | Read config from a `package.json` key in each searched directory, after its config files. `true` uses the program name (default: `false`) |
-| `loadConfig` | `(files: string \| string[], xdgAppName?: string, search?: { parents?, packageJsonKey? }) => Record<string, unknown> \| undefined \| Promise<...>` | Custom config loader function. Replaces the built-in JSON/YAML/TOML loader |
+| `merge` | `boolean` | Merge every config found instead of using the first: the user config directory, then the searched directories from the farthest to cwd, each overriding the last. Objects merge key by key, arrays are replaced. A `--config` file is still used alone (default: `false`) |
+| `extends` | `boolean` | Follow `extends` keys (a path relative to the file, a package name, or a list) to load base configs first (default: `true`) |
+| `loadConfig` | `(files: string \| string[], xdgAppName?: string, search?: { parents?, packageJsonKey?, merge?, extends? }) => Record<string, unknown> \| undefined \| Promise<...>` | Custom config loader function. Replaces the built-in JSON/YAML/TOML loader |
 
 Config values have the lowest precedence: CLI > stdin > env > config. Not included by default — must be explicitly applied via `.extend(padroneConfig(...))`. Can be applied at the program level (inherited by all commands) or at the command level.
 
@@ -484,10 +490,11 @@ Extension that adds an auto-managed progress indicator to the command (`import {
 | `time` | `boolean` | Show elapsed time (`⏱ M:SS`). Can also be toggled via `update({ time: true/false })` |
 | `eta` | `boolean` | Show estimated time remaining (`ETA M:SS`). Requires numeric `update()` calls |
 | `renderer` | `PadroneProgressRenderer` | Custom renderer factory (defaults to built-in terminal renderer) |
+| `taskRenderer` | `PadroneTaskListRenderer` | Renderer for `progress.tasks()` lists (defaults to `createTerminalTaskList`) |
 
 `PadroneProgressMessages` fields: `validation` (string), `progress` (string), `success` (string/null/callback), `error` (string/null/callback). Callbacks can return a string, `null` (suppress), or `{ message, indicator }` for per-call icon customization. Messages can also be provided from context via `progressConfig.message` — command-level fields take precedence.
 
-The indicator is available in actions as `ctx.context.progress`.
+The indicator is available in actions as `ctx.context.progress`. `ctx.context.progress.tasks(tasks, options?)` runs a list of tasks drawn as a live list, like listr2: each task is `{ title, task: (t) => ..., skip? }`, where `t` has `update(message)`, `setTitle(title)`, `skip(reason?)`, `tasks(subtasks)` and `signal`. Options: `concurrent` (`true` or a limit) and `exitOnError` (default `true`). Serve, MCP and `tool()` calls get a no-op indicator, and their tasks run without drawing.
 
 ---
 
@@ -1250,10 +1257,10 @@ These extensions are available as named exports from `'padrone'`:
 | Export | Purpose |
 |--------|---------|
 | `padroneEnv(schema?, options?)` | Parse environment variables into args (`vars` maps args to variables, `prefix` reads every option from `PREFIX_*`; both shown in help) |
-| `padroneConfig(options)` | Load args from config files |
-| `padroneProgress(config)` | Auto-managed progress indicators |
-| `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable, `stderr: true` keeps stdout for results; under `--json` every level goes to stderr) |
-| `padroneJson()` | `--json` flag: prints the result as JSON (iterator items one per line) and, in `cli()`, errors as `{ "error": { ... } }` on stdout |
+| `padroneConfig(options)` | Load args from config files (layered with `merge` and `extends`) |
+| `padroneProgress(config)` | Auto-managed progress indicators, and task lists with `progress.tasks()` |
+| `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable). Logs go to stderr with colored level labels; `stdout: true` sends `trace`/`debug`/`info` to stdout, and `format: 'json'` writes JSON lines (`logger.info({ userId }, 'signed in')` adds fields) |
+| `padroneJson(options?)` | `--json` flag: prints the result as JSON (iterator items one per line). `--jq <expr>` filters it (a built-in jq subset, or pass `jq: (input, expr) => outputs` for a full implementation) and `--template '{{.name}}'` formats it; both imply `--json`. Errors in `cli()` print as `{ "error": { ... } }` on stdout under JSON output |
 | `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and without a terminal the command fails unless `--yes` is given. Options: `message`, `when`, `flags` |
 | `padroneTiming()` | Execution timing |
 | `padroneUpdateCheck(config)` | Background version checking |
@@ -1262,7 +1269,7 @@ The following extensions live in their own subpath imports to keep optional depe
 
 | Export | Import from | Purpose |
 |--------|-------------|---------|
-| `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support |
+| `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support; serve, MCP and `tool()` calls get the first frame as text |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
 | `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing. Pass `api: { context, trace }` from `@opentelemetry/api` to parent child spans to the command's span |
@@ -1274,7 +1281,7 @@ The following extensions are applied automatically by `createPadrone()` and can 
 | Export | Builtin key | Purpose |
 |--------|-------------|---------|
 | `padroneHelp(options?)` | `help` | Help command and `--help` flag. Options: `showHelpOnError` prints the full help after errors; `flags` renames the help flags (default `['help', 'h']`) |
-| `padroneVersion(options?)` | `version` | Version command and `--version` flag. `flags` renames the version flags (default `['version', 'v', 'V']`) |
+| `padroneVersion(options?)` | `version` | Version command and `--version` flag (on any command; single-character flags on the root only). `version --verbose` adds the runtime, platform, architecture and shell (an object under `--json`). Options: `flags` renames the version flags (default `['version', 'v', 'V']`); `info` adds fields to `--verbose` |
 | `padroneRepl()` | `repl` | REPL command and `--repl` flag |
 | `padroneColor()` | `color` | `--color`/`--no-color` support |
 | `padroneSuggestions()` | `suggestions` | "Did you mean?" suggestions |

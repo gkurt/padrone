@@ -10,6 +10,8 @@ import type {
 import type { WithInterceptor } from '../util/type-utils.ts';
 import type { PadroneProgressRenderer } from './progress-renderer.ts';
 import { createTerminalProgress } from './progress-renderer.ts';
+import type { PadroneTaskListRenderer, PadroneTaskState, PadroneTasksFn } from './progress-tasks.ts';
+import { createTerminalTaskList, noopTaskRenderer, runTaskList } from './progress-tasks.ts';
 import { isRemoteCaller } from './utils.ts';
 
 // ---------------------------------------------------------------------------
@@ -50,6 +52,8 @@ export type PadroneProgressConfig<TRes = unknown> = {
    * Defaults to the built-in terminal renderer (`createTerminalProgress`).
    */
   renderer?: PadroneProgressRenderer;
+  /** Renderer for task lists run with `progress.tasks()`. Defaults to the built-in terminal renderer (`createTerminalTaskList`). */
+  taskRenderer?: PadroneTaskListRenderer;
   /** Suppress all progress output. The `progress` interface is still provided on the context as a no-op. */
   silent?: boolean;
 };
@@ -61,10 +65,26 @@ export type PadroneProgressConfig<TRes = unknown> = {
  *
  * Provide via context as `{ progressConfig: PadroneProgressDefaults }`.
  */
-export type PadroneProgressDefaults = Pick<PadroneProgressConfig, 'message' | 'spinner' | 'bar' | 'time' | 'eta' | 'renderer' | 'silent'>;
+export type PadroneProgressDefaults = Pick<
+  PadroneProgressConfig,
+  'message' | 'spinner' | 'bar' | 'time' | 'eta' | 'renderer' | 'taskRenderer' | 'silent'
+>;
+
+/**
+ * The progress handle on the command context: the indicator, plus `tasks()` to run a list of tasks, like listr2:
+ *
+ * ```ts
+ * await ctx.context.progress.tasks([
+ *   { title: 'Install', task: () => install() },
+ *   { title: 'Build', task: (t) => t.tasks([{ title: 'Types', task: tsc }, { title: 'Bundle', task: bundle }], { concurrent: true }) },
+ *   { title: 'Deploy', skip: () => !process.env.TOKEN && 'no token', task: deploy },
+ * ]);
+ * ```
+ */
+export type PadroneProgressContext = PadroneProgress & { tasks: PadroneTasksFn };
 
 /** Builder/program type after applying `padroneProgress()`. Adds `{ progress: PadroneProgress }` to the command context. */
-export type WithProgress<T> = WithInterceptor<T, { progress: PadroneProgress }>;
+export type WithProgress<T> = WithInterceptor<T, { progress: PadroneProgressContext }>;
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -157,6 +177,7 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
       // Serve, MCP and tool calls have no terminal to draw on
       silent: isRemoteCaller(caller) || ((isObj ? config.silent : undefined) ?? ctxCfg?.silent ?? false),
       renderer: (isObj ? config.renderer : undefined) ?? ctxCfg?.renderer ?? createTerminalProgress,
+      taskRenderer: (isObj ? config.taskRenderer : undefined) ?? ctxCfg?.taskRenderer ?? createTerminalTaskList,
       options,
       msgs: mergeMessages(resolveMessages(rawMessage), resolveMessages(ctxCfg?.message), rawMessage),
     };
@@ -168,6 +189,26 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
       let settings: ReturnType<typeof resolveSettings> | undefined;
       let indicator: PadroneProgress | undefined;
       let restoreOutput: (() => void) | undefined;
+      let activeTaskList: ReturnType<PadroneTaskListRenderer> | undefined;
+
+      /** `progress.tasks()`: hides the indicator while the list is drawn. */
+      const tasksFor =
+        (signal: AbortSignal): PadroneTasksFn =>
+        async (tasks, options) => {
+          const { silent, taskRenderer } = settings!;
+          const states: PadroneTaskState[] = [];
+          const list = silent ? noopTaskRenderer(states) : taskRenderer(states);
+          const outer = activeTaskList;
+          (outer ?? indicator)?.pause();
+          activeTaskList = list;
+          try {
+            await runTaskList(tasks, options ?? {}, states as never, () => list.update(), signal);
+          } finally {
+            list.done();
+            activeTaskList = outer;
+            (outer ?? indicator)?.resume();
+          }
+        };
 
       const resolve = (ctx: { context?: unknown; caller: string }) => (settings ??= resolveSettings(ctx.context, ctx.caller));
 
@@ -181,15 +222,19 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
         const { runtime } = ctx;
         const originalOutput = runtime.output;
         const originalError = runtime.error;
+        // While a task list is drawn, output pauses the list instead of the (already hidden) indicator
+        const drawn = () => activeTaskList ?? active;
         runtime.output = (...args: unknown[]) => {
-          active.pause();
+          const current = drawn();
+          current.pause();
           originalOutput(...args);
-          active.resume();
+          current.resume();
         };
         runtime.error = (text: string) => {
-          active.pause();
+          const current = drawn();
+          current.pause();
           originalError(text);
-          active.resume();
+          current.resume();
         };
         restoreOutput = () => {
           runtime.output = originalOutput;
@@ -237,7 +282,7 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
 
         execute(ctx, next) {
           const { silent, msgs } = resolve(ctx);
-          if (silent) return next({ context: { progress: noopIndicator } });
+          if (silent) return next({ context: { progress: { ...noopIndicator, tasks: tasksFor(ctx.signal) } } });
 
           // `run()` skips validation, so the indicator may not exist yet
           if (indicator) {
@@ -264,7 +309,7 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
 
           let result: InterceptorExecuteResult | Promise<InterceptorExecuteResult>;
           try {
-            result = next({ context: { progress: indicator ?? noopIndicator } });
+            result = next({ context: { progress: { ...(indicator ?? noopIndicator), tasks: tasksFor(ctx.signal) } } });
           } catch (err) {
             return onError(err);
           }
@@ -278,7 +323,7 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
         },
       };
     })
-    .provides<{ progress: PadroneProgress }>();
+    .provides<{ progress: PadroneProgressContext }>();
 }
 
 // ---------------------------------------------------------------------------
@@ -294,8 +339,9 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
  * The indicator is automatically started before validation (or before the action for `run()`),
  * updated at each phase transition, and stopped on success (`.succeed()`) or failure (`.fail()`).
  *
- * Provides `{ progress: PadroneProgress }` on the command context.
- * Access it in action handlers as `ctx.context.progress`.
+ * Provides `{ progress: PadroneProgressContext }` on the command context.
+ * Access it in action handlers as `ctx.context.progress`; `progress.tasks([...])` runs a list of tasks
+ * (sequential or concurrent, with subtasks and skips), drawn as a live list like listr2.
  *
  * Uses the built-in terminal renderer by default. Pass a custom `renderer` for non-terminal
  * environments (web UIs, testing, etc). Serve, MCP and `tool()` calls get a no-op indicator.

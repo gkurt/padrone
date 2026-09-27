@@ -416,6 +416,43 @@ program.eval('cmd');
 // indicators[0].calls → ['succeed:undefined']
 ```
 
+## Task Lists
+
+For work in several steps, `ctx.context.progress.tasks()` runs a list of tasks and draws it live, like [listr2](https://listr2.kilic.dev/): a spinner on the running task, `✔` for done, `✖` for failed and `↓` for skipped ones. Without a TTY, each task is printed once it finishes.
+
+```typescript
+c.extend(padroneProgress('Releasing...')).action(async (_args, ctx) => {
+  await ctx.context.progress.tasks([
+    { title: 'Install dependencies', task: () => install() },
+    {
+      title: 'Build',
+      // Subtasks are drawn nested under their task
+      task: (task) =>
+        task.tasks(
+          [
+            { title: 'Typecheck', task: () => typecheck() },
+            { title: 'Bundle', task: (t) => bundle((file) => t.update(file)) },
+          ],
+          { concurrent: true },
+        ),
+    },
+    { title: 'Publish', skip: () => !process.env.NPM_TOKEN && 'no NPM_TOKEN', task: () => publish() },
+  ]);
+});
+```
+
+Each task is `{ title, task, skip? }`. `skip` is `true`, a reason string, or a function returning one. The task function receives:
+
+| Member | Description |
+|--------|-------------|
+| `update(message)` | Show a status line under the running task |
+| `setTitle(title)` | Change the task's title |
+| `skip(reason?)` | Stop the task and mark it skipped |
+| `tasks(subtasks, options?)` | Run subtasks nested under this task |
+| `signal` | Aborted when the command is cancelled |
+
+Options: `concurrent` runs tasks at the same time (`true` for all, or a number as a limit), and `exitOnError` (default `true`) stops starting tasks after a failure; with `false` every task runs. Either way `tasks()` rejects with the first error. The progress indicator is hidden while the list is drawn, and output written through the runtime pauses the list. Pass `taskRenderer` (a `PadroneTaskListRenderer`) to draw lists yourself; it receives the live task states and is told when they change.
+
 ## Output Coordination
 
 When auto-progress is active, `runtime.output` and `runtime.error` are automatically wrapped to pause/resume the indicator. This prevents garbled output when writing to the terminal while a spinner or bar is animating.
@@ -427,7 +464,7 @@ Manual calls to `ctx.context.progress.pause()` and `ctx.context.progress.resume(
 `padroneProgress()` is an extension that registers a context-providing interceptor. It:
 
 1. **Registers an interceptor** that wraps the validate and execute phases with progress indicator management
-2. **Provides typed context** via `.provides<{ progress: PadroneProgress }>()` so `ctx.context.progress` is fully typed
+2. **Provides typed context** via `.provides<{ progress: PadroneProgressContext }>()` so `ctx.context.progress` (the indicator plus `tasks()`) is fully typed
 3. **Creates the indicator** using the configured renderer (defaults to the built-in terminal renderer)
 4. **Uses a shutdown handler** as a safety net — if the indicator is not cleaned up by validate/execute (e.g., an outer interceptor threw), the command-level shutdown phase stops it
 

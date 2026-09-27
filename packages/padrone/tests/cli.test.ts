@@ -1661,6 +1661,41 @@ describe('CLI', () => {
       expect(result.result as unknown as string).toBe('3.0.0');
     });
 
+    it('should show version with --version on a subcommand, but keep -v for the root', () => {
+      const program = createPadrone('test-cli')
+        .configure({ version: '5.0.0' })
+        .command('greet', (c) => c.action(() => 'hello'))
+        .command('build', (c) =>
+          c.arguments(z.object({ version: z.string().optional() })).action((args) => `build ${args.version ?? '-'}`),
+        );
+
+      expect(program.eval('greet --version').result as unknown as string).toBe('5.0.0');
+      expect(program.eval('greet -v').argsResult?.issues?.[0]?.message).toBe('Unknown option: "v"');
+      // A command's own --version option wins
+      expect(program.eval('build --version 2').result as unknown as string).toBe('build 2');
+    });
+
+    it('should show runtime, platform and shell with version --verbose', async () => {
+      const program = createPadrone('test-cli', { builtins: { version: { info: () => ({ Channel: 'beta', Skipped: undefined }) } } })
+        .configure({ version: '6.0.0' })
+        .command('greet', (c) => c.action(() => 'hello'));
+      const runtime = { env: () => ({ SHELL: '/bin/zsh' }), output: () => {} };
+
+      const text = (await program.eval('version --verbose', { runtime })).result as unknown as string;
+      const lines = text.split('\n');
+      expect(lines[0]).toBe('test-cli 6.0.0');
+      expect(text).toMatch(new RegExp(`^Platform: +${process.platform}$`, 'm'));
+      expect(text).toMatch(/^Shell: +zsh$/m);
+      expect(text).toMatch(/^Channel: +beta$/m);
+      expect(text).not.toContain('Skipped');
+      expect(text).toMatch(/Runtime: +(Bun|Node\.js) /);
+
+      expect((await program.eval('--version --verbose', { runtime })).result as unknown).toBe(text);
+
+      const json = (await program.eval('version --verbose', { runtime: { ...runtime, format: 'json' } })).result;
+      expect(json).toMatchObject({ name: 'test-cli', version: '6.0.0', arch: process.arch, shell: 'zsh', Channel: 'beta' });
+    });
+
     it('should show version with version command', () => {
       const program = createPadrone('test-cli')
         .configure({ version: '4.0.0' })
@@ -2352,5 +2387,77 @@ describe('padroneConfig search', () => {
     fs.writeFileSync(path.join(sub, 'package.json'), JSON.stringify({ name: 'app', custom: { port: 3 } }));
     expect((await inDir(sub, () => programWith({ packageJson: 'custom' }).eval(''))).result).toBe(3);
     fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe('padroneConfig layering', () => {
+  const inDir = async (dir: string, fn: () => unknown): Promise<{ result?: unknown; error?: unknown }> => {
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      return (await fn()) as { result?: unknown; error?: unknown };
+    } finally {
+      process.chdir(cwd);
+    }
+  };
+  const schema = z.object({
+    port: z.number().optional(),
+    host: z.string().optional(),
+    db: z.object({ user: z.string(), pool: z.number() }).partial().optional(),
+  });
+  const programWith = (options: Parameters<typeof padroneConfig>[0]) =>
+    createPadrone('my-cli')
+      .extend(padroneConfig(options))
+      .arguments(schema)
+      .action((args) => args);
+
+  it('merges every config found with merge: true, nearest winning', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'padrone-merge-')));
+    const sub = path.join(root, 'app');
+    const xdg = path.join(root, 'xdg');
+    fs.mkdirSync(sub);
+    fs.mkdirSync(path.join(xdg, 'my-cli'), { recursive: true });
+    fs.writeFileSync(path.join(xdg, 'my-cli', 'config.json'), JSON.stringify({ host: 'user', port: 1, db: { user: 'me' } }));
+    fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ port: 2, db: { pool: 5 } }));
+    fs.writeFileSync(path.join(sub, 'config.json'), JSON.stringify({ port: 3 }));
+    const origXdg = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = xdg;
+    try {
+      const options = { files: ['config.json'], searchParents: true, xdg: true };
+      expect((await inDir(sub, () => programWith({ ...options, merge: true }).eval(''))).result).toEqual({
+        host: 'user',
+        port: 3,
+        db: { user: 'me', pool: 5 },
+      });
+      expect((await inDir(sub, () => programWith(options).eval(''))).result).toEqual({ port: 3 });
+    } finally {
+      process.env.XDG_CONFIG_HOME = origXdg;
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('follows extends, relative to the extending file', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'padrone-extends-')));
+    fs.mkdirSync(path.join(root, 'shared'));
+    fs.writeFileSync(path.join(root, 'shared', 'base.json'), JSON.stringify({ host: 'base', port: 1, db: { user: 'base', pool: 1 } }));
+    fs.writeFileSync(path.join(root, 'shared', 'team.json'), JSON.stringify({ extends: './base.json', db: { pool: 2 } }));
+    fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ extends: ['./shared/team.json'], port: 3 }));
+    try {
+      expect((await inDir(root, () => programWith({ files: ['config.json'] }).eval(''))).result).toEqual({
+        host: 'base',
+        port: 3,
+        db: { user: 'base', pool: 2 },
+      });
+
+      fs.writeFileSync(path.join(root, 'shared', 'base.json'), JSON.stringify({ extends: '../config.json' }));
+      const { error } = await inDir(root, () => programWith({ files: ['config.json'] }).eval(''));
+      expect((error as Error).message).toStartWith('Circular config extends:');
+
+      fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ extends: './missing.json' }));
+      const missing = await inDir(root, () => programWith({ files: ['config.json'] }).eval(''));
+      expect((missing.error as Error).message).toStartWith('Config file not found: ./missing.json (extended by');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

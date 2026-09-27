@@ -291,9 +291,12 @@ Options:
       --all               Show all global commands and options
 
 ────────────────────────────────────────────────────────────
-Usage: padrone-test version
+Usage: padrone-test version [options]
 
 Display the version number
+
+Options:
+  --verbose  Also show the runtime, platform and shell
 
 ────────────────────────────────────────────────────────────
 Usage: padrone-test repl [scope]
@@ -567,9 +570,19 @@ exports[`help with full detail mode should generate full help with all nested co
         "command": "padrone-test version",
         "hasSubcommands": false,
         "hasPositionals": false,
-        "hasArguments": false,
+        "hasArguments": true,
         "helpFlag": "--help"
-      }
+      },
+      "arguments": [
+        {
+          "name": "verbose",
+          "description": "Also show the runtime, platform and shell",
+          "optional": true,
+          "type": "boolean",
+          "variadic": false,
+          "negatable": true
+        }
+      ]
     },
     {
       "name": "repl",
@@ -1167,11 +1180,17 @@ Display help for a command
 
 *────────────────────────────────────────────────────────────*
 
-**Usage:** **padrone-test version**
+**Usage:** **padrone-test version** *[options]*
 
 
 
 Display the version number
+
+
+
+### Options:
+
+  \`--verbose\`  Also show the runtime, platform and shell
 
 
 

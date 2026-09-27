@@ -183,3 +183,21 @@ describe('color flags', () => {
     expect(run('--color', 'json')).toBe('json -');
   });
 });
+
+describe('color flags when parsing fails', () => {
+  it('prints the error without colors under --no-color', () => {
+    const errors: string[] = [];
+    const program = createPadrone('app', { builtins: { help: { showHelpOnError: true } } }).command('greet', (c) => c.action(() => 'hi'));
+    program.cli({
+      runtime: {
+        format: 'ansi',
+        argv: () => ['nope', '--no-color'],
+        output: () => {},
+        error: (t) => errors.push(t),
+        setExitCode: () => {},
+      },
+    });
+    expect(errors.join('\n')).toContain('Unknown command: nope');
+    expect(errors.join('\n')).not.toContain('\x1b[');
+  });
+});

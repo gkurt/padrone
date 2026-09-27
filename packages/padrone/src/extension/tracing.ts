@@ -99,8 +99,9 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
     const getTracer = (command: AnyPadroneCommand) =>
       (tracer ??= config.provider.getTracer(config.serviceName ?? getRootCommand(command).name));
 
-    // Started once the command is known: in the route phase, or right before the action for `run()`
-    const startRootSpan = (ctx: InterceptorRouteContext) => {
+    // Started once the command is known: in the route phase, right before the action for `run()`,
+    // or in the error phase when parsing failed (named after the root command)
+    const startRootSpan = (ctx: Pick<InterceptorRouteContext, 'command' | 'caller'>) => {
       if (rootSpan) return rootSpan;
       rootSpan = getTracer(ctx.command).startSpan(`cli ${ctx.command.path || ctx.command.name}`);
       rootSpan.setAttribute('padrone.command', ctx.command.path || ctx.command.name);
@@ -182,8 +183,9 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
       },
 
       error(ctx, next) {
-        rootSpan?.recordException(ctx.error);
-        rootSpan?.setStatus({ code: OTEL_ERROR });
+        const span = startRootSpan(ctx);
+        span.recordException(ctx.error);
+        span.setStatus({ code: OTEL_ERROR });
         return next();
       },
 

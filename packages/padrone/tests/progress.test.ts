@@ -3,9 +3,12 @@ import {
   createPadrone,
   createTerminalProgress,
   type PadroneProgress,
+  type PadroneProgressContext,
   type PadroneProgressDefaults,
   type PadroneProgressRenderer,
   type PadroneProgressUpdate,
+  type PadroneTaskListRenderer,
+  type PadroneTaskState,
   padroneProgress,
 } from 'padrone';
 import * as z from 'zod/v4';
@@ -1021,5 +1024,147 @@ describe('progress for serve, MCP and tool calls', () => {
     const result = await program.eval('deploy', { caller: 'serve', runtime: { output: () => {} } });
     expect(result.result).toBe('deployed');
     expect(indicators).toEqual([]);
+  });
+});
+
+describe('progress.tasks()', () => {
+  type Snapshot = { title: string; status: string; message?: string; subtasks: Snapshot[] };
+  const snapshot = (states: readonly PadroneTaskState[]): Snapshot[] =>
+    states.map((s) => ({ title: s.title, status: s.status, ...(s.message && { message: s.message }), subtasks: snapshot(s.subtasks) }));
+  const recordingRenderer = () => {
+    const events: string[] = [];
+    let final: Snapshot[] = [];
+    const renderer: PadroneTaskListRenderer = (states) => ({
+      update: () => {
+        final = snapshot(states);
+      },
+      pause: () => events.push('pause'),
+      resume: () => events.push('resume'),
+      done: () => {
+        final = snapshot(states);
+        events.push('done');
+      },
+    });
+    return { renderer, events, final: () => final };
+  };
+  const programWith = (taskRenderer: PadroneTaskListRenderer, action: (progress: PadroneProgressContext) => unknown) => {
+    const { factory } = createMockProgress();
+    return createPadrone('app').command('run', (c) =>
+      c
+        .extend(padroneProgress({ message: 'Working...', renderer: factory, taskRenderer }))
+        .action((_args, ctx) => action(ctx.context.progress)),
+    );
+  };
+
+  it('runs tasks in order, with subtasks, skips and messages', async () => {
+    const order: string[] = [];
+    const { renderer, final } = recordingRenderer();
+    const program = programWith(renderer, (progress) =>
+      progress.tasks([
+        { title: 'Install', task: () => order.push('install') },
+        {
+          title: 'Build',
+          task: (t) =>
+            t.tasks([
+              { title: 'Types', task: () => order.push('types') },
+              { title: 'Bundle', task: (sub) => sub.skip('cached') },
+            ]),
+        },
+        { title: 'Deploy', skip: () => 'no token', task: () => order.push('deploy') },
+        { title: 'Notify', skip: false, task: (t) => t.setTitle('Notified') },
+      ]),
+    );
+
+    const result = await program.eval('run');
+    expect(result.error).toBeUndefined();
+    expect(order).toEqual(['install', 'types']);
+    expect(final()).toEqual([
+      { title: 'Install', status: 'done', subtasks: [] },
+      {
+        title: 'Build',
+        status: 'done',
+        subtasks: [
+          { title: 'Types', status: 'done', subtasks: [] },
+          { title: 'Bundle', status: 'skipped', message: 'cached', subtasks: [] },
+        ],
+      },
+      { title: 'Deploy', status: 'skipped', message: 'no token', subtasks: [] },
+      { title: 'Notified', status: 'done', subtasks: [] },
+    ]);
+  });
+
+  it('runs concurrently up to the limit', async () => {
+    let running = 0;
+    let peak = 0;
+    const task = async () => {
+      peak = Math.max(peak, ++running);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      running--;
+    };
+    const program = programWith(recordingRenderer().renderer, (progress) =>
+      progress.tasks(
+        Array.from({ length: 5 }, (_, i) => ({ title: `t${i}`, task })),
+        { concurrent: 2 },
+      ),
+    );
+    await program.eval('run');
+    expect(peak).toBe(2);
+  });
+
+  it('stops at the first failure, or runs everything with exitOnError: false', async () => {
+    const run = async (exitOnError: boolean) => {
+      const { renderer, final } = recordingRenderer();
+      const program = programWith(renderer, (progress) =>
+        progress.tasks(
+          [
+            {
+              title: 'a',
+              task: () => {
+                throw new Error('a broke');
+              },
+            },
+            { title: 'b', task: () => {} },
+          ],
+          { exitOnError },
+        ),
+      );
+      const result = await program.eval('run');
+      return { error: (result.error as Error).message, states: final().map((s) => `${s.title}:${s.status}`) };
+    };
+    expect(await run(true)).toEqual({ error: 'a broke', states: ['a:failed', 'b:pending'] });
+    expect(await run(false)).toEqual({ error: 'a broke', states: ['a:failed', 'b:done'] });
+  });
+
+  it('hides the indicator while the list is drawn, and pauses the list for output', async () => {
+    const { factory, indicators } = createMockProgress();
+    const { renderer, events } = recordingRenderer();
+    const program = createPadrone('app').command('run', (c) =>
+      c
+        .extend(padroneProgress({ message: 'Working...', renderer: factory, taskRenderer: renderer }))
+        .action((_args, ctx) => ctx.context.progress.tasks([{ title: 'log', task: () => ctx.runtime.output('hello') }])),
+    );
+    await program.eval('run', { runtime: { output: () => {} } });
+    expect(indicators[0]!.indicator.calls.slice(0, 2)).toEqual(['pause', 'resume']);
+    expect(events).toEqual(['pause', 'resume', 'done']);
+  });
+
+  it('prints finished tasks without a TTY', async () => {
+    const written: string[] = [];
+    const write = process.stderr.write;
+    process.stderr.write = ((chunk: string) => written.push(chunk) > 0) as typeof process.stderr.write;
+    try {
+      const program = createPadrone('app').command('run', (c) =>
+        c.extend(padroneProgress({ silent: false, renderer: createMockProgress().factory })).action((_args, ctx) =>
+          ctx.context.progress.tasks([
+            { title: 'Build', task: (t) => t.tasks([{ title: 'Types', task: () => {} }]) },
+            { title: 'Deploy', skip: 'no token', task: () => {} },
+          ]),
+        ),
+      );
+      await program.eval('run');
+    } finally {
+      process.stderr.write = write;
+    }
+    expect(written.join('')).toBe('  ✔ Types\n✔ Build\n↓ Deploy [skipped: no token]\n');
   });
 });

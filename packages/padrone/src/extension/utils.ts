@@ -1,5 +1,5 @@
 import { getKnownOptionNames } from '../core/validate.ts';
-import type { AnyPadroneCommand, PadroneSchema } from '../types/index.ts';
+import type { AnyPadroneCommand, PadroneInput, PadroneSchema } from '../types/index.ts';
 
 /**
  * Access to the framework flags an extension reads from `rawArgs` (`--color`, `--version`, …).
@@ -14,6 +14,54 @@ export function frameworkFlags(rawArgs: Record<string, unknown>, command: AnyPad
       for (const key of keys) if (!owned.has(key)) delete rawArgs[key];
     },
   };
+}
+
+/**
+ * A framework flag read from the raw input, for when parsing failed (e.g. an unknown command) so there are no `rawArgs`:
+ * `--name` → `true`, `--name=value` → `'value'`, `--no-name` → `false`, absent → `undefined`. The last occurrence wins.
+ */
+export function rawInputFlag(input: PadroneInput | undefined, name: string): unknown {
+  const tokens = typeof input === 'string' ? input.split(/\s+/) : (input ?? []);
+  let value: unknown;
+  for (const token of tokens) {
+    if (token === '--') break;
+    if (token === `--${name}`) value = true;
+    else if (token === `--no-${name}`) value = false;
+    else if (token.startsWith(`--${name}=`)) value = token.slice(name.length + 3);
+  }
+  return value;
+}
+
+/**
+ * Runs a parse handler's `next()`: `handle` gets the parse result, and `onError` runs before a parse failure
+ * (sync or async) is rethrown, so flags can still be read from the raw input.
+ */
+export function parseWithFallback<T>(next: () => T | Promise<T>, handle: (res: T) => T, onError: () => void): T | Promise<T> {
+  const fail = (err: unknown): never => {
+    onError();
+    throw err;
+  };
+  let parsed: T | Promise<T>;
+  try {
+    parsed = next();
+  } catch (err) {
+    return fail(err);
+  }
+  return parsed instanceof Promise ? parsed.then(handle, fail) : handle(parsed);
+}
+
+/** Turns a result (or one streamed item) into the lines printed under JSON output, e.g. from `--jq`. */
+export type JsonOutputFilter = (value: unknown) => string[];
+
+const jsonOutputFilters = new WeakMap<object, JsonOutputFilter>();
+
+/** Sets how auto-output prints results under JSON output for this run (the runtime is created per run). */
+export function setJsonOutputFilter(runtime: object, filter: JsonOutputFilter): void {
+  jsonOutputFilters.set(runtime, filter);
+}
+
+export function getJsonOutputFilter(runtime: object): JsonOutputFilter | undefined {
+  return jsonOutputFilters.get(runtime);
 }
 
 /** Callers that return results through their own transport (HTTP, MCP, AI tool calls): no terminal, no stdin. */

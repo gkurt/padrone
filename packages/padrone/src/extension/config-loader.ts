@@ -145,15 +145,20 @@ type BunParsers = {
   JSONC?: { parse(text: string): unknown };
 };
 
-export function parseConfigText(text: string, ext: string, file: string): ConfigData {
+export function parseConfigText(content: string, ext: string, file: string): ConfigData {
   const bun = (globalThis as { Bun?: BunParsers }).Bun;
+  // Editors on Windows may save a byte order mark, which YAML and TOML parsers would read as part of the first key
+  const text = content.replace(/^\uFEFF/, '');
   // Anything else (`.json`, `.jsonc`, extensionless rc files) is JSON with comments and trailing commas
-  const parser = ext === '.yaml' || ext === '.yml' ? bun?.YAML : ext === '.toml' ? bun?.TOML : bun?.JSONC;
-  if (!parser && (ext === '.yaml' || ext === '.yml' || ext === '.toml')) {
+  const json = ext !== '.yaml' && ext !== '.yml' && ext !== '.toml';
+  const parser = json ? bun?.JSONC : ext === '.toml' ? bun?.TOML : bun?.YAML;
+  if (!parser && !json) {
     throw new ConfigError(`Cannot read ${file}: ${ext.slice(1).toUpperCase()} config files need Bun, or a custom \`loadConfig\``);
   }
+  // An empty file, or one with only comments, is an empty config
+  if (json && !stripJsonc(text).trim()) return {};
   try {
-    return (parser ? parser.parse(text) : JSON.parse(stripJsonc(text))) as ConfigData;
+    return ((parser ? parser.parse(text) : JSON.parse(stripJsonc(text))) ?? {}) as ConfigData;
   } catch (err) {
     throw new ConfigError(`Invalid config file ${file}: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
   }
@@ -310,16 +315,17 @@ export function isScriptConfigFile(file: string): boolean {
 
 /**
  * The user config directory and the file in it that `config set` writes: the first of `files` found there,
- * else the first relative one that is JSON. `undefined` when the directory can't be located.
+ * else the first relative one that `creatable` accepts (JSON by default). `undefined` when the directory can't be located.
  */
 export async function findUserConfigFile(
   files: readonly string[],
   appName: string,
   env?: Record<string, string | undefined>,
+  creatable: (file: string) => boolean = isJsonConfigFile,
 ): Promise<{ dir: string; file?: string } | undefined> {
   await initNodeModules();
   const dir = getUserConfigDir(appName, env);
   if (!dir) return undefined;
   const candidates = files.filter((file) => !_path!.isAbsolute(file)).map((file) => _path!.join(dir, file));
-  return { dir, file: candidates.find((file) => _fs!.existsSync(file)) ?? candidates.find(isJsonConfigFile) };
+  return { dir, file: candidates.find((file) => _fs!.existsSync(file)) ?? candidates.find(creatable) };
 }

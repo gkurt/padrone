@@ -10,12 +10,13 @@ const FORCE_VALUES = new Set(['true', '1', 'always', 'on', 'yes']);
 
 function applyColorFlag(runtime: ResolvedPadroneRuntime, color: unknown) {
   const auto = runtime.format === 'auto';
-  if (color === 'auto') return;
-  if (color === 'never' || toFlag(color) === false) {
+  const keyword = typeof color === 'string' ? color.toLowerCase() : color;
+  if (keyword === 'auto') return;
+  if (keyword === 'never' || toFlag(color) === false) {
     if (auto || runtime.format === 'ansi' || runtime.format === 'console') runtime.format = 'text';
     return;
   }
-  if (typeof color === 'string' && !FORCE_VALUES.has(color.toLowerCase())) runtime.theme = color as ColorTheme;
+  if (typeof keyword === 'string' && !FORCE_VALUES.has(keyword)) runtime.theme = keyword as ColorTheme;
   if (auto) runtime.format = 'ansi';
 }
 

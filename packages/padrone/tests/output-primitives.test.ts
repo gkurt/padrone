@@ -75,7 +75,7 @@ describe('renderTable', () => {
   it('renders markdown format', () => {
     const result = renderTable(data, undefined, markdownCtx());
     expect(result).toContain('| name');
-    expect(result).toContain('| ─');
+    expect(result).toContain('| ---');
     expect(result).toContain('| api');
   });
 
@@ -114,7 +114,7 @@ describe('renderTable', () => {
 
   it('handles right alignment', () => {
     const result = renderTable(data, { align: { latency: 'right' } }, markdownCtx());
-    expect(result).toMatch(/─+:/); // right-aligned separator
+    expect(result).toMatch(/-+:/); // right-aligned separator
   });
 });
 

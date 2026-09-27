@@ -158,6 +158,7 @@ export function shouldUseAnsi(env?: Record<string, string | undefined>, isTTY?: 
   const force = env?.FORCE_COLOR;
   if (force !== undefined) return force !== '0' && force !== 'false';
   if (env?.NO_COLOR) return false;
+  if (env?.TERM === 'dumb') return false;
   if (env?.CI) return false;
   if (typeof isTTY === 'boolean') return isTTY;
   return false;

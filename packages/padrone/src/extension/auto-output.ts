@@ -174,8 +174,8 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
             return collected instanceof Promise ? collected.then(finish) : finish(collected);
           }
 
-          // Declarative output config: format the return value through the primitive
-          if (outputConfig) {
+          // Declarative output config: format the return value through the primitive (streams print item by item)
+          if (outputConfig && !isAsyncIterator(value) && !isIterator(value)) {
             const rendered = formatDeclarativeOutput(value, outputConfig, outputCtx);
             if (rendered !== undefined) {
               ctx.runtime.output(rendered);

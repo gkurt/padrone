@@ -82,7 +82,8 @@ function slice(value: unknown, from: unknown, to: unknown): unknown {
   if (typeof value !== 'string' && !Array.isArray(value)) throw new JqError(`Cannot slice ${typeOf(value)}`);
   const start = from === null || from === undefined ? undefined : Number(from);
   const end = to === null || to === undefined ? undefined : Number(to);
-  return value.slice(start, end);
+  // Strings by code point, as `length` counts them
+  return typeof value === 'string' ? [...value].slice(start, end).join('') : value.slice(start, end);
 }
 
 function length(value: unknown): number {
@@ -165,8 +166,8 @@ const BUILTINS_0: Record<string, (input: unknown) => unknown[]> = {
       }),
     ),
   ],
-  ascii_downcase: (x) => [requireString(x, 'ascii_downcase').toLowerCase()],
-  ascii_upcase: (x) => [requireString(x, 'ascii_upcase').toUpperCase()],
+  ascii_downcase: (x) => [requireString(x, 'ascii_downcase').replace(/[A-Z]/g, (c) => c.toLowerCase())],
+  ascii_upcase: (x) => [requireString(x, 'ascii_upcase').replace(/[a-z]/g, (c) => c.toUpperCase())],
 };
 
 /** Builtins with one argument: `arg` is the compiled argument, applied to whatever the builtin needs. */
@@ -375,7 +376,8 @@ class Parser {
     this.i++;
     const test = COMPARE[token.value]!;
     const right = this.parsePostfix();
-    return (x) => product([left, right], x).map(([a, b]) => test(compareValues(a, b)));
+    // jq loops over the right side's outputs outermost
+    return (x) => product([right, left], x).map(([b, a]) => test(compareValues(a, b)));
   }
 
   private parsePostfix(): JqFilter {

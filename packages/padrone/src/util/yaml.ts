@@ -6,7 +6,8 @@ export function toYaml(value: unknown): string {
   return yamlLines(value).join('\n');
 }
 
-const RESERVED = /^(true|false|yes|no|on|off|y|n|null|~|\.inf|-\.inf|\+\.inf|\.nan)$/i;
+/** Plain scalars that read back as something other than the string: booleans, null, numbers like `.5`, the document end `...`. */
+const RESERVED = /^(true|false|yes|no|on|off|y|n|null|~|\.inf|-\.inf|\+\.inf|\.nan|\.\.\.|\.\d.*)$/i;
 const PLAIN = /^[A-Za-z_/.(][\w ./@+()~:,=-]*$/;
 
 function yamlString(text: string): string {

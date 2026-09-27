@@ -1,4 +1,27 @@
+import { safeJsonStringify } from '../util/json.ts';
 import { escapeHtml, type OutputContext } from './styling.ts';
+
+// ── Display width ───────────────────────────────────────────────────────
+
+// biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape sequences
+const ANSI_ESCAPE = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+/** Emoji shown as emoji, and the East Asian wide and fullwidth ranges. */
+const WIDE =
+  /\u{fe0f}|[\p{Emoji_Presentation}\u{1100}-\u{115f}\u{2e80}-\u{303e}\u{3041}-\u{33ff}\u{3400}-\u{4dbf}\u{4e00}-\u{9fff}\u{a000}-\u{a4cf}\u{ac00}-\u{d7a3}\u{f900}-\u{faff}\u{fe30}-\u{fe4f}\u{ff00}-\u{ff60}\u{ffe0}-\u{ffe6}\u{1f300}-\u{1f64f}\u{1f900}-\u{1f9ff}\u{20000}-\u{3fffd}]/u;
+const ZERO_WIDTH = /^[\p{Mn}\p{Me}\p{Cf}]/u;
+const PRINTABLE_ASCII = /^[\x20-\x7e]*$/;
+
+const segmenter = typeof Intl !== 'undefined' && 'Segmenter' in Intl ? new Intl.Segmenter() : undefined;
+const graphemes = (text: string): string[] => (segmenter ? Array.from(segmenter.segment(text), (s) => s.segment) : Array.from(text));
+const graphemeWidth = (grapheme: string) => (WIDE.test(grapheme) ? 2 : ZERO_WIDTH.test(grapheme) ? 0 : 1);
+
+/** The number of terminal columns `text` takes: ANSI escapes take none, wide characters and emoji two. */
+export function displayWidth(text: string): number {
+  if (PRINTABLE_ASCII.test(text)) return text.length;
+  let width = 0;
+  for (const grapheme of graphemes(text.replace(ANSI_ESCAPE, ''))) width += graphemeWidth(grapheme);
+  return width;
+}
 
 // ── Table ───────────────────────────────────────────────────────────────
 
@@ -17,20 +40,32 @@ export type TableOptions = {
   header?: boolean;
 };
 
-function stringifyCell(value: unknown): string {
+/** A cell's text: nothing for `null`/`undefined`, dates as ISO strings, objects as JSON. */
+export function stringifyCell(value: unknown): string {
   if (value === undefined || value === null) return '';
   if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value);
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
+  if (typeof value === 'object') return safeJsonStringify(value) ?? String(value);
+  return String(value);
 }
 
+const toJson = (value: unknown) => safeJsonStringify(value, 2) ?? 'null';
+
 function truncate(text: string, max: number): string {
-  if (max <= 0 || text.length <= max) return text;
-  return max <= 1 ? '…' : `${text.slice(0, max - 1)}…`;
+  if (max <= 0 || displayWidth(text) <= max) return text;
+  if (max <= 1) return '…';
+  let result = '';
+  let width = 0;
+  for (const grapheme of graphemes(text)) {
+    width += graphemeWidth(grapheme);
+    if (width > max - 1) break;
+    result += grapheme;
+  }
+  return `${result}…`;
 }
 
 function padCell(text: string, width: number, alignment: 'left' | 'right' | 'center' = 'left'): string {
-  const pad = width - text.length;
+  const pad = width - displayWidth(text);
   if (pad <= 0) return text;
   if (alignment === 'right') return ' '.repeat(pad) + text;
   if (alignment === 'center') {
@@ -41,8 +76,8 @@ function padCell(text: string, width: number, alignment: 'left' | 'right' | 'cen
 }
 
 export function renderTable(data: Record<string, unknown>[], options: TableOptions | undefined, ctx: OutputContext): string {
+  if (ctx.format === 'json') return toJson(data);
   if (data.length === 0) return '';
-  if (ctx.format === 'json') return JSON.stringify(data, null, 2);
 
   const columns = options?.columns ?? Object.keys(data[0]!);
   if (columns.length === 0) return '';
@@ -58,14 +93,14 @@ export function renderTable(data: Record<string, unknown>[], options: TableOptio
   );
 
   const colWidths = columns.map((_, i) => {
-    const headerWidth = options?.header === false ? 0 : headers[i]!.length;
-    const maxCellWidth = rows.reduce((max, row) => Math.max(max, row[i]!.length), 0);
+    const headerWidth = options?.header === false ? 0 : displayWidth(headers[i]!);
+    const maxCellWidth = rows.reduce((max, row) => Math.max(max, displayWidth(row[i]!)), 0);
     return Math.max(headerWidth, maxCellWidth);
   });
 
   const getAlign = (i: number): 'left' | 'right' | 'center' => options?.align?.[columns[i]!] ?? 'left';
 
-  if (ctx.format === 'markdown') return renderTableMarkdown(headers, rows, colWidths, getAlign);
+  if (ctx.format === 'markdown') return renderTableMarkdown(headers, rows, getAlign);
   if (ctx.format === 'html') return renderTableHtml(columns, headers, rows, data, getAlign);
   return renderTableText(headers, rows, colWidths, getAlign, options?.border !== false, options?.header !== false, ctx);
 }
@@ -103,27 +138,19 @@ function renderTableText(
   return [...(header ? [headerCells.join(gap)] : []), ...dataCells.map((r) => r.join(gap))].join('\n');
 }
 
-function renderTableMarkdown(
-  headers: string[],
-  rows: string[][],
-  colWidths: number[],
-  getAlign: (i: number) => 'left' | 'right' | 'center',
-): string {
-  const headerLine = `| ${headers.map((h, i) => padCell(h, colWidths[i]!, 'left')).join(' | ')} |`;
-  const separatorLine =
-    '| ' +
-    colWidths
-      .map((w, i) => {
-        const a = getAlign(i);
-        const dashes = '─'.repeat(Math.max(w, 3));
-        if (a === 'center') return `:${dashes}:`;
-        if (a === 'right') return `${dashes}:`;
-        return dashes;
-      })
-      .join(' | ') +
-    ' |';
-  const dataLines = rows.map((r) => `| ${r.map((c, i) => padCell(c, colWidths[i]!, 'left')).join(' | ')} |`);
-  return [headerLine, separatorLine, ...dataLines].join('\n');
+const markdownCell = (text: string) => text.replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+
+function renderTableMarkdown(headers: string[], rows: string[][], getAlign: (i: number) => 'left' | 'right' | 'center'): string {
+  const [head, ...body] = [headers, ...rows].map((cells) => cells.map(markdownCell));
+  const colWidths = head!.map((h, i) => Math.max(3, displayWidth(h), ...body.map((r) => displayWidth(r[i]!))));
+  const line = (cells: string[]) => `| ${cells.map((c, i) => padCell(c, colWidths[i]!, 'left')).join(' | ')} |`;
+  const delimiters = colWidths.map((w, i) => {
+    const a = getAlign(i);
+    if (a === 'center') return `:${'-'.repeat(w - 2)}:`;
+    if (a === 'right') return `${'-'.repeat(w - 1)}:`;
+    return '-'.repeat(w);
+  });
+  return [line(head!), `| ${delimiters.join(' | ')} |`, ...body.map(line)].join('\n');
 }
 
 function renderTableHtml(
@@ -169,8 +196,8 @@ export type TreeOptions = {
 
 export function renderTree(data: TreeNode | TreeNode[], options: TreeOptions | undefined, ctx: OutputContext): string {
   const nodes = Array.isArray(data) ? data : [data];
+  if (ctx.format === 'json') return toJson(nodes);
   if (nodes.length === 0) return '';
-  if (ctx.format === 'json') return JSON.stringify(nodes, null, 2);
   if (ctx.format === 'markdown') return renderTreeMarkdown(nodes, 0);
   if (ctx.format === 'html') return renderTreeHtml(nodes);
 
@@ -233,11 +260,8 @@ export type ListOptions = {
 };
 
 export function renderList(data: ListItem[], options: ListOptions | undefined, ctx: OutputContext): string {
+  if (ctx.format === 'json') return toJson(data.map((item) => (typeof item === 'string' ? { label: item } : item)));
   if (data.length === 0) return '';
-  if (ctx.format === 'json') {
-    const normalized = data.map((item) => (typeof item === 'string' ? { label: item } : item));
-    return JSON.stringify(normalized, null, 2);
-  }
   if (ctx.format === 'markdown') return renderListMarkdown(data, options);
   if (ctx.format === 'html') return renderListHtml(data, options);
   return renderListText(data, options, ctx);
@@ -299,9 +323,9 @@ export type KeyValueOptions = {
 };
 
 export function renderKeyValue(data: Record<string, unknown>, options: KeyValueOptions | undefined, ctx: OutputContext): string {
+  if (ctx.format === 'json') return toJson(data);
   const entries = Object.entries(data);
   if (entries.length === 0) return '';
-  if (ctx.format === 'json') return JSON.stringify(data, null, 2);
   if (ctx.format === 'markdown') return renderKeyValueMarkdown(entries, options);
   if (ctx.format === 'html') return renderKeyValueHtml(entries, options);
   return renderKeyValueText(entries, options, ctx);
@@ -317,12 +341,12 @@ function renderKeyValueText(entries: [string, unknown][], options: KeyValueOptio
   const shouldAlign = options?.align !== false;
 
   const displayLabels = entries.map(([k]) => getLabel(k, options?.labels));
-  const maxWidth = shouldAlign ? Math.max(...displayLabels.map((l) => l.length)) : 0;
+  const maxWidth = shouldAlign ? Math.max(...displayLabels.map(displayWidth)) : 0;
 
   return entries
     .map(([_key, value], i) => {
       const label = displayLabels[i]!;
-      const paddedLabel = shouldAlign ? label + ' '.repeat(maxWidth - label.length) : label;
+      const paddedLabel = shouldAlign ? padCell(label, maxWidth) : label;
       return `${styler.label(paddedLabel)}${styler.meta(sep)}${styler.description(stringifyCell(value))}`;
     })
     .join('\n');

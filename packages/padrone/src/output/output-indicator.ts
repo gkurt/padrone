@@ -1,3 +1,4 @@
+import { safeJsonStringify } from '../util/json.ts';
 import type { KeyValueOptions, ListItem, ListOptions, TableOptions, TreeNode, TreeOptions } from './primitives.ts';
 import { renderKeyValue, renderList, renderTable, renderTree } from './primitives.ts';
 import type { OutputContext } from './styling.ts';
@@ -72,6 +73,7 @@ export function formatDeclarativeOutput(value: unknown, config: OutputConfig, ct
       if (!Array.isArray(value)) return undefined;
       return renderTable(value as Record<string, unknown>[], options as TableOptions | undefined, ctx);
     case 'tree':
+      if (typeof value !== 'object' || value === null) return undefined;
       return renderTree(value as TreeNode | TreeNode[], options as TreeOptions | undefined, ctx);
     case 'list':
       if (!Array.isArray(value)) return undefined;
@@ -80,7 +82,7 @@ export function formatDeclarativeOutput(value: unknown, config: OutputConfig, ct
       if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
       return renderKeyValue(value as Record<string, unknown>, options as KeyValueOptions | undefined, ctx);
     case 'json':
-      return JSON.stringify(value, null, 2);
+      return safeJsonStringify(value, 2);
     default:
       return undefined;
   }

@@ -2,7 +2,7 @@ import { ValidationError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { OptionArity } from '../core/parse.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
-import { renderTable } from '../output/primitives.ts';
+import { renderTable, stringifyCell } from '../output/primitives.ts';
 import { resolveOutputFormat } from '../output/styling.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneActionContext, PadroneInput } from '../types/index.ts';
 import { safeJsonStringify } from '../util/json.ts';
@@ -81,21 +81,13 @@ function layout(rows: Row[], flags: TableFlags): { rows: Row[]; columns: string[
   return { rows: sorted, columns: flags.columns ?? available };
 }
 
-function cellText(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === 'object') return safeJsonStringify(value) ?? String(value);
-  return String(value);
-}
-
 const csvCell = (value: unknown) => {
-  const text = cellText(value);
+  const text = stringifyCell(value);
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 };
 
 const TSV_ESCAPES: Record<string, string> = { '\\': '\\\\', '\t': '\\t', '\n': '\\n', '\r': '\\r' };
-const tsvCell = (value: unknown) => cellText(value).replace(/[\\\t\n\r]/g, (c) => TSV_ESCAPES[c]!);
+const tsvCell = (value: unknown) => stringifyCell(value).replace(/[\\\t\n\r]/g, (c) => TSV_ESCAPES[c]!);
 
 /** Renders results in a non-JSON format; `text` is left to auto-output. */
 function createRenderer(
@@ -124,6 +116,8 @@ function createRenderer(
 
   return {
     render(value, item) {
+      // Text (e.g. help or the version) prints as text in every format
+      if (typeof value === 'string') return undefined;
       const plain = JSON.parse(safeJsonStringify(value) ?? 'null');
       if (format === 'yaml') return [item ? `---\n${toYaml(plain)}` : toYaml(plain)];
       const rows = toRows(plain);
@@ -243,7 +237,7 @@ function createFormatInterceptor(options: PadroneFormatOptions) {
  * - `csv` / `tsv`: an object or an array of objects as rows with a header (streamed items one row each).
  * - `table`: the same rows through the table primitive.
  *
- * Results that aren't objects (e.g. a string) are printed as text under csv, tsv and table. `--json`, `--jq` and
+ * String results (e.g. help) are printed as text under every format but json, and other non-objects under csv, tsv and table. `--json`, `--jq` and
  * `--template` take precedence over `--output`. Serve, MCP and tool calls are unaffected.
  *
  * ```ts

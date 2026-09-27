@@ -61,7 +61,10 @@ function compareValues(a: unknown, b: unknown): number {
 
 function index(value: unknown, key: unknown): unknown {
   if (value === null || value === undefined) return null;
-  if (typeof key === 'number' && Array.isArray(value)) return value[key < 0 ? value.length + key : key] ?? null;
+  if (typeof key === 'number' && Array.isArray(value)) {
+    const i = Math.floor(key);
+    return value[i < 0 ? value.length + i : i] ?? null;
+  }
   if (typeof key === 'string' && typeOf(value) === 'object') {
     return Object.hasOwn(value as object, key) ? ((value as Record<string, unknown>)[key] ?? null) : null;
   }
@@ -86,7 +89,8 @@ function length(value: unknown): number {
   const type = typeOf(value);
   if (type === 'null') return 0;
   if (type === 'number') return Math.abs(value as number);
-  if (type === 'string' || type === 'array') return (value as string | unknown[]).length;
+  if (type === 'string') return [...(value as string)].length;
+  if (type === 'array') return (value as unknown[]).length;
   if (type === 'object') return Object.keys(value as object).length;
   throw new JqError('boolean has no length');
 }
@@ -118,6 +122,9 @@ function add(value: unknown): unknown {
   });
 }
 
+/** jq's number syntax: no surrounding whitespace, hex or `Infinity` (unlike `Number()`). */
+const DECIMAL_NUMBER = /^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
 const requireString = (value: unknown, name: string): string => {
   if (typeof value !== 'string') throw new JqError(`${name} requires a string, got ${typeOf(value)}`);
   return value;
@@ -135,9 +142,9 @@ const BUILTINS_0: Record<string, (input: unknown) => unknown[]> = {
   type: (x) => [typeOf(x)],
   tostring: (x) => [typeof x === 'string' ? x : JSON.stringify(x ?? null)],
   tonumber: (x) => {
-    const n = typeof x === 'number' ? x : Number(requireString(x, 'tonumber'));
-    if (Number.isNaN(n)) throw new JqError(`Cannot parse ${JSON.stringify(x)} as a number`);
-    return [n];
+    if (typeof x === 'number') return [x];
+    if (!DECIMAL_NUMBER.test(requireString(x, 'tonumber'))) throw new JqError(`Cannot parse ${JSON.stringify(x)} as a number`);
+    return [Number(x)];
   },
   first: (x) => [index(x, 0)],
   last: (x) => [index(x, -1)],
@@ -145,7 +152,11 @@ const BUILTINS_0: Record<string, (input: unknown) => unknown[]> = {
   sort: (x) => [[...iterate(x)].sort(compareValues)],
   reverse: (x) => [typeof x === 'string' ? [...x].reverse().join('') : [...iterate(x)].reverse()],
   unique: (x) => [[...iterate(x)].sort(compareValues).filter((v, i, all) => i === 0 || compareValues(all[i - 1], v) !== 0)],
-  to_entries: (x) => [Object.entries(x as object).map(([key, value]) => ({ key, value }))],
+  to_entries: (x) => {
+    if (Array.isArray(x)) return [x.map((value, key) => ({ key, value }))];
+    if (typeOf(x) === 'object') return [Object.entries(x as object).map(([key, value]) => ({ key, value }))];
+    throw new JqError(`${typeOf(x)} has no keys`);
+  },
   from_entries: (x) => [
     Object.fromEntries(
       iterate(x).map((entry) => {
@@ -160,7 +171,10 @@ const BUILTINS_0: Record<string, (input: unknown) => unknown[]> = {
 
 /** Builtins with one argument: `arg` is the compiled argument, applied to whatever the builtin needs. */
 const BUILTINS_1: Record<string, (input: unknown, arg: JqFilter) => unknown[]> = {
-  select: (x, f) => (f(x).some(truthy) ? [x] : []),
+  select: (x, f) =>
+    f(x)
+      .filter(truthy)
+      .map(() => x),
   map: (x, f) => [iterate(x).flatMap(f)],
   sort_by: (x, f) => [
     iterate(x)
@@ -169,7 +183,11 @@ const BUILTINS_1: Record<string, (input: unknown, arg: JqFilter) => unknown[]> =
       .map(({ item }) => item),
   ],
   has: (x, f) =>
-    f(x).map((key) => (Array.isArray(x) ? typeof key === 'number' && key < x.length : Object.hasOwn(x as object, String(key)))),
+    f(x).map((key) => {
+      if (Array.isArray(x) && typeof key === 'number') return key >= 0 && key < x.length;
+      if (typeOf(x) === 'object' && typeof key === 'string') return Object.hasOwn(x as object, key);
+      throw new JqError(`Cannot check whether ${typeOf(x)} has a ${typeOf(key)} key`);
+    }),
   join: (x, f) =>
     f(x).map((sep) =>
       iterate(x)

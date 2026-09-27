@@ -170,9 +170,11 @@ export function padroneEnv(
             });
           }
 
-          // No schema — file variables named like the command's options fill them (unless `vars` or `prefix` picks what to read)
+          // No schema — file variables named like the command's options fill them (unless `vars` or `prefix` picks what to read),
+          // with process env values winning unless `override`
           if (mapsArgs) return proceed();
-          return proceed(applyValues(ctx.rawArgs, forCommand(envFromFiles)));
+          const fileVars = Object.fromEntries(Object.keys(envFromFiles).map((key) => [key, rawEnv[key]]));
+          return proceed(applyValues(ctx.rawArgs, forCommand(fileVars)));
         };
 
         if (hasFiles) {

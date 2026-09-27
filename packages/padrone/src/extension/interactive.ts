@@ -1,5 +1,6 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { getGlobalArgs } from '../core/commands.ts';
+import { resolveStdinAlways } from '../core/default-runtime.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe, usesInteractive } from '../core/results.ts';
 import {
@@ -27,6 +28,9 @@ const interactiveInterceptor = defineInterceptor(
         if (value !== undefined) flagInteractive = value;
       }
       flags.delete('interactive', 'i');
+      // Inner interceptors (e.g. confirm) see the flag as `ctx.interactive`
+      const proceed = (overrides?: Record<string, unknown>) =>
+        next(flagInteractive === undefined ? overrides : { ...overrides, interactive: flagInteractive });
 
       // Resolve effective interactivity
       const { runtime, command } = ctx;
@@ -34,13 +38,13 @@ const interactiveInterceptor = defineInterceptor(
         runtime.interactive === 'forced' ? true : runtime.interactive === 'disabled' ? false : undefined;
       const effectiveInteractive: boolean | undefined = flagInteractive ?? ctx.evalInteractive ?? runtimeDefault;
       const commandUsesStdin = !!command.meta?.stdin;
-      const stdinIsPiped = commandUsesStdin && (runtime.stdin ? !runtime.stdin.isTTY : runtime.terminal?.isTTY !== true);
+      const stdinIsPiped = commandUsesStdin && !resolveStdinAlways(runtime).isTTY;
       const interactivitySuppressed =
         runtime.interactive === 'unsupported' || effectiveInteractive === false || (stdinIsPiped && effectiveInteractive !== true);
       const forceInteractive = !interactivitySuppressed && effectiveInteractive === true;
 
       const willPrompt = !interactivitySuppressed && runtime.prompt && usesInteractive(command);
-      if (!willPrompt) return next();
+      if (!willPrompt) return proceed();
 
       // Preprocess args to determine what's missing
       const { args: preprocessedArgs, issues: positionalIssues } = buildCommandArgs(command, ctx.rawArgs, ctx.positionalArgs);
@@ -99,7 +103,7 @@ const interactiveInterceptor = defineInterceptor(
 
         return thenMaybe(afterInteractive, (filledArgs) => {
           // Pass preprocessed+prompted args downstream with empty positionalArgs (already mapped)
-          return next({ rawArgs: filledArgs, positionalArgs: [] });
+          return proceed({ rawArgs: filledArgs, positionalArgs: [] });
         });
       };
 

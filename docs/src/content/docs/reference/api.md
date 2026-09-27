@@ -54,7 +54,7 @@ Configure the runtime adapter for I/O abstraction. Allows the CLI framework to w
 
 ```typescript
 program.runtime({
-  interactive: true,
+  interactive: 'supported',
   prompt: myCustomPromptFn,
   output: (text) => panel.append(text),
   error: (text) => panel.appendError(text),
@@ -70,8 +70,8 @@ program.runtime({
 | `argv` | `() => string[]` | `process.argv.slice(2)` | Return raw CLI arguments. Each entry is taken as one token, as the shell split it |
 | `env` | `() => Record<string, string \| undefined>` | `process.env` | Return environment variables |
 | `format` | `string` | `'auto'` | Default help output format |
-| `interactive` | `boolean` | `false` | Whether the runtime supports interactive prompts |
-| `prompt` | `(config: InteractivePromptConfig) => Promise<unknown>` | Enquirer (when `interactive: true`) | Custom prompt implementation |
+| `interactive` | `'supported' \| 'unsupported' \| 'forced' \| 'disabled'` | auto (`'disabled'` in CI or when stdin or stdout isn't a terminal, else `'supported'`) | Whether prompts can be shown. `'unsupported'` can't be overridden; `-i`/`--interactive` and `cli()` preferences override the others (`'forced'` prompts even for given values) |
+| `prompt` | `(config: InteractivePromptConfig) => Promise<unknown>` | Enquirer | Custom prompt implementation. Text answers are coerced like CLI input (`'3'` for a number field, `'a, b'` for an array) |
 | `progress` | `(message: string, options?: PadroneProgressOptions) => PadroneProgress` | Built-in terminal spinner | Progress indicator factory. See [Progress Indicators](/padrone/guides/progress-indicators/) |
 | `terminal` | `{ columns?, rows?, isTTY? }` | From `process.stdout` | Terminal size and whether stdout is a TTY (colors, wrapping, the help pager) |
 | `setExitCode` | `(code: number) => void` | Sets `process.exitCode` | Called by `cli()` when a run ends with an error or a signal. Override to capture or ignore it |
@@ -264,7 +264,7 @@ program.extend(
 - `schema`: A Standard Schema that validates env vars and transforms them to argument names
 - `options.vars`: Map arguments to variables directly, without a schema: `padroneEnv({ vars: { port: 'APP_PORT', token: ['API_TOKEN', 'TOKEN'] } })`. The first variable that is set wins, and values are coerced by the command's schema like CLI input. These variables are shown in help (`Env: APP_PORT`). Can be combined with a schema.
 - `options.prefix`: Read every option from a prefixed variable, like yargs' `.env('MY_APP')`: `padroneEnv({ prefix: 'MY_APP' })` reads `--dry-run` / `dryRun` from `MY_APP_DRY_RUN`. Variables named in `vars` take precedence. Shown in help.
-- `options.modes`, `local`, `dir`, `override`, `base`: `.env` file loading
+- `options.modes`, `local`, `dir`, `override`, `base`: `.env` file loading. Later files win, then `$VAR` / `${VAR}` references expand against the merged values and the process env (which wins unless `override`); single-quoted values aren't expanded
 
 Env values are applied after CLI args and stdin, but before config file values. Can be applied at the program level (inherited by all commands) or at the command level.
 
@@ -291,7 +291,7 @@ program.extend(
   })
 );
 
-// Multiple file paths (first found wins)
+// Multiple file paths (first found wins); files without an extension are JSON, comments and trailing commas allowed
 program.extend(padroneConfig({ files: ['app.config.json', '.apprc'] }));
 
 // Look in parent directories too, and in the "myapp" key of package.json
@@ -776,7 +776,7 @@ program.cli({ context: { db, logger } });
 
 **Exit code:** When the run ends with an error (routing, validation, or a thrown action — including one that only surfaces on `drain()`), `cli()` sets the exit code through `runtime.setExitCode` to the error's `exitCode` (`PadroneError` carries one; 130 for SIGINT), or `1`. It uses `process.exitCode` rather than `process.exit()`, so output still flushes. Successful runs, `--help` and `--version` leave it at `0`.
 
-**Note:** Interactive prompting only triggers in `cli()` and `eval()`, not in `parse()` or `run()`. When a command has interactive meta and the runtime has `interactive: true`, missing field values are prompted before validation. The `--repl` flag starts a REPL session (optionally scoped to a command).
+**Note:** Interactive prompting only triggers in `cli()` and `eval()`, not in `parse()` or `run()`. When a command has interactive meta and the runtime can prompt (`interactive` isn't `'disabled'` or `'unsupported'`), missing field values are prompted before validation. The `--repl` flag starts a REPL session (optionally scoped to a command).
 
 ---
 
@@ -1385,7 +1385,7 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneProgress(config)` | Auto-managed progress indicators, and task lists with `progress.tasks()` |
 | `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable). Logs go to stderr with colored level labels; `stdout: true` sends `trace`/`debug`/`info` to stdout, and `format: 'json'` writes JSON lines (`logger.info({ userId }, 'signed in')` adds fields) |
 | `padroneJson(options?)` | `--json` flag: prints the result as JSON (iterator items one per line). `--jq <expr>` filters it (a built-in jq subset, or pass `jq: (input, expr) => outputs` for a full implementation) and `--template '{{.name}}'` formats it; both imply `--json`. Errors in `cli()` print as `{ "error": { ... } }` on stdout under JSON output |
-| `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and without a terminal the command fails unless `--yes` is given. Options: `message`, `when`, `flags` |
+| `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and without a terminal (CI, piped stdin or stdout, `--no-interactive`) the command fails unless `--yes` is given. Options: `message`, `when`, `flags` |
 | `padroneTiming()` | Execution timing |
 | `padroneUpdateCheck(config)` | Background version checking |
 | `padroneUpgrade(options?)` | `upgrade` command: self-update with the package manager the program was installed with (`--check`, `--to`, `--channel`) |

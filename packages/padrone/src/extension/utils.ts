@@ -215,14 +215,14 @@ export function valuesForCommand(
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(values)) {
     if (value === null || value === undefined) continue;
-    const name = known.has(key) ? key : aliases[key];
+    const name = known.has(key) ? key : Object.hasOwn(aliases, key) ? aliases[key] : undefined;
     if (name === undefined) {
-      if (loose) result[key] = value;
+      if (loose && key !== '__proto__') result[key] = value;
       continue;
     }
     if (isProvidedPositionally(command, name, positionalArgs)) continue;
     // The option's own name wins over an alias given alongside it
-    if (!(name in result) || name === key) result[name] = value;
+    if (!Object.hasOwn(result, name) || name === key) result[name] = value;
   }
   return result;
 }

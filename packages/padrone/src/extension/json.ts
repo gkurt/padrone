@@ -6,7 +6,7 @@ import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../
 import { compileJq, compileTemplate, formatJqOutput } from '../util/jq.ts';
 import { safeJsonStringify } from '../util/json.ts';
 import type { JsonOutputFilter } from './utils.ts';
-import { frameworkFlags, parseWithFallback, rawInputFlag, setJsonOutputFilter } from './utils.ts';
+import { frameworkFlags, parseWithFallback, rawInputFlag, setJsonOutputFilter, toFlag } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -93,8 +93,13 @@ function createJsonInterceptor(options: PadroneJsonOptions) {
           },
           // Parsing failed (e.g. an unknown command), so the flag is only in the raw input
           () => {
-            const json = rawInputFlag(ctx.input, 'json');
-            if (json === true || json === 'true') ctx.runtime.format = 'json';
+            // `--jq` / `--template` take a value (any value), so being given at all implies JSON
+            const given = (name: string) => {
+              const value = rawInputFlag(ctx.input, name);
+              return value !== undefined && value !== false;
+            };
+            const json = toFlag(rawInputFlag(ctx.input, 'json'));
+            if (json || (jqEnabled && given('jq')) || (templateEnabled && given('template'))) ctx.runtime.format = 'json';
           },
         );
       },

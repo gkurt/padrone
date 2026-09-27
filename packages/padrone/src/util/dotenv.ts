@@ -18,7 +18,14 @@ export function resolveEnvFiles(modes: string[] = [], local = true, base = true)
 
 /** Parse a `.env` file string into key-value pairs. */
 export function parseEnvFile(content: string): Record<string, string> {
-  const result: Record<string, string> = {};
+  return Object.fromEntries(parseEnvEntries(content).map(({ key, value }) => [key, value]));
+}
+
+type EnvEntry = { key: string; value: string; literal: boolean };
+
+/** Entries in file order; single-quoted values are `literal` (not expanded). */
+function parseEnvEntries(content: string): EnvEntry[] {
+  const result: EnvEntry[] = [];
   const lines = content.split('\n');
   let i = 0;
 
@@ -64,12 +71,12 @@ export function parseEnvFile(content: string): Record<string, string> {
       }
 
       if (quote === '"') value = unescapeDoubleQuoted(value);
-      result[key] = value;
+      result.push({ key, value, literal: quote === "'" });
     } else {
       // Unquoted: strip inline comments, trim
       const commentIndex = raw.indexOf(' #');
       if (commentIndex !== -1) raw = raw.slice(0, commentIndex);
-      result[key] = raw.trim();
+      result.push({ key, value: raw.trim(), literal: false });
     }
   }
 
@@ -89,8 +96,11 @@ function findClosingQuote(s: string, quote: string): number {
   return -1;
 }
 
+const ESCAPES: Record<string, string> = { n: '\n', r: '\r', t: '\t', '"': '"', '\\': '\\' };
+
+/** One pass, so `\\n` is a backslash and `n`; other escapes (like `\$`) are kept for variable expansion. */
 function unescapeDoubleQuoted(s: string): string {
-  return s.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+  return s.replace(/\\([nrt"\\])/g, (_, ch: string) => ESCAPES[ch]!);
 }
 
 // ── Variable expansion ──────────────────────────────────────────────────
@@ -224,21 +234,37 @@ function loadEnvFilesSync(
 ): Record<string, string> {
   const dir = options.dir ?? process.cwd();
   const fileNames = resolveEnvFiles(options.modes, options.local ?? true, options.base ?? true);
-  const merged: Record<string, string> = {};
-
+  // Later files win; values are expanded after merging, so `.env` can use a variable `.env.local` overrides
+  const entries = new Map<string, EnvEntry>();
   for (const name of fileNames) {
     const filePath = path.resolve(dir, name);
     if (!fs.existsSync(filePath)) continue;
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const parsed = parseEnvFile(content);
-    Object.assign(merged, parsed);
+    for (const entry of parseEnvEntries(fs.readFileSync(filePath, 'utf-8'))) entries.set(entry.key, entry);
   }
 
-  // Expand variables: file values + processEnv as lookup (processEnv wins in lookup unless override)
-  const lookup = options.override ? { ...processEnv, ...merged } : { ...merged, ...processEnv };
-  for (const key of Object.keys(merged)) {
-    merged[key] = expandVariables(merged[key]!, lookup);
-  }
+  // Expanded on demand, so chained and forward references work; processEnv wins in the lookup unless `override`.
+  // A reference back to a variable being expanded (`PATH=$PATH:/bin`) reads processEnv.
+  const expanded = new Map<string, string>();
+  const expanding = new Set<string>();
+  const expand = (key: string): string | undefined => {
+    const entry = entries.get(key);
+    if (!entry) return processEnv[key];
+    if (expanded.has(key)) return expanded.get(key);
+    if (expanding.has(key)) return processEnv[key] ?? '';
+    expanding.add(key);
+    const value = entry.literal ? entry.value : expandVariables(entry.value, lookup);
+    expanding.delete(key);
+    expanded.set(key, value);
+    return value;
+  };
+  const lookup = new Proxy({} as Record<string, string | undefined>, {
+    get: (_, key) => {
+      if (typeof key !== 'string') return undefined;
+      return options.override || processEnv[key] === undefined ? expand(key) : processEnv[key];
+    },
+  });
 
+  const merged: Record<string, string> = {};
+  for (const key of entries.keys()) merged[key] = expand(key)!;
   return merged;
 }

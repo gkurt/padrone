@@ -230,10 +230,13 @@ export function execCommand(
             context: context as object,
             evalInteractive: evalOptions?.interactive,
           };
+          // What validate interceptors passed to `next()` (e.g. a runtime with `.env` variables) carries into execute
+          let validatedCtx = validateCtx;
 
           const coreValidate = (
             validateCtx: InterceptorValidateContext,
           ): InterceptorValidateResult | Promise<InterceptorValidateResult> => {
+            validatedCtx = validateCtx;
             if (parseIssues?.command === validateCtx.command) return { args: undefined, argsResult: { issues: parseIssues.issues } as any };
             const { args: preprocessedArgs, issues } = buildCommandArgs(
               validateCtx.command,
@@ -254,7 +257,7 @@ export function execCommand(
             if (v.argsResult?.issues) return handleValidationIssues(v.argsResult as StandardSchemaV1.FailureResult, command, errorMode);
 
             const executeCtx: InterceptorExecuteContext = {
-              ...validateCtx,
+              ...validatedCtx,
               args: v.args,
               ...(dryRun && { dryRun }),
             };

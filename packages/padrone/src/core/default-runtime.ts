@@ -100,12 +100,12 @@ export function createTerminalReplSession(config: ReplSessionConfig) {
 
 /**
  * Auto-detect interactive mode when not explicitly set.
- * Returns 'disabled' in CI environments or non-TTY contexts, 'supported' otherwise.
+ * Returns 'disabled' in CI environments or when stdin or stdout isn't a terminal (prompts read stdin), 'supported' otherwise.
  */
 function detectInteractiveMode(): InteractiveMode {
   if (typeof process === 'undefined') return 'disabled';
   if (process.env.CI || process.env.CONTINUOUS_INTEGRATION) return 'disabled';
-  if (!process.stdout?.isTTY) return 'disabled';
+  if (!process.stdout?.isTTY || !process.stdin?.isTTY) return 'disabled';
   return 'supported';
 }
 

@@ -1,4 +1,4 @@
-import { getJsonSchema } from '../core/args.ts';
+import { coerceArgs, getJsonSchema } from '../core/args.ts';
 import { getGlobalArgs } from '../core/commands.ts';
 import { hasInteractiveConfig } from '../core/results.ts';
 import type { InteractivePromptConfig, ResolvedPadroneRuntime } from '../core/runtime.ts';
@@ -48,6 +48,33 @@ export function detectPromptConfig(
 }
 
 /**
+ * A prompt answer as the field's value: choices map back to their values (prompts may answer with their labels
+ * as strings), and text is coerced like CLI input (`'3'` → `3`, `'a, b'` → `['a', 'b']` for arrays).
+ */
+function answerValue(
+  answer: unknown,
+  field: string,
+  config: InteractivePromptConfig,
+  propSchema: Record<string, any> | undefined,
+  schema: PadroneSchema | undefined,
+): unknown {
+  const choices = config.choices;
+  if (choices) {
+    const toChoice = (v: unknown) => choices.find((c) => c.value === v || String(c.value) === String(v))?.value ?? v;
+    return Array.isArray(answer) ? answer.map(toChoice) : toChoice(answer);
+  }
+  if (typeof answer !== 'string' || !schema) return answer;
+  const value =
+    propSchema?.type === 'array'
+      ? answer
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : answer;
+  return coerceArgs({ [field]: value }, schema)[field];
+}
+
+/**
  * Prompt a single field and validate it against the schema that owns it.
  * Re-prompts with a warning until the user provides a valid value.
  */
@@ -57,12 +84,13 @@ async function promptWithValidation(
   currentData: Record<string, unknown>,
   schema: PadroneSchema | undefined,
   runtime: ResolvedPadroneRuntime,
+  propSchema: Record<string, any> | undefined,
 ): Promise<unknown> {
   let promptConfig = config;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const value = await runtime.prompt!(promptConfig);
+    const value = answerValue(await runtime.prompt!(promptConfig), field, config, propSchema, schema);
 
     if (!schema) return value;
 
@@ -157,7 +185,7 @@ export async function promptInteractiveFields(
     const config = detectPromptConfig(field, jsonProperties[field], fieldDescriptions[field]);
     // When forced, use the current value as the default
     if (force && result[field] !== undefined) config.default = result[field];
-    result[field] = await promptWithValidation(field, config, result, schemaFor(field), runtime);
+    result[field] = await promptWithValidation(field, config, result, schemaFor(field), runtime, jsonProperties[field]);
   };
 
   // Prompt each required interactive field with per-field validation

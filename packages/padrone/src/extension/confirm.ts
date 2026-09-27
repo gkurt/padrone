@@ -53,8 +53,14 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
 
           const { runtime, command } = ctx;
           const path = command.path || command.name;
+          // `--interactive` / `--no-interactive` (from the interactive extension) or eval's `interactive` option decide first;
+          // otherwise prompts need an interactive runtime whose stdin isn't piped
           const canPrompt =
-            !!runtime.prompt && runtime.interactive !== 'unsupported' && (ctx.evalInteractive ?? runtime.interactive !== 'disabled');
+            !!runtime.prompt &&
+            runtime.interactive !== 'unsupported' &&
+            (ctx.interactive ??
+              ctx.evalInteractive ??
+              (runtime.interactive === 'forced' || (runtime.interactive !== 'disabled' && runtime.stdin?.isTTY !== false)));
           const flag = confirmFlags.find((f) => f.length > 1) ?? confirmFlags[0];
           if (!canPrompt) {
             throw new ActionError(`"${path}" needs confirmation${flag ? `: pass ${flagDisplay(flag)} to run it without a prompt` : ''}`, {
@@ -82,7 +88,8 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
  * (`.configure({ mutation: true })`, or those picked by `when`), like `rm -i` or `terraform apply`.
  *
  * - `--yes` / `-y` skips the question.
- * - Without a terminal to ask in (CI, piped output, `interactive: 'unsupported'`), the command fails unless `--yes` is passed.
+ * - Without a terminal to ask in (CI, piped input or output, `interactive: 'unsupported'`, `--no-interactive`), the command fails
+ *   unless `--yes` is passed.
  * - Only `cli()` and the REPL ask; `eval()`, `run()`, serve, MCP and `tool()` run the command directly.
  *
  * ```ts

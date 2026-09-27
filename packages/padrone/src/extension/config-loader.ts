@@ -146,19 +146,13 @@ type BunParsers = {
 
 function parseConfigText(text: string, ext: string, file: string): ConfigData {
   const bun = (globalThis as { Bun?: BunParsers }).Bun;
-  const parser =
-    ext === '.yaml' || ext === '.yml'
-      ? bun?.YAML
-      : ext === '.toml'
-        ? bun?.TOML
-        : ext === '.json' || ext === '.jsonc'
-          ? bun?.JSONC
-          : undefined;
+  // Anything else (`.json`, `.jsonc`, extensionless rc files) is JSON with comments and trailing commas
+  const parser = ext === '.yaml' || ext === '.yml' ? bun?.YAML : ext === '.toml' ? bun?.TOML : bun?.JSONC;
   if (!parser && (ext === '.yaml' || ext === '.yml' || ext === '.toml')) {
     throw new ConfigError(`Cannot read ${file}: ${ext.slice(1).toUpperCase()} config files need Bun, or a custom \`loadConfig\``);
   }
   try {
-    return (parser ? parser.parse(text) : JSON.parse(ext === '.jsonc' || ext === '.json' ? stripJsonc(text) : text)) as ConfigData;
+    return (parser ? parser.parse(text) : JSON.parse(stripJsonc(text))) as ConfigData;
   } catch (err) {
     throw new ConfigError(`Invalid config file ${file}: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
   }
@@ -183,7 +177,7 @@ function readConfig({ fs, path }: NodeModules, { file, key }: FoundConfig): Mayb
     const specifier = _url ? _url.pathToFileURL(file).href : file;
     return import(/* @vite-ignore */ specifier).then((mod) => check(mod.default ?? mod));
   }
-  // Unknown extensions are read as JSON
+  // Unknown extensions are read as JSON (comments and trailing commas allowed)
   return check(parseConfigText(fs.readFileSync(file, 'utf-8'), ext, file));
 }
 

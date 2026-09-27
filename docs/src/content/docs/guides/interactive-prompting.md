@@ -9,7 +9,7 @@ Padrone can automatically prompt users for missing argument values when running 
 
 Interactive prompting requires two things:
 
-1. **Runtime support** — set `interactive: true` on the runtime
+1. **Runtime support** — a terminal (detected), or `interactive: 'supported'` on a custom runtime
 2. **Field configuration** — declare which fields to prompt via `interactive` or `optionalInteractive` in the arguments meta
 
 ```typescript
@@ -17,7 +17,6 @@ import { createPadrone } from 'padrone';
 import * as z from 'zod/v4';
 
 const program = createPadrone('app')
-  .runtime({ interactive: true })
   .command('init', (c) =>
     c
       .arguments(
@@ -168,11 +167,11 @@ createPadrone('my-cli', {
 });
 ```
 
-`padroneConfirm()` asks before `mutation: true` commands. For free-form text, `ctx.runtime.editor(template)` opens the user's editor and resolves with what they saved.
+`padroneConfirm()` asks before `mutation: true` commands; where it can't ask (CI, piped stdin or stdout, `--no-interactive`) the command fails unless `--yes` is given. For free-form text, `ctx.runtime.editor(template)` opens the user's editor and resolves with what they saved.
 
 ## Non-Interactive Runtimes
 
-When `runtime.interactive` is `false` (the default) or `prompt` is not available, interactive prompting is silently skipped. Missing required fields will cause validation errors as usual.
+When `runtime.interactive` is `'disabled'` or `'unsupported'`, or `prompt` is not available, interactive prompting is silently skipped. Missing required fields will cause validation errors as usual. By default it's `'disabled'` in CI and when stdin or stdout isn't a terminal (`app init < answers.txt`), and `-i` turns prompts back on unless the runtime is `'unsupported'`.
 
 This makes it safe to declare `interactive` in your arguments meta without breaking non-interactive environments like CI/CD pipelines, test runners, or web-based runtimes.
 
@@ -193,7 +192,7 @@ The default prompt implementation uses [Enquirer](https://github.com/enquirer/en
 
 ```typescript
 program.runtime({
-  interactive: true,
+  interactive: 'supported',
   prompt: async (config) => {
     // config.name    — field name
     // config.message — human-readable prompt text
@@ -218,7 +217,7 @@ const mockPrompt = async (config) => {
 };
 
 const program = createPadrone('app')
-  .runtime({ interactive: true, prompt: mockPrompt })
+  .runtime({ interactive: 'supported', prompt: mockPrompt })
   .command('init', (c) =>
     c
       .arguments(schema, { interactive: true })

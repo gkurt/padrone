@@ -168,6 +168,7 @@ function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSc
         const notes = [
           ...(isCount ? ['repeatable'] : []),
           ...(isVariadic ? ['takes multiple values'] : []),
+          ...((optMeta?.fromFile ?? prop?.fromFile) ? ['@file or - for stdin'] : []),
           ...(conflicts[key] ? [`conflicts with ${formatOptions(conflicts[key], ', ')}`] : []),
           ...(implies[key] ? [`implies ${formatValues(implies[key], ', ')}`] : []),
           ...(requires[key] ? [`requires ${formatOptions(requires[key], ', ')}`] : []),

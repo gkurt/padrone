@@ -79,7 +79,7 @@ export function expandAlias(tokens: readonly string[], aliases: AliasMap, root: 
 }
 
 /** The input as argv tokens (without a leading program name in a string from `eval()` / the REPL). */
-function inputTokens(input: PadroneInput | undefined, root: AnyPadroneCommand): string[] {
+export function inputTokens(input: PadroneInput | undefined, root: AnyPadroneCommand): string[] {
   if (input === undefined) return [];
   if (Array.isArray(input)) return input;
   const tokens = [...tokenizeInput(input)];

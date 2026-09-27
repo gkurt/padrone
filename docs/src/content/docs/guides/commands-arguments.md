@@ -94,6 +94,20 @@ See [Dependent options](/padrone/reference/args-meta/#dependent-options) and [Se
 
 > **Note:** Single-character short flags use `flags`, not `alias`. The `alias` field is for multi-character long alternatives. By default, camelCase names automatically get kebab-case aliases (e.g., `dryRun` → `--dry-run`). For booleans, `negative` defines custom keyword(s) that set the option to `false` and disables the default `--no-` prefix (see [Arguments Metadata reference](/padrone/reference/args-meta/#custom-negation)).
 
+### Values from Files and Response Files
+
+With `fromFile: true`, a value can name a file to read it from: `--body @notes.md` reads the file, `--body -` reads stdin, and `@@text` passes `@text`. Only command-line values are read — never env, config, or serve/MCP/`tool()` args (see [Values from Files](/padrone/reference/args-meta/#values-from-files)).
+
+```typescript
+.arguments(z.object({ body: z.string() }), { fields: { body: { fromFile: true } } })
+```
+
+For long command lines, `padroneResponseFiles()` expands `@file` arguments into the arguments listed in the file (see the [API reference](/padrone/reference/api/#padroneresponsefilesoptions)):
+
+```bash
+app @deploy-args.txt deploy   # deploy-args.txt: "--env staging" on one line, "--tag v2" on the next
+```
+
 ## Positional Arguments
 
 Positional arguments let users provide values without argument names:

@@ -97,6 +97,7 @@ function mergeFieldRules(own: FieldRules, globals: FieldRules, globalOnly: (key:
   return {
     counts: new Set([...own.counts, ...[...globals.counts].filter(globalOnly)]),
     variadic: new Set([...own.variadic, ...[...globals.variadic].filter(globalOnly)]),
+    fromFile: new Set([...own.fromFile, ...[...globals.fromFile].filter(globalOnly)]),
     conflicts: { ...pick(globals.conflicts), ...own.conflicts },
     implies: { ...pick(globals.implies), ...own.implies },
     requires: { ...pick(globals.requires), ...own.requires },
@@ -129,6 +130,11 @@ function getCommandOptionInfo(command: AnyPadroneCommand): CommandOptionInfo {
     schemaArity: (key, short) => own.schemaArity(key, short) ?? globals.schemaArity(key, short),
     interceptorOptions,
   };
+}
+
+/** Field rules of a command, including those of the global args it doesn't override. */
+export function getCommandFieldRules(command: AnyPadroneCommand): FieldRules {
+  return getCommandOptionInfo(command).rules;
 }
 
 const DRY_RUN_LONG_NAMES = ['dry-run', 'dryRun'];

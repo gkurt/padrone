@@ -686,6 +686,34 @@ A command always wins over an alias of the same name, and `alias set` refuses na
 
 ---
 
+### padroneResponseFiles(options?)
+
+Extension for response files, like javac's `@argfiles` or clap's argfiles: each `@file` argument is replaced by the arguments in the file, before routing.
+
+```typescript
+import { padroneResponseFiles } from 'padrone';
+
+program.extend(padroneResponseFiles());
+```
+
+```bash
+my-cli @deploy.args deploy   # deploy.args: --env staging
+                             #              --tag "release 2"
+```
+
+- Each line is split like a shell command line (quotes group words); blank lines and lines starting with `#` are skipped.
+- Paths are relative to the working directory. Response files can reference others, up to 10 levels deep.
+- A missing file (or a bare `@`) is an error. Write `@@text` for an argument that starts with `@` (`@@scope/pkg` → `@scope/pkg`); arguments after `--` are never expanded.
+- Expanded in `cli()`, `eval()` and the REPL; serve, MCP and `tool()` calls never read response files.
+- Options with [`fromFile`](/padrone/reference/args-meta/#values-from-files) see the expanded arguments, so write `--body=@notes.md` (never expanded, as it starts with `--`) or `--body @@notes.md` to read a file, or pick another `prefix`.
+
+**Configuration:**
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `prefix` | `string` | `'@'` | The character that marks a response file |
+
+---
+
 ### program.dirs
 
 The standard per-user directories for the program, named after it (none are created):
@@ -1391,6 +1419,7 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneUpdateCheck(config)` | Background version checking |
 | `padroneUpgrade(options?)` | `upgrade` command: self-update with the package manager the program was installed with (`--check`, `--to`, `--channel`) |
 | `padroneAliases(options?)` | User-defined command aliases (`alias set|list|delete`), expanded before routing |
+| `padroneResponseFiles(options?)` | Response files: `@file` arguments expand into the file's arguments (`@@` escapes, `prefix` option) |
 
 The following extensions live in their own subpath imports to keep optional dependencies and large transitive surfaces out of the main bundle:
 

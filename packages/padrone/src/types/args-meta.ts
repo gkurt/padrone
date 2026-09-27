@@ -60,6 +60,12 @@ export interface PadroneFieldMeta {
    * Positionals after it need `--` (or come first). `--tag=a` still takes a single value; repeats keep accumulating.
    */
   variadic?: boolean;
+  /**
+   * Let a command-line value (option or positional) name a file to read it from, like curl's `-d @file`:
+   * `@path` reads the file (UTF-8, relative to cwd), `-` reads stdin, and `@@text` passes `@text` literally.
+   * For string and string array fields. Values from env and config files, and serve/MCP/`tool()` calls, are taken as given.
+   */
+  fromFile?: boolean;
   /** Options (by field name) that can't be used together with this one. Only options the user provided are checked. */
   conflicts?: readonly string[] | string;
   /**

@@ -192,6 +192,16 @@ test.skip('Types - Stdin', () => {
   expectTypeOf(program.eval('piped')).toMatchTypeOf<Promise<any>>();
 });
 
+/** This test verifies that `fromFile` fields (whose `-` reads stdin) make commands async */
+test.skip('Types - fromFile', () => {
+  const program = createPadrone('test')
+    .command('plain', (c) => c.arguments(z.object({ body: z.string() }), { fields: { body: { description: 'x' } } }))
+    .command('file', (c) => c.arguments(z.object({ body: z.string() }), { fields: { body: { fromFile: true } } }));
+
+  expectTypeOf(program.eval('plain')).not.toMatchTypeOf<Promise<any>>();
+  expectTypeOf(program.eval('file')).toMatchTypeOf<Promise<any>>();
+});
+
 /** This test verifies that command override/extension types work correctly */
 test.skip('Types - Command override', () => {
   // Override builder receives existing command's args type

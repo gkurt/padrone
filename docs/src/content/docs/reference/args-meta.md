@@ -34,6 +34,7 @@ z.object({
 | `group` | `string` | Group name for organizing under a labeled section in help output |
 | `count` | `boolean` | Count repeated flags into a number (`-vvv` → `3`) |
 | `variadic` | `boolean` | Array option that takes every following value up to the next option (`--tag a b c`) |
+| `fromFile` | `boolean` | Command-line values can be `@path` (the file's contents) or `-` (stdin); `@@text` passes `@text` |
 | `conflicts` | `string \| string[]` | Options that can't be used together with this one |
 | `implies` | `Record<string, unknown>` | Values for other options when this one is used |
 | `requires` | `string \| string[]` | Options that must be provided when this one is |
@@ -108,7 +109,7 @@ Per-argument configuration that supplements or overrides `.meta()`:
 }
 ```
 
-This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `variadic`, `conflicts`, `implies`, `requires`, `requiredIf`, `requiredUnless`, `sensitive` — plus `complete`, which only works here since functions don't survive `.meta()`.
+This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `variadic`, `fromFile`, `conflicts`, `implies`, `requires`, `requiredIf`, `requiredUnless`, `sensitive` — plus `complete`, which only works here since functions don't survive `.meta()`.
 
 ### autoAlias
 
@@ -533,6 +534,27 @@ z.object({
 ```
 
 `--tags a b c --force` gives `tags: ['a', 'b', 'c']`. Positionals after a variadic option need `--` (`--tags a b -- x.txt`) or can come first (`x.txt --tags a b`). `--tags=a` takes a single value, and repeated flags keep accumulating. Help marks it `(takes multiple values)`.
+
+---
+
+## Values from Files
+
+`fromFile: true` on a string (or string array) option or positional lets its value be read from a file, like `gh -F body=@file` or `curl -d @file`:
+
+```typescript
+.arguments(z.object({ title: z.string(), body: z.string() }), {
+  positional: ['title'],
+  fields: { body: { fromFile: true } },
+})
+```
+
+- `--body @notes.md` reads `notes.md` (UTF-8, as is; relative to the working directory). A file that can't be read is a validation error, e.g. `body: Cannot read "notes.md": file not found`.
+- `--body -` (or `@-`) reads stdin, through the runtime's `stdin`. Only one value per run can read stdin, and not when the command's `stdin` field would read it too.
+- `--body @@me` passes `@me`: a leading `@@` escapes the `@`. Other values are taken as given.
+- For array options, each value is read on its own: `--tag @a.txt --tag b`.
+- Only values typed on the command line (`cli()`, `eval()`, the REPL) are read. Values from env variables and config files, and args from serve, MCP and `tool()` calls, are taken literally, so a remote client can't read the server's files.
+
+Help marks the option `(@file or - for stdin)`. Reading stdin is async, so a command with a `fromFile` field in its `fields` meta is typed as async; set with `.meta({ fromFile: true })` on the schema, mark the command `.async()`.
 
 ---
 

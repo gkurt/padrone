@@ -40,6 +40,8 @@ export type {
 export { createTerminalTaskList } from './progress-tasks.ts';
 export type { WithRepl } from './repl.ts';
 export { padroneRepl } from './repl.ts';
+export type { PadroneResponseFilesOptions } from './response-files.ts';
+export { padroneResponseFiles } from './response-files.ts';
 export { padroneSignalHandling } from './signal.ts';
 export { padroneStdin } from './stdin.ts';
 export type { PadroneSuggestionsOptions } from './suggestions.ts';

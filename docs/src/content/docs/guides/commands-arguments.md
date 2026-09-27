@@ -341,7 +341,7 @@ const program = createPadrone('app')
   );
 ```
 
-Multiple config file paths can be provided in the `files` array — the first existing file is used. The `--config <path>` / `-c <path>` flag picks a file explicitly; a missing or unparsable file is a `ConfigError`. JSON (with comments and trailing commas), JavaScript and TypeScript modules work everywhere; YAML and TOML need Bun, or a custom `loadConfig`. If no schema is provided, config values are matched against the argument schema directly. `padroneConfig` can be applied at the program level (inherited by all commands) or at the command level.
+Multiple config file paths can be provided in the `files` array — the first existing file is used. The `--config <path>` / `-c <path>` flag picks a file explicitly (not for serve, MCP and `tool()` calls, which can't point the program at a local file); a missing or unparsable file is a `ConfigError`, and an empty one is an empty config. JSON (with comments and trailing commas), JavaScript and TypeScript modules work everywhere; YAML and TOML need Bun, or a custom `loadConfig`. If no schema is provided, config values are matched against the argument schema directly. `padroneConfig` can be applied at the program level (inherited by all commands) or at the command level.
 
 Priority order: CLI argument > Stdin > Environment variable > Config file > Interactive prompt > Default value
 

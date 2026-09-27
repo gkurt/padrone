@@ -632,6 +632,7 @@ z.object({
 - Help, generated docs and man pages don't show its default or examples.
 - MCP, serve and `tool()` input schemas mark it `writeOnly` without `default` or `examples`.
 - Padrone's own error messages never include option values.
+- `config list` (from `padroneConfig({ command: true })`) shows its value as `[redacted]`.
 - Extensions that log or record args can call `redactArgs(command, args)` (from `'padrone'`): a copy with sensitive fields, nested and global ones included, replaced by `'[redacted]'`.
 
 ## Completion Values

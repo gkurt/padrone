@@ -205,10 +205,21 @@ export function isLooseSchema(schema: PadroneSchema | undefined): boolean {
   }
 }
 
+/** A value with the `null`s in its nested plain objects removed. */
+function withoutNulls(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, v]) => v !== null)
+      .map(([k, v]) => [k, withoutNulls(v)]),
+  );
+}
+
 /**
  * Values from an outside source (a config file, environment variables) keyed for the command, before they fill `rawArgs`:
  * aliases and kebab-case names (`dry-run`) map to option names, keys the command doesn't know are dropped (unless its schema
- * allows extra keys), `null` means unset, and positionals already given on the command line are left to the command line.
+ * allows extra keys), `null` means unset (in nested objects too), and positionals already given on the command line are left
+ * to the command line.
  */
 export function valuesForCommand(
   command: AnyPadroneCommand,
@@ -230,8 +241,9 @@ export function valuesForCommand(
   const loose = command.argsSchema ? isLooseSchema(command.argsSchema) : false;
 
   const result: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(values)) {
-    if (value === null || value === undefined) continue;
+  for (const [key, raw] of Object.entries(values)) {
+    if (raw === null || raw === undefined) continue;
+    const value = withoutNulls(raw);
     const name = known.has(key) ? key : Object.hasOwn(aliases, key) ? aliases[key] : undefined;
     if (name === undefined) {
       if (loose && key !== '__proto__') result[key] = value;

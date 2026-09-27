@@ -1,5 +1,5 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
-import { coerceArgs, extractSchemaMetadata, getJsonSchema } from '../core/args.ts';
+import { coerceArgs, extractSchemaMetadata, getJsonSchema, isSensitiveField, REDACTED } from '../core/args.ts';
 import { getGlobalArgs, resolveCommand } from '../core/commands.ts';
 import { ActionError, ConfigError } from '../core/errors.ts';
 import { formatIssueMessages } from '../core/validate.ts';
@@ -91,7 +91,16 @@ function parseValue(raw: string, schema: PadroneSchema | undefined, path: readon
 
 // ── Schemas the key belongs to ───────────────────────────────────────────
 
-type OptionMatch = { schema: PadroneSchema; name: string };
+type OptionMatch = { schema: PadroneSchema; name: string; sensitive: boolean };
+
+function isSensitiveOption(schema: PadroneSchema, meta: { fields?: any } | undefined, name: string): boolean {
+  try {
+    const fields = meta?.fields ?? {};
+    return isSensitiveField(Object.hasOwn(fields, name) ? fields[name] : undefined, getJsonSchema(schema).properties?.[name]);
+  } catch {
+    return false;
+  }
+}
 
 function optionName(schema: PadroneSchema, meta: { fields?: any; autoAlias?: boolean } | undefined, key: string): string | undefined {
   try {
@@ -118,7 +127,7 @@ function findOptions(target: AnyPadroneCommand, key: string, groupName: string) 
       seen.add(schema);
       loose ||= isLooseSchema(schema);
       const name = optionName(schema, meta, key);
-      if (name) matches.push({ schema, name });
+      if (name) matches.push({ schema, name, sensitive: isSensitiveOption(schema, meta, name) });
     }
     for (const child of command.commands ?? []) {
       const resolved = resolveCommand(child);
@@ -189,11 +198,12 @@ async function loadLayers(source: ConfigSource, command: AnyPadroneCommand, env:
   return { layers, data: layers.reduce<ConfigData>((acc, layer) => deepMerge(acc, layer.data), {}) };
 }
 
-async function userFile(source: ConfigSource, command: AnyPadroneCommand, env: Env): Promise<string> {
+/** The user config file; one that doesn't exist yet gets the first name in `files` that `set` can write (or `edit`, any text). */
+async function userFile(source: ConfigSource, command: AnyPadroneCommand, env: Env, anyText = false): Promise<string> {
   const appName = source.locate(command, env).xdgAppName ?? getRootCommand(command).name;
-  const found = await findUserConfigFile(source.files, appName, env);
+  const found = await findUserConfigFile(source.files, appName, env, anyText ? (file) => !isScriptConfigFile(file) : undefined);
   if (!found) throw new ActionError('Cannot locate the user config directory: set HOME or XDG_CONFIG_HOME');
-  if (!found.file) throw new ActionError(`No JSON file name in the config \`files\` to create in ${found.dir}`);
+  if (!found.file) throw new ActionError(`No ${anyText ? '' : 'JSON '}file name in the config \`files\` to create in ${found.dir}`);
   return found.file;
 }
 
@@ -259,6 +269,12 @@ export function addConfigCommand(
   /** The key path in the user file: inside `profiles.<name>` with `--profile`. */
   const filePath = (path: string[], profile: string | undefined) => (profile ? ['profiles', profile, ...path] : path);
 
+  /** The path `set` stores a key under: an alias or kebab-case name (`dry-run`) as its option name (`dryRun`). */
+  const optionPath = (command: AnyPadroneCommand, path: string[]) => {
+    const name = source.schema ? undefined : findOptions(targetOf(command), path[0]!, groupName).matches[0]?.name;
+    return name ? [name, ...path.slice(1)] : path;
+  };
+
   return builder.command(groupName, (group) =>
     group
       .configure({ description: 'Manage configuration' })
@@ -271,7 +287,7 @@ export function addConfigCommand(
           .action(async (args, ctx) => {
             const path = splitKey(args.key, `${groupName} get <key>`);
             const { data } = await effective(ctx.command, ctx.runtime.env(), profileArg(args));
-            const value = getPath(data, path);
+            const value = getPath(data, path) ?? getPath(data, optionPath(ctx.command, path));
             if (value === undefined) throw new ActionError(`"${args.key}" is not set`);
             return value;
           }),
@@ -305,7 +321,8 @@ export function addConfigCommand(
             const path = splitKey(args.key, `${groupName} unset <key>`);
             const file = await userFile(source, targetOf(ctx.command), ctx.runtime.env());
             const profile = profileArg(args);
-            const updated = unsetPath(await readWritable(file, groupName), filePath(path, profile));
+            const data = await readWritable(file, groupName);
+            const updated = unsetPath(data, filePath(path, profile)) ?? unsetPath(data, filePath(optionPath(ctx.command, path), profile));
             if (!updated) throw new ActionError(`"${args.key}" is not set${profile ? ` in profile "${profile}"` : ''} in ${file}`);
             await writeText(file, `${JSON.stringify(updated, null, 2)}\n`);
             return `Unset ${args.key}${profile ? ` in profile "${profile}"` : ''} (${file})`;
@@ -324,7 +341,14 @@ export function addConfigCommand(
             const sourceOf = (path: string[]) =>
               layers?.findLast((layer) => profile && getPath(layer.data, ['profiles', profile, ...path]) !== undefined)?.file ??
               layers?.findLast((layer) => getPath(layer.data, path) !== undefined)?.file;
-            const lines = entries.map(([path, value]) => [`${path.join('.')}=${formatValue(value)}`, sourceOf(path)] as const);
+            const target = targetOf(ctx.command);
+            const sensitive = (key: string) =>
+              source.schema
+                ? isSensitiveOption(source.schema as PadroneSchema, undefined, key)
+                : findOptions(target, key, groupName).matches.some((match) => match.sensitive);
+            const lines = entries.map(
+              ([path, value]) => [`${path.join('.')}=${sensitive(path[0]!) ? REDACTED : formatValue(value)}`, sourceOf(path)] as const,
+            );
             const width = Math.max(...lines.map(([line]) => line.length)) + 2;
             const header = profile ? [`Profile: ${profile}`] : [];
             return [...header, ...lines.map(([line, file]) => (file ? `${line.padEnd(width)}${file}` : line))].join('\n');
@@ -337,7 +361,7 @@ export function addConfigCommand(
           .action(async (_args, ctx) => {
             const env = ctx.runtime.env();
             const target = targetOf(ctx.command);
-            const file = await userFile(source, target, env);
+            const file = await userFile(source, target, env, true);
             const { layers } = await loadLayers(source, target, env);
             const loaded = layers?.length
               ? [
@@ -355,7 +379,7 @@ export function addConfigCommand(
           .configure({ description: 'Open the user config file in your editor', mutation: true })
           .async()
           .action(async (_args, ctx) => {
-            const file = await userFile(source, targetOf(ctx.command), ctx.runtime.env());
+            const file = await userFile(source, targetOf(ctx.command), ctx.runtime.env(), true);
             if (isScriptConfigFile(file)) throw new ActionError(`Cannot edit ${file}: it's a script, open it in your editor`);
             const json = isJsonConfigFile(file);
             const text = (await readText(file)) ?? (json ? '{\n}\n' : '');

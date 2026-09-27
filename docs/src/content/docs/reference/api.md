@@ -314,10 +314,10 @@ program.extend(padroneConfig({ files: 'app.config.json', disabled: true }));
 **Options:**
 | Property | Type | Description |
 |----------|------|-------------|
-| `files` | `string \| string[]` | Config file path(s). When multiple paths are provided, the first existing file is used |
+| `files` | `string \| string[]` | Config file path(s). When multiple paths are provided, the first existing file is used. An empty file, or one with only comments, is an empty config |
 | `schema` | `StandardSchema` | Optional schema to validate/transform config values |
 | `disabled` | `boolean` | Disable config file loading |
-| `flag` | `boolean` | Enable/disable the `--config`/`-c` flag (default: `true`) |
+| `flag` | `boolean` | Enable/disable the `--config`/`-c` flag (default: `true`). Serve, MCP and `tool()` calls can't use it: for them it's an unknown option |
 | `inherit` | `boolean` | Whether the config interceptor inherits to subcommands (default: `true`) |
 | `xdg` | `boolean \| string` | Also search the user config directory (`~/.config/<app>`, `~/Library/Application Support/<app>`, `%APPDATA%\<app>`) after cwd. `true` uses the program name |
 | `searchParents` | `boolean` | Also search the parent directories of cwd, nearest first, like cosmiconfig (default: `false`) |
@@ -334,12 +334,12 @@ Config values have the lowest precedence: CLI > stdin > env > config. Not includ
 
 | Subcommand | Does |
 |------------|------|
-| `config get <key>` | Prints the effective value from the configs the program loads (with the selected profile applied) |
+| `config get <key>` | Prints the effective value from the configs the program loads (with the selected profile applied). Like `unset`, it takes an option's alias or kebab-case name too |
 | `config set <key> <value>` | Writes to the user config file: the first of `files` in the user config directory, else the first JSON name in `files`. The key must be an option (name, alias or kebab-case name) of the command or one of its subcommands, or of global args, unless one of their schemas is loose; with a `schema`, the key and value must fit it instead. The value is coerced by the option's type (`[...]`/`{...}` are read as JSON) and validated. Only JSON files are written (comments are dropped); YAML, TOML and script files are refused |
 | `config unset <key>` | Removes a value from the user config file (and objects left empty) |
-| `config list` (`ls`) | Prints every effective value as `key=value` with the file it comes from |
+| `config list` (`ls`) | Prints every effective value as `key=value` with the file it comes from; values of `sensitive` options show as `[redacted]` |
 | `config path` | Prints the user config file and the files loaded, lowest precedence first |
-| `config edit` | Opens the user config file in `runtime.editor()` and saves it only if it still parses |
+| `config edit` | Opens the user config file in `runtime.editor()` and saves it only if it still parses. A new file gets the first name in `files` that isn't a script, so YAML and TOML work too |
 
 `set`, `unset` and `edit` are `mutation: true`. The group doesn't load configs into its own arguments.
 

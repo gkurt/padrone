@@ -26,7 +26,7 @@ type EnvEntry = { key: string; value: string; literal: boolean };
 /** Entries in file order; single-quoted values are `literal` (not expanded). */
 function parseEnvEntries(content: string): EnvEntry[] {
   const result: EnvEntry[] = [];
-  const lines = content.split('\n');
+  const lines = content.split(/\r?\n/);
   let i = 0;
 
   while (i < lines.length) {
@@ -105,6 +105,20 @@ function unescapeDoubleQuoted(s: string): string {
 
 // ── Variable expansion ──────────────────────────────────────────────────
 
+/** The `}` that closes a `${` whose body starts at `start`, past nested `${...}` in a default. */
+function findClosingBrace(value: string, start: number): number {
+  let depth = 0;
+  for (let i = start; i < value.length; i++) {
+    if (value[i] === '$' && value[i + 1] === '{') {
+      depth++;
+      i++;
+    } else if (value[i] === '}' && depth-- === 0) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 /**
  * Expand `$VAR`, `${VAR}`, `${VAR:-default}`, `${VAR-default}` in a string.
  * Escaped `\$` produces a literal `$`. Undefined variables resolve to `""`.
@@ -130,7 +144,7 @@ export function expandVariables(value: string, env: Record<string, string | unde
       if (value[i] === '{') {
         // ${VAR}, ${VAR:-default}, ${VAR-default}
         i++;
-        const closeIdx = value.indexOf('}', i);
+        const closeIdx = findClosingBrace(value, i);
         if (closeIdx === -1) {
           result += `\${${value.slice(i)}`;
           break;
@@ -139,19 +153,16 @@ export function expandVariables(value: string, env: Record<string, string | unde
         const expr = value.slice(i, closeIdx);
         i = closeIdx + 1;
 
-        const colonDashIdx = expr.indexOf(':-');
-        const dashIdx = colonDashIdx === -1 ? expr.indexOf('-') : -1;
+        // The operator right after the name, so a default may hold other operators (`${A-${B:-x}}`)
+        const [, varName = '', operator] = /^(\w*)(:-|-)?/.exec(expr)!;
+        const fallback = expr.slice(varName.length + (operator?.length ?? 0));
 
-        if (colonDashIdx !== -1) {
+        if (operator === ':-') {
           // ${VAR:-default} — use default if unset or empty
-          const varName = expr.slice(0, colonDashIdx);
-          const fallback = expr.slice(colonDashIdx + 2);
           const val = env[varName];
           result += val ? val : expandVariables(fallback, env);
-        } else if (dashIdx !== -1) {
+        } else if (operator === '-') {
           // ${VAR-default} — use default only if unset
-          const varName = expr.slice(0, dashIdx);
-          const fallback = expr.slice(dashIdx + 1);
           const val = env[varName];
           result += val !== undefined ? val : expandVariables(fallback, env);
         } else {

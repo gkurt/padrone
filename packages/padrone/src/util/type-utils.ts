@@ -45,10 +45,17 @@ export type HasInteractive<TMeta> = TMeta extends { interactive: true | readonly
     ? true
     : false;
 
+/** Whether a field in the meta's `fields` has `fromFile: true` (a `-` value reads stdin). */
+type HasFromFile<TMeta> = TMeta extends { fields: infer F }
+  ? true extends { [K in keyof F]: F[K] extends { fromFile: true } ? true : never }[keyof F]
+    ? true
+    : false
+  : false;
+
 /**
  * Combines schema-level async detection with meta-level interactive and stdin detection.
  * Returns `true` if the existing async flag is set, the schema is branded async, or the meta has interactive fields
- * or reads stdin (piped input is read asynchronously).
+ * or reads stdin (piped input is read asynchronously), including `fromFile` fields.
  */
 export type OrAsyncMeta<TExisting extends boolean, TMeta> = TExisting extends true
   ? true
@@ -56,7 +63,7 @@ export type OrAsyncMeta<TExisting extends boolean, TMeta> = TExisting extends tr
     ? true
     : TMeta extends { stdin: string }
       ? true
-      : false;
+      : HasFromFile<TMeta>;
 
 /**
  * Unwraps a result type by resolving Promises and collecting iterables into arrays.

@@ -18,6 +18,7 @@ import type {
 } from '../types/index.ts';
 import { getCommandRuntime } from './commands.ts';
 import { RoutingError, SignalError, ValidationError } from './errors.ts';
+import { readFileValues } from './from-file.ts';
 import {
   checkInterceptorRequirements,
   resolveRegisteredInterceptors,
@@ -298,11 +299,18 @@ export function execCommand(
           return thenMaybe(warnIfUnexpectedAsync(validatedOrPromise, command), continueAfterValidate) as any;
         };
 
+        // `fromFile` values typed on the command line are read before validate interceptors add env and config values
+        const readFilesThenValidate = () =>
+          thenMaybe(readFileValues(command, parsed.rawArgs, parsed.positionalArgs, runtime, caller), (issues) => {
+            if (issues) parseIssues = { command, issues: [...(parseIssues?.command === command ? parseIssues.issues : []), ...issues] };
+            return runValidateAndExecute();
+          });
+
         return wrapWithCommandLifecycle(
           commandOnlyInterceptors,
           command,
           resolvedInput,
-          runValidateAndExecute,
+          readFilesThenValidate,
           (result) => withDrain({ command: command as any, args: undefined, argsResult: undefined, result }),
           signal,
           context,

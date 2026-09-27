@@ -48,6 +48,7 @@ Additional opt-in extensions are available for advanced features:
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking |
 | `padroneUpgrade(options?)` | `'padrone'` | Self-update command (`upgrade`, `--check`, `--to`, `--channel`) using the package manager the program was installed with |
 | `padroneAliases(options?)` | `'padrone'` | User-defined command aliases (`alias set co "checkout --force"`), expanded before routing |
+| `padroneResponseFiles(options?)` | `'padrone'` | Response files: `my-cli @args.txt` reads arguments from `args.txt` (`@@` escapes a leading `@`) |
 | `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support; `remote: 'exit'` returns an app's last frame to serve, MCP and `tool()` calls |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |

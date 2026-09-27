@@ -160,8 +160,9 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
       // A subcommand extends its parent's schema; the root extends its own earlier schema.
       const baseSchema = existingCommand.parent ? existingCommand.parent.argsSchema : existingCommand.argsSchema;
       const resolvedArgs = (typeof schema === 'function' ? schema(baseSchema) : schema) as PadroneSchema | undefined;
-      // Piped stdin is read asynchronously, like prompts
-      const isAsync = existingCommand.isAsync || isAsyncBranded(resolvedArgs) || hasInteractiveConfig(meta) || !!meta?.stdin;
+      // Piped stdin is read asynchronously, like prompts (a `fromFile` field reads it for `-`)
+      const readsStdin = !!meta?.stdin || Object.values(meta?.fields ?? {}).some((field) => field?.fromFile);
+      const isAsync = existingCommand.isAsync || isAsyncBranded(resolvedArgs) || hasInteractiveConfig(meta) || readsStdin;
       return createPadroneBuilder({ ...existingCommand, argsSchema: resolvedArgs, meta, isAsync }) as any;
     },
     globalArgs(schema?: unknown, meta?: PadroneGlobalArgsMeta) {

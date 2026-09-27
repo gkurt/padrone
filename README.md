@@ -141,6 +141,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.extend(padroneUpdateCheck(config?))` | Background version check (extension) |
 | `.extend(padroneUpgrade(options?))` | `upgrade` self-update command (extension) |
 | `.extend(padroneAliases(options?))` | User-defined command aliases (extension) |
+| `.extend(padroneResponseFiles(options?))` | `@file` arguments expand into the file's arguments (extension) |
 | `.async()` | Mark as async validation |
 
 ### Program (run commands)
@@ -174,6 +175,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `group` | `'Advanced'` | Group in help output |
 | `count` | `true` | Count repeated flags into a number (`-vvv` → 3) |
 | `variadic` | `true` | Array option taking all following values (`--tag a b c`) |
+| `fromFile` | `true` | `@path` reads the value from a file, `-` from stdin (`@@` escapes) |
 | `conflicts` | `'json'` | Options that can't be used together with this one |
 | `implies` | `{ color: false }` | Values for other options when this one is used |
 

@@ -166,6 +166,8 @@ export interface FieldRules {
   counts: Set<string>;
   /** Array fields that take every following value up to the next option (`--tag a b c`). */
   variadic: Set<string>;
+  /** Fields whose command-line values can be read from a file (`@path`) or stdin (`-`). */
+  fromFile: Set<string>;
   /** Field → the fields it can't be combined with. */
   conflicts: Record<string, string[]>;
   /** Field → the values it implies for other fields. */
@@ -184,6 +186,7 @@ export function extractFieldRules(
   const rules: FieldRules = {
     counts: new Set(),
     variadic: new Set(),
+    fromFile: new Set(),
     conflicts: {},
     implies: {},
     exactlyOne: toGroups(groups?.exactlyOne),
@@ -202,6 +205,7 @@ export function extractFieldRules(
     const prop = properties[key];
     if (meta?.count ?? prop?.count) rules.counts.add(key);
     if (meta?.variadic ?? prop?.variadic) rules.variadic.add(key);
+    if (meta?.fromFile ?? prop?.fromFile) rules.fromFile.add(key);
     const conflicts = meta?.conflicts ?? prop?.conflicts;
     if (conflicts) rules.conflicts[key] = typeof conflicts === 'string' ? [conflicts] : [...conflicts];
     const implies = meta?.implies ?? prop?.implies;

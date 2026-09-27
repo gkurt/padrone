@@ -1,18 +1,24 @@
 /**
- * A dependency-free subset of jq for `--jq` and `--template`:
- * - paths: `.`, `.a.b`, `."a-b"`, `.["a"]`, `.[0]`, `.[-1]`, `.[2:4]`, `.[]`, `.a[]`, optional `?`
+ * A dependency-free subset of jq for `--jq` and `--template`, evaluated lazily (so `limit`, `first(f)` and `any` stop early):
+ * - paths: `.`, `.a.b`, `."a-b"`, `.["a"]`, `.[0]`, `.[-1]`, `.[2:4]`, `.[]`, `.a[]`, `..`, optional `?`
  * - pipes `|`, comma `,`, alternative `//`, `and` / `or`, comparisons `== != < <= > >=`, arithmetic `+ - * / %`
- * - `if … then … elif … else … end`, variables (`. as $x | …`, `$x`, `{$x}`)
- * - literals, arrays `[...]`, objects `{a, b: .c, "d": 1, (.k): .v}`, parentheses
+ * - `if … then … elif … else … end`, variables (`. as $x | …`, `$x`, `{$x}`, `$ENV`)
+ * - literals, string interpolation (`"\(.a) and \(.b)"`, `@sh "echo \(.name)"`), arrays `[...]`,
+ *   objects `{a, b: .c, "d": 1, (.k): .v}`, parentheses
  * - builtins: `select(f)`, `map(f)`, `sort_by(f)`, `group_by(f)`, `unique_by(f)`, `min_by(f)`, `max_by(f)`, `has(k)`,
  *   `join(s)`, `split(s)`, `ltrimstr(s)`, `rtrimstr(s)`, `startswith(s)`, `endswith(s)`, `test(re; flags)`,
  *   `sub(re; str; flags)`, `gsub(re; str; flags)`, `keys`, `length`, `not`, `empty`, `type`, `tostring`, `tonumber`,
  *   `tojson`, `fromjson`, `first`, `last`, `add`, `sort`, `reverse`, `unique`, `min`, `max`, `to_entries`,
- *   `from_entries`, `ascii_downcase`, `ascii_upcase`
- * - formats: `@text`, `@json`, `@csv`, `@tsv`, `@html`, `@uri`, `@base64`
+ *   `from_entries`, `with_entries(f)`, `ascii_downcase`, `ascii_upcase`, `range(n)`, `range(a; b; step)`, `limit(n; f)`,
+ *   `first(f)`, `last(f)`, `any`, `all`, `any(f)`, `all(f)`, `any(gen; f)`, `all(gen; f)`, `values`, `nulls`, `scalars`
+ *   (and the other type selectors), `recurse`, `recurse(f)`, `paths`, `paths(f)`, `leaf_paths`, `getpath(p)`,
+ *   `setpath(p; v)`, `delpaths(ps)`, `tostream`, `env`
+ * - formats: `@text`, `@json`, `@csv`, `@tsv`, `@html`, `@uri`, `@sh`, `@base64`, `@base64d`
+ *
+ * Every run has a step budget (`maxSteps`), so runaway expressions like `[range(1e9)]` fail fast with a `JqLimitError`.
  */
 
-import type { JqFilter } from './jq-builtins.ts';
+import type { Builtin, JqFilter } from './jq-builtins.ts';
 import {
   arithmetic,
   BUILTINS,
@@ -23,83 +29,22 @@ import {
   iterate,
   JqError,
   product,
+  rethrowLimit,
+  runEnv,
   slice,
+  tick,
+  tostring,
   truthy,
   typeOf,
+  withRun,
 } from './jq-builtins.ts';
+import { GENERATOR_BUILTINS } from './jq-generators.ts';
+import type { Token } from './jq-tokenize.ts';
+import { tokenize } from './jq-tokenize.ts';
 
-export type { JqFilter } from './jq-builtins.ts';
-export { JqError } from './jq-builtins.ts';
+export { JqError, JqLimitError } from './jq-builtins.ts';
 
-// ── Tokenizer ───────────────────────────────────────────────────────────
-
-type Token =
-  | { type: 'field'; value: string }
-  | { type: 'ident'; value: string }
-  | { type: 'variable'; value: string }
-  | { type: 'format'; value: string }
-  | { type: 'string'; value: string }
-  | { type: 'number'; value: number }
-  | { type: 'punct'; value: string };
-
-const PUNCT = ['==', '!=', '<=', '>=', '//', '<', '>', '.', '[', ']', '{', '}', '(', ')', '|', ',', ':', ';', '?', '+', '-', '*', '/', '%'];
-
-const NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
-
-/** Names after a prefix: `.field`, `$variable`, `@format`. */
-const PREFIXED = { '.': 'field', $: 'variable', '@': 'format' } as const;
-
-function tokenize(source: string): Token[] {
-  const tokens: Token[] = [];
-  let i = 0;
-  while (i < source.length) {
-    const ch = source[i]!;
-    if (/\s/.test(ch)) {
-      i++;
-      continue;
-    }
-    if (ch in PREFIXED) {
-      const name = source.slice(i + 1).match(NAME)?.[0];
-      if (name) {
-        tokens.push({ type: PREFIXED[ch as keyof typeof PREFIXED], value: name });
-        i += name.length + 1;
-        continue;
-      }
-      if (ch !== '.') throw new JqError(`Expected a name after "${ch}" at ${i}`);
-    }
-    if (ch === '"') {
-      let j = i + 1;
-      for (; j < source.length && source[j] !== '"'; j++) {
-        if (source[j] === '\\') {
-          if (source[j + 1] === '(') throw new JqError('String interpolation is not supported');
-          j++;
-        }
-      }
-      if (j >= source.length) throw new JqError('Unterminated string');
-      tokens.push({ type: 'string', value: JSON.parse(source.slice(i, j + 1)) as string });
-      i = j + 1;
-      continue;
-    }
-    const number = source.slice(i).match(/^\d+(\.\d+)?([eE][+-]?\d+)?/);
-    if (number) {
-      tokens.push({ type: 'number', value: Number(number[0]) });
-      i += number[0].length;
-      continue;
-    }
-    const ident = source.slice(i).match(NAME);
-    if (ident) {
-      tokens.push({ type: 'ident', value: ident[0] });
-      i += ident[0].length;
-      continue;
-    }
-    const punct = PUNCT.find((p) => source.startsWith(p, i));
-    if (!punct) throw new JqError(`Unexpected character ${JSON.stringify(ch)} at ${i}`);
-    if (punct === '.' && source[i + 1] === '.') throw new JqError('Recursive descent (..) is not supported');
-    tokens.push({ type: 'punct', value: punct });
-    i += punct.length;
-  }
-  return tokens;
-}
+const ALL_BUILTINS: Record<string, Builtin> = { ...BUILTINS, ...GENERATOR_BUILTINS };
 
 // ── Parser ──────────────────────────────────────────────────────────────
 
@@ -112,13 +57,37 @@ const COMPARE: Record<string, (c: number) => boolean> = {
   '>=': (c) => c >= 0,
 };
 
-/** A variable's current value: set while the body of its `as` binding runs (filters run eagerly). */
+/** A variable's current value: set while the body of its `as` binding runs. */
 type Slot = { value: unknown };
+
+/** `$ENV`, unless a binding shadows it. */
+const ENV_SLOT: Slot = {
+  get value() {
+    return runEnv();
+  },
+};
+
+/** The outputs of `f` up to its first error, which is suppressed (as `f?` does); budget errors still go through. */
+function* suppressErrors(f: JqFilter, x: unknown): Generator<unknown> {
+  try {
+    yield* f(x);
+  } catch (err) {
+    rethrowLimit(err);
+  }
+}
+
+/** Yields every output of `f`, counting each against the budget. */
+function* counted(f: JqFilter, x: unknown): Generator<unknown> {
+  for (const value of f(x)) {
+    tick();
+    yield value;
+  }
+}
 
 class Parser {
   private i = 0;
   private scope: Map<string, Slot>[] = [];
-  constructor(private readonly tokens: Token[]) {}
+  constructor(private tokens: Token[]) {}
 
   private peek(offset = 0): Token | undefined {
     return this.tokens[this.i + offset];
@@ -150,12 +119,27 @@ class Parser {
     return filter;
   }
 
+  /** Parses the tokens of an interpolation, with the variables in scope here. */
+  private parseTokens(tokens: Token[]): JqFilter {
+    const [saved, position] = [this.tokens, this.i];
+    this.tokens = tokens;
+    this.i = 0;
+    try {
+      return this.parse();
+    } finally {
+      this.tokens = saved;
+      this.i = position;
+    }
+  }
+
   private parsePipe(): JqFilter {
     const left = this.parseComma();
     if (!this.isPunct('|')) return left;
     this.i++;
     const right = this.parsePipe();
-    return (x) => left(x).flatMap(right);
+    return function* (x) {
+      for (const value of counted(left, x)) yield* right(value);
+    };
   }
 
   private parseComma(): JqFilter {
@@ -164,25 +148,29 @@ class Parser {
       this.i++;
       const l = left;
       const r = this.parseAlternative();
-      left = (x) => [...l(x), ...r(x)];
+      left = function* (x) {
+        yield* counted(l, x);
+        yield* counted(r, x);
+      };
     }
     return left;
   }
 
+  /** `a // b`: the truthy outputs of `a` (its errors suppressed), or else the outputs of `b`. */
   private parseAlternative(): JqFilter {
     let left = this.parseOr();
     while (this.isPunct('//')) {
       this.i++;
       const l = left;
       const r = this.parseOr();
-      left = (x) => {
-        let values: unknown[];
-        try {
-          values = l(x).filter(truthy);
-        } catch {
-          values = [];
+      left = function* (x) {
+        let found = false;
+        for (const value of suppressErrors(l, x)) {
+          if (!truthy(value)) continue;
+          found = true;
+          yield value;
         }
-        return values.length > 0 ? values : r(x);
+        if (!found) yield* r(x);
       };
     }
     return left;
@@ -194,7 +182,12 @@ class Parser {
       this.i++;
       const l = left;
       const r = this.parseAnd();
-      left = (x) => l(x).flatMap((a) => (truthy(a) ? [true] : r(x).map(truthy)));
+      left = function* (x) {
+        for (const a of l(x)) {
+          if (truthy(a)) yield true;
+          else for (const b of r(x)) yield truthy(b);
+        }
+      };
     }
     return left;
   }
@@ -205,7 +198,12 @@ class Parser {
       this.i++;
       const l = left;
       const r = this.parseCompare();
-      left = (x) => l(x).flatMap((a) => (truthy(a) ? r(x).map(truthy) : [false]));
+      left = function* (x) {
+        for (const a of l(x)) {
+          if (!truthy(a)) yield false;
+          else for (const b of r(x)) yield truthy(b);
+        }
+      };
     }
     return left;
   }
@@ -218,7 +216,9 @@ class Parser {
     const test = COMPARE[token.value]!;
     const right = this.parseArithmetic(0);
     // jq loops over the right side's outputs outermost
-    return (x) => product([right, left], x).map(([b, a]) => test(compareValues(a, b)));
+    return function* (x) {
+      for (const [b, a] of product([right, left], x)) yield test(compareValues(a, b));
+    };
   }
 
   /** `+ -` (level 0) and `* / %` (level 1), left-associative. */
@@ -230,7 +230,9 @@ class Parser {
       const op = (this.tokens[this.i++] as { value: string }).value;
       const l = left;
       const r = operand();
-      left = (x) => product([r, l], x).map(([b, a]) => arithmetic(op, a, b));
+      left = function* (x) {
+        for (const [b, a] of product([r, l], x)) yield arithmetic(op, a, b);
+      };
     }
     return left;
   }
@@ -240,11 +242,12 @@ class Parser {
     if (this.isPunct('-')) {
       this.i++;
       const operand = this.parseTerm();
-      return (x) =>
-        operand(x).map((v) => {
+      return function* (x) {
+        for (const v of operand(x)) {
           if (typeof v !== 'number') throw new JqError(`${describe(v)} cannot be negated`);
-          return -v;
-        });
+          yield -v;
+        }
+      };
     }
     const term = this.parsePostfix();
     if (!this.isIdent('as')) return term;
@@ -257,16 +260,18 @@ class Parser {
     this.scope.push(new Map([[variable.value, slot]]));
     const body = this.parsePipe();
     this.scope.pop();
-    return (x) =>
-      term(x).flatMap((value) => {
+    // The slot holds the value while the body runs, including while it's suspended at a `yield`
+    return function* (x) {
+      for (const value of counted(term, x)) {
         const previous = slot.value;
         slot.value = value;
         try {
-          return body(x);
+          yield* body(x);
         } finally {
           slot.value = previous;
         }
-      });
+      }
+    };
   }
 
   private lookup(name: string): Slot {
@@ -274,6 +279,7 @@ class Parser {
       const slot = this.scope[i]!.get(name);
       if (slot) return slot;
     }
+    if (name === 'ENV') return ENV_SLOT;
     throw new JqError(`$${name} is not defined`);
   }
 
@@ -284,24 +290,22 @@ class Parser {
       const base = filter;
       if (token?.type === 'field') {
         this.i++;
-        filter = (x) => base(x).map((v) => index(v, token.value));
+        filter = function* (x) {
+          for (const v of base(x)) yield index(v, token.value);
+        };
       } else if (this.isPunct('.') && this.peek(1)?.type === 'string') {
         this.i++;
         const key = (this.tokens[this.i++] as { value: string }).value;
-        filter = (x) => base(x).map((v) => index(v, key));
+        filter = function* (x) {
+          for (const v of base(x)) yield index(v, key);
+        };
       } else if (this.isPunct('.') && this.isPunct('[', 1)) {
         this.i++;
       } else if (this.isPunct('[')) {
         filter = this.parseBracket(base);
       } else if (this.isPunct('?')) {
         this.i++;
-        filter = (x) => {
-          try {
-            return base(x);
-          } catch {
-            return [];
-          }
-        };
+        filter = (x) => suppressErrors(base, x);
       } else {
         return filter;
       }
@@ -313,17 +317,38 @@ class Parser {
     this.expect('[');
     if (this.isPunct(']')) {
       this.i++;
-      return (x) => base(x).flatMap(iterate);
+      return function* (x) {
+        for (const v of base(x)) yield* counted(iterate, v);
+      };
     }
     const from: JqFilter = this.isPunct(':') ? () => [null] : this.parsePipe();
     if (this.isPunct(':')) {
       this.i++;
       const to: JqFilter = this.isPunct(']') ? () => [null] : this.parsePipe();
       this.expect(']');
-      return (x) => base(x).flatMap((v) => product([from, to], x).map(([a, b]) => slice(v, a, b)));
+      return function* (x) {
+        for (const v of base(x)) for (const [a, b] of product([from, to], x)) yield slice(v, a, b);
+      };
     }
     this.expect(']');
-    return (x) => base(x).flatMap((v) => from(x).map((key) => index(v, key)));
+    return function* (x) {
+      for (const v of base(x)) for (const key of from(x)) yield index(v, key);
+    };
+  }
+
+  /**
+   * A string with interpolations: each value as `format` renders it (strings raw and anything else as JSON without one).
+   * Later interpolations vary slowest, as in jq.
+   */
+  private parseTemplate(parts: (string | Token[])[], format: (x: unknown) => string = tostring): JqFilter {
+    const filters = parts.filter((part) => typeof part !== 'string').map((tokens) => this.parseTokens(tokens));
+    const reversed = [...filters].reverse();
+    return function* (x) {
+      for (const values of product(reversed, x)) {
+        let n = values.length;
+        yield parts.map((part) => (typeof part === 'string' ? part : format(values[--n]))).join('');
+      }
+    };
   }
 
   private parsePrimary(): JqFilter {
@@ -333,6 +358,7 @@ class Parser {
 
     if (token.type === 'field') return (x) => [index(x, token.value)];
     if (token.type === 'string' || token.type === 'number') return () => [token.value];
+    if (token.type === 'template') return this.parseTemplate(token.parts);
     if (token.type === 'variable') {
       const slot = this.lookup(token.value);
       return () => [slot.value];
@@ -340,6 +366,12 @@ class Parser {
     if (token.type === 'format') {
       const format = FORMATS[token.value];
       if (!format) throw new JqError(`${token.value} is not a valid format`);
+      // `@sh "echo \(.name)"`: the format applies to each interpolated value
+      const next = this.peek();
+      if (next?.type === 'string' || next?.type === 'template') {
+        this.i++;
+        return this.parseTemplate(next.type === 'string' ? [next.value] : next.parts, format);
+      }
       return (x) => [format(x)];
     }
 
@@ -355,7 +387,7 @@ class Parser {
         } while (this.isPunct(';'));
         this.expect(')');
       }
-      const builtin = BUILTINS[`${token.value}/${args.length}`];
+      const builtin = ALL_BUILTINS[`${token.value}/${args.length}`];
       if (!builtin) throw new JqError(`Unknown function ${token.value}/${args.length}`);
       return args.length ? (x) => builtin(x, ...args) : builtin;
     }
@@ -367,6 +399,8 @@ class Parser {
           return (x) => [index(x, key)];
         }
         return (x) => [x];
+      case '..':
+        return ALL_BUILTINS['recurse/0']!;
       case '(': {
         const inner = this.parsePipe();
         this.expect(')');
@@ -379,7 +413,7 @@ class Parser {
         }
         const inner = this.parsePipe();
         this.expect(']');
-        return (x) => [inner(x)];
+        return (x) => [Array.from(inner(x))];
       }
       case '{':
         return this.parseObject();
@@ -403,7 +437,9 @@ class Parser {
       }
       this.expectIdent('end');
     }
-    return (x) => condition(x).flatMap((c) => (truthy(c) ? then(x) : otherwise(x)));
+    return function* (x) {
+      for (const c of condition(x)) yield* truthy(c) ? then(x) : otherwise(x);
+    };
   }
 
   private parseObject(): JqFilter {
@@ -416,6 +452,9 @@ class Parser {
         this.i++;
         key = () => [token.value];
         shorthand = (x) => [index(x, token.value)];
+      } else if (token?.type === 'template') {
+        this.i++;
+        key = this.parseTemplate(token.parts);
       } else if (token?.type === 'variable') {
         this.i++;
         const slot = this.lookup(token.value);
@@ -443,8 +482,8 @@ class Parser {
     }
     this.expect('}');
     const filters = entries.flat();
-    return (x) =>
-      product(filters, x).map((values) => {
+    return function* (x) {
+      for (const values of product(filters, x)) {
         const pairs: [string, unknown][] = [];
         for (let i = 0; i < values.length; i += 2) {
           const key = values[i];
@@ -452,17 +491,36 @@ class Parser {
           pairs.push([key, values[i + 1]]);
         }
         // Defines own properties, so a "__proto__" key is a key
-        return Object.fromEntries(pairs);
-      });
+        yield Object.fromEntries(pairs);
+      }
+    };
   }
 }
 
 // ── API ─────────────────────────────────────────────────────────────────
 
-/** Compiles a jq expression. Throws a `JqError` for syntax errors; the filter throws one for runtime errors. */
-export function compileJq(expression: string): JqFilter {
-  const filter = new Parser(tokenize(expression)).parse();
-  return (input) => filter(input).map((value) => (value === undefined ? null : value));
+/** The step budget of a run when `maxSteps` isn't given. */
+export const DEFAULT_JQ_MAX_STEPS = 10_000_000;
+
+export type JqOptions = {
+  /**
+   * How much work one run may do, in steps: each value a generator, pipe or iteration produces, and each character or item
+   * a string or array concatenation copies. Going over fails the run with a `JqLimitError`. Defaults to `DEFAULT_JQ_MAX_STEPS`.
+   */
+  maxSteps?: number;
+  /** The variables `$ENV` and `env` see. Defaults to none. */
+  env?: Record<string, string | undefined>;
+};
+
+/** A compiled jq program: every output for an input. */
+export type JqProgram = (input: unknown) => unknown[];
+
+/** Compiles a jq expression. Throws a `JqError` for syntax errors; the program throws one for runtime errors. */
+export function compileJq(expression: string, options: JqOptions = {}): JqProgram {
+  const filter = new Parser(tokenize(expression).tokens).parse();
+  const env = Object.fromEntries(Object.entries(options.env ?? {}).filter((entry): entry is [string, string] => entry[1] !== undefined));
+  const run = { maxSteps: options.maxSteps ?? DEFAULT_JQ_MAX_STEPS, env };
+  return (input) => withRun(run, () => Array.from(filter(input), (value) => (value === undefined ? null : value)));
 }
 
 /** Formats a jq output the way `jq -r` does: strings raw, everything else as JSON. */
@@ -474,8 +532,8 @@ export function formatJqOutput(value: unknown, space?: number): string {
  * Compiles a template with `{{ expression }}` placeholders, e.g. `{{.name}} ({{.id}})`.
  * Each placeholder is a jq expression; strings are inserted raw, `null` as nothing, other values as JSON.
  */
-export function compileTemplate(template: string): (value: unknown) => string {
-  const parts: (string | JqFilter)[] = [];
+export function compileTemplate(template: string, options?: JqOptions): (value: unknown) => string {
+  const parts: (string | JqProgram)[] = [];
   let rest = template;
   while (rest) {
     const open = rest.indexOf('{{');
@@ -486,7 +544,7 @@ export function compileTemplate(template: string): (value: unknown) => string {
     const close = rest.indexOf('}}', open + 2);
     if (close === -1) throw new JqError('Unclosed "{{" in template');
     if (open > 0) parts.push(rest.slice(0, open));
-    parts.push(compileJq(rest.slice(open + 2, close)));
+    parts.push(compileJq(rest.slice(open + 2, close), options));
     rest = rest.slice(close + 2);
   }
   return (value) =>

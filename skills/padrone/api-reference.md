@@ -332,6 +332,35 @@ import { createPadrone, padroneConfig } from 'padrone';
 
 `--config`/`-c` is listed in help. With `sections: true`, a key naming a subcommand is its section (never an option value), overriding the values above it for that command. Config numbers and booleans are coerced to the option's type (YAML `name: 123` → `"123"`), built-in commands get no config values unless `builtins: true`, and validation errors name the file: `… (from config.json)`. `--profile` is an unknown option for serve/MCP/`tool()` calls unless `profiles: { remote: true }`.
 
+#### Output extensions: `padroneJson`, `padroneFormat`, `padroneLogger`, `padroneProgress`
+
+```ts
+import { padroneFormat, padroneJson, padroneLogger, padroneProgress } from 'padrone';
+
+// --json, --jq '<expr>' (lazy jq subset: interpolation "\(.a)", @sh/@uri/@base64d, range/limit/first(f)/any/all,
+// paths/getpath/setpath/delpaths/tostream, $ENV), --template '{{.name}}'
+.extend(padroneJson({ fields: true, jqLimits: { maxSteps: 10_000_000, remoteMaxSteps: 1_000_000 } }))
+.extend(padroneJson({ jq: (input, expression, { env }) => fullJq(input, expression, env) })) // plug in a full jq
+
+// -o text|json|yaml|csv|tsv|table; sanitize strips escape sequences from untrusted values,
+// csvFormulaEscape prefixes ' on csv/tsv cells starting with = + - @ \t \r (numbers excepted)
+.extend(padroneFormat({ tableFlags: true, sanitize: true, csvFormulaEscape: true }))
+
+// pino-style serializers (before redact; errors through `err`), several destinations with their own level/format
+.extend(padroneLogger({
+  format: 'json',
+  serializers: { req: (req) => ({ method: req.method, url: req.url }) },
+  destination: [{ level: 'info', format: 'text' }, { destination: 'debug.log', level: 'debug' }], // {} = the runtime's streams
+}))
+
+// ora-style prefix/suffix text and final lines
+.extend(padroneProgress({ message: 'Uploading...', prefixText: '[1/2]' }))
+// in an action: ctx.context.progress.update({ suffixText: '(3 MB)' });
+//               ctx.context.progress.stopAndPersist({ symbol: 'ℹ', text: 'Nothing to upload' });
+```
+
+Every `--jq`/`--template` run has a step budget, so `[range(1e9)]` fails fast; serve, MCP and `tool()` calls get the lower `remoteMaxSteps` budget and an empty `$ENV`. A log stream's `level` holds whatever `--verbose`/`--silent` say; streams without one follow the logger's level. The table primitive takes `sanitize: true` too.
+
 ### `.wrap(config)` *(experimental)*
 
 Wraps an external CLI tool.

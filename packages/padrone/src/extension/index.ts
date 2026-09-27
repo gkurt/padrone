@@ -15,9 +15,17 @@ export { padroneFormat } from './format.ts';
 export type { HelpCommand, HelpTopicInfo, PadroneHelpOptions, PadroneHelpTopic, PadroneHelpTopicContext, WithHelp } from './help.ts';
 export { padroneHelp } from './help.ts';
 export { padroneInteractive } from './interactive.ts';
-export type { PadroneJqFunction, PadroneJsonOptions } from './json.ts';
+export type { PadroneJqFunction, PadroneJqLimits, PadroneJsonOptions } from './json.ts';
 export { padroneJson } from './json.ts';
-export type { PadroneLogDestination, PadroneLogger, PadroneLoggerConfig, PadroneLogLevel, WithLogger } from './logger.ts';
+export type {
+  PadroneLogDestination,
+  PadroneLogger,
+  PadroneLoggerConfig,
+  PadroneLogLevel,
+  PadroneLogSerializer,
+  PadroneLogStream,
+  WithLogger,
+} from './logger.ts';
 export { padroneLogger } from './logger.ts';
 export type {
   PadroneProgressConfig,

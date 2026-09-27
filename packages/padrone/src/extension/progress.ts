@@ -48,6 +48,10 @@ export type PadroneProgressConfig<TRes = unknown> = {
   time?: boolean;
   /** Show estimated time remaining based on progress rate. Requires numeric `update()` calls. */
   eta?: boolean;
+  /** Text before the indicator and its final line, like ora's `prefixText`. Change it with `update({ prefixText })`. */
+  prefixText?: string;
+  /** Text after the message and in its final line, like ora's `suffixText`. Change it with `update({ suffixText })`. */
+  suffixText?: string;
   /**
    * Custom renderer factory. Called to create the progress indicator.
    * Defaults to the built-in terminal renderer (`createTerminalProgress`).
@@ -68,7 +72,7 @@ export type PadroneProgressConfig<TRes = unknown> = {
  */
 export type PadroneProgressDefaults = Pick<
   PadroneProgressConfig,
-  'message' | 'spinner' | 'bar' | 'time' | 'eta' | 'renderer' | 'taskRenderer' | 'silent'
+  'message' | 'spinner' | 'bar' | 'time' | 'eta' | 'prefixText' | 'suffixText' | 'renderer' | 'taskRenderer' | 'silent'
 >;
 
 /**
@@ -83,6 +87,8 @@ export type PadroneProgressDefaults = Pick<
  * ```
  */
 export type PadroneProgressContext = PadroneProgress & {
+  /** Stop and leave a final line with a custom symbol, like ora: `stopAndPersist({ symbol: 'ℹ', text: 'Nothing to do' })`. */
+  stopAndPersist: NonNullable<PadroneProgress['stopAndPersist']>;
   tasks: PadroneTasksFn;
   /** Whether the indicator or a task list is running: `false` once it finished, and when progress output is silent (e.g. under `serve`). */
   readonly isActive: boolean;
@@ -103,6 +109,7 @@ const noopIndicator: PadroneProgress = {
   eta: noopEta,
   succeed() {},
   fail() {},
+  stopAndPersist() {},
   stop() {},
   pause() {},
   resume() {},
@@ -219,8 +226,10 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
     const bar = (isObj ? config.bar : undefined) ?? ctxCfg?.bar;
     const time = (isObj ? config.time : undefined) ?? ctxCfg?.time;
     const eta = (isObj ? config.eta : undefined) ?? ctxCfg?.eta;
-    const options: PadroneProgressOptions | undefined =
-      spinner !== undefined || bar !== undefined || time !== undefined || eta !== undefined ? { spinner, bar, time, eta } : undefined;
+    const prefixText = (isObj ? config.prefixText : undefined) ?? ctxCfg?.prefixText;
+    const suffixText = (isObj ? config.suffixText : undefined) ?? ctxCfg?.suffixText;
+    const set = { spinner, bar, time, eta, prefixText, suffixText };
+    const options: PadroneProgressOptions | undefined = Object.values(set).some((v) => v !== undefined) ? set : undefined;
     return {
       // Serve, MCP and tool calls have no terminal to draw on
       silent: isRemoteCaller(caller) || ((isObj ? config.silent : undefined) ?? ctxCfg?.silent ?? false),
@@ -286,6 +295,8 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
       /** The `progress` handle on the command context, with live `isActive` / `isPaused`. */
       const progressContext = (base: PadroneProgress, signal: AbortSignal): PadroneProgressContext => ({
         ...base,
+        // Custom renderers without it leave the line through `succeed`
+        stopAndPersist: base.stopAndPersist ?? ((opts) => base.succeed(opts?.text, { indicator: opts?.symbol ?? ' ' })),
         tasks: tasksFor(signal),
         get isActive() {
           return !settings?.silent && (!!indicator || !!activeTaskList);

@@ -2,6 +2,7 @@ import type {
   PadroneBarConfig,
   PadroneProgress,
   PadroneProgressOptions,
+  PadroneProgressPersistOptions,
   PadroneProgressShow,
   PadroneProgressUpdate,
   PadroneSpinnerConfig,
@@ -105,7 +106,7 @@ function formatBar(progress: number | undefined, cfg: ResolvedBarConfig, frame: 
 // Helpers
 // ---------------------------------------------------------------------------
 
-function parseUpdate(value: PadroneProgressUpdate): { message?: string; progress?: number; indeterminate?: boolean; time?: boolean } {
+function parseUpdate(value: PadroneProgressUpdate): Exclude<PadroneProgressUpdate, string | number> {
   if (typeof value === 'string') return { message: value };
   if (typeof value === 'number') return { progress: value };
   return value;
@@ -160,27 +161,51 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
   const errorIcon = options?.errorIndicator ?? '✖';
   const barCfg = resolveBarConfig(options?.bar);
 
-  const formatFinal = (icon: string, msg: string) => (icon ? `${icon} ${msg}\n` : `${msg}\n`);
+  let prefixText = options?.prefixText ?? '';
+  let suffixText = options?.suffixText ?? '';
+  const updateAffixes = (parsed: ReturnType<typeof parseUpdate>) => {
+    if (parsed.prefixText !== undefined) prefixText = parsed.prefixText;
+    if (parsed.suffixText !== undefined) suffixText = parsed.suffixText;
+  };
+  /** A final line: `prefix icon message suffix`, leaving out the empty parts. */
+  const formatFinal = (icon: string, msg: string, prefix = prefixText, suffix = suffixText) =>
+    `${[prefix, icon, msg, suffix].filter(Boolean).join(' ')}\n`;
+  /** The line `stopAndPersist()` leaves, or `undefined` when it'd be blank. */
+  const persisted = (opts: PadroneProgressPersistOptions | undefined, text: string) => {
+    const symbol = opts?.symbol ?? ' ';
+    const msg = opts?.text ?? text;
+    if (!msg && !symbol.trim()) return undefined;
+    return formatFinal(symbol, msg, opts?.prefixText ?? prefixText, opts?.suffixText ?? suffixText);
+  };
 
   const proc = globalThis.process as NodeJS.Process | undefined;
   if (!proc?.stderr || !canAnimate(proc.stderr)) {
     // No animation: only the final status line is printed, using the latest message.
     let text = message;
     let done = false;
+    const write = (line: string | undefined) => {
+      if (line) proc?.stderr?.write?.(line);
+    };
     const finish = (msg: string | null | undefined, icon: string) => {
       if (done) return;
       done = true;
       const finalMsg = msg === null ? '' : (msg ?? text);
-      if (finalMsg) proc?.stderr?.write?.(formatFinal(icon, finalMsg));
+      if (finalMsg) write(formatFinal(icon, finalMsg));
     };
     return {
       update(value) {
-        const { message: msg } = parseUpdate(value);
-        if (msg !== undefined) text = msg;
+        const parsed = parseUpdate(value);
+        if (parsed.message !== undefined) text = parsed.message;
+        updateAffixes(parsed);
       },
       eta: { start() {}, stop() {}, reset() {} },
       succeed: (msg, opts) => finish(msg, opts?.indicator ?? successIcon),
       fail: (msg, opts) => finish(msg, opts?.indicator ?? errorIcon),
+      stopAndPersist(opts) {
+        if (done) return;
+        done = true;
+        write(persisted(opts, text));
+      },
       stop() {
         done = true;
       },
@@ -249,10 +274,7 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
       const spinnerFrame = Math.floor((Date.now() - createdAt) / spinnerCfg.interval) % (frames.length || 1);
       line += frames[spinnerFrame] ?? '';
     }
-    if (text) {
-      if (line) line += ' ';
-      line += text;
-    }
+    line = [prefixText, line, text, suffixText].filter(Boolean).join(' ');
 
     if (line) {
       clearLines();
@@ -318,6 +340,7 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
       if (stopped) return;
       const parsed = parseUpdate(value);
       if (parsed.message !== undefined) text = parsed.message;
+      updateAffixes(parsed);
       if (parsed.progress !== undefined) {
         progress = parsed.progress;
         if (etaEnabled) {
@@ -365,6 +388,12 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
       const finalMsg = msg ?? text;
       const icon = opts?.indicator ?? errorIcon;
       if (finalMsg) writeStderr(formatFinal(icon, finalMsg));
+    },
+    stopAndPersist(opts) {
+      if (stopped) return;
+      clear();
+      const line = persisted(opts, text);
+      if (line) writeStderr(line);
     },
     stop() {
       clear();

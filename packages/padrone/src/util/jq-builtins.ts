@@ -1,10 +1,47 @@
-/** Values, operators and builtins of the jq subset in `jq.ts`. */
+/** Values, operators, builtins, `@formats` and the run budget of the jq subset in `jq.ts`. */
 
-/** A compiled filter: every output it produces for an input. */
-export type JqFilter = (input: unknown) => unknown[];
+/** A compiled filter: every output it produces for an input, lazily. */
+export type JqFilter = (input: unknown) => Iterable<unknown>;
 
 export class JqError extends Error {
   override name = 'JqError';
+}
+
+/** A run went over its step budget. `?` and `//` never suppress it. */
+export class JqLimitError extends JqError {
+  override name = 'JqLimitError';
+}
+
+// ── Run state ───────────────────────────────────────────────────────────
+
+/** What a program run gets: its step budget and the variables `$ENV` / `env` see. */
+export type JqRunOptions = { maxSteps: number; env: Record<string, string> };
+
+let run: (JqRunOptions & { steps: number }) | undefined;
+
+/** Counts `count` steps of work against the running program's budget. */
+export function tick(count = 1): void {
+  if (!run) return;
+  run.steps += count;
+  if (run.steps > run.maxSteps) throw new JqLimitError(`The expression exceeded its budget of ${run.maxSteps} steps`);
+}
+
+export const runEnv = (): Record<string, string> => run?.env ?? {};
+
+/** Runs `fn` with `options` as the current run (filters run synchronously, so it's set for the whole evaluation). */
+export function withRun<T>(options: JqRunOptions, fn: () => T): T {
+  const previous = run;
+  run = { ...options, steps: 0 };
+  try {
+    return fn();
+  } finally {
+    run = previous;
+  }
+}
+
+/** Rethrows budget errors, which suppressing operators must let through. */
+export function rethrowLimit(err: unknown): void {
+  if (err instanceof JqLimitError) throw err;
 }
 
 // ── Values ──────────────────────────────────────────────────────────────
@@ -21,7 +58,7 @@ export function typeOf(value: unknown): JqType {
 
 export const truthy = (value: unknown) => value !== false && value !== null && value !== undefined;
 
-const isObject = (value: unknown): value is Record<string, unknown> => typeOf(value) === 'object';
+export const isObject = (value: unknown): value is Record<string, unknown> => typeOf(value) === 'object';
 
 /** A value in an error message, like jq: `string ("abc")`, JSON cut to 11 characters. */
 export function describe(value: unknown): string {
@@ -134,8 +171,15 @@ export function arithmetic(op: string, a: unknown, b: unknown): unknown {
     case '+':
       if (a === null || a === undefined) return b;
       if (b === null || b === undefined) return a;
-      if (numbers || (typeof a === 'string' && typeof b === 'string')) return (a as number) + (b as number);
-      if (Array.isArray(a) && Array.isArray(b)) return [...a, ...b];
+      if (numbers) return a + b;
+      if (typeof a === 'string' && typeof b === 'string') {
+        tick(a.length + b.length);
+        return a + b;
+      }
+      if (Array.isArray(a) && Array.isArray(b)) {
+        tick(a.length + b.length);
+        return [...a, ...b];
+      }
       if (isObject(a) && isObject(b)) return { ...a, ...b };
       return fail('added');
     case '-':
@@ -145,7 +189,11 @@ export function arithmetic(op: string, a: unknown, b: unknown): unknown {
     case '*': {
       if (numbers) return a * b;
       const [text, times] = typeof a === 'string' ? [a, b] : [b, a];
-      if (typeof text === 'string' && typeof times === 'number') return times < 0 ? null : text.repeat(Math.floor(times));
+      if (typeof text === 'string' && typeof times === 'number') {
+        if (times < 0) return null;
+        tick(text.length * Math.floor(times));
+        return text.repeat(Math.floor(times));
+      }
       if (isObject(a) && isObject(b)) return deepMerge(a, b);
       return fail('multiplied');
     }
@@ -176,17 +224,21 @@ const requireString = (value: unknown, name: string): string => {
   return value;
 };
 
-const tostring = (value: unknown) => (typeof value === 'string' ? value : JSON.stringify(value ?? null));
+export const tostring = (value: unknown) => (typeof value === 'string' ? value : JSON.stringify(value ?? null));
 
 /** Every combination of one output from each filter, the first filter varying slowest. */
-export function product(filters: JqFilter[], input: unknown): unknown[][] {
-  return filters.reduce<unknown[][]>((combos, f) => combos.flatMap((combo) => f(input).map((value) => [...combo, value])), [[]]);
+export function* product(filters: JqFilter[], input: unknown, combo: unknown[] = []): Generator<unknown[]> {
+  if (combo.length === filters.length) return yield combo;
+  for (const value of filters[combo.length]!(input)) yield* product(filters, input, [...combo, value]);
 }
+
+/** Every output of `f` for `input`, as an array. */
+export const outputs = (f: JqFilter, input: unknown): unknown[] => Array.from(f(input));
 
 /** Items with their `[f]` keys, sorted by key (stably). */
 const sortedByKey = (x: unknown, f: JqFilter) =>
   iterate(x)
-    .map((item) => ({ item, key: f(item) }))
+    .map((item) => ({ item, key: outputs(f, item) }))
     .sort((a, b) => compareValues(a.key, b.key));
 
 function groupBy(x: unknown, f: JqFilter): unknown[][] {
@@ -203,7 +255,7 @@ function groupBy(x: unknown, f: JqFilter): unknown[][] {
 function extremeBy(x: unknown, f: JqFilter, max: boolean): unknown {
   let best: { item: unknown; key: unknown[] } | undefined;
   for (const item of iterate(x)) {
-    const key = f(item);
+    const key = outputs(f, item);
     const c = best ? compareValues(key, best.key) : 0;
     if (!best || (max ? c >= 0 : c < 0)) best = { item, key };
   }
@@ -263,7 +315,7 @@ function substitute(x: unknown, re: unknown, replacement: JqFilter, flags: unkno
   for (const match of matches) {
     const gap = input.slice(previous, match.index);
     const captures = Object.fromEntries(Object.entries(match.groups ?? {}).map(([name, value]) => [name, value ?? null]));
-    replacement(captures).forEach((insert, i) => {
+    outputs(replacement, captures).forEach((insert, i) => {
       results[i] = arithmetic('+', results[i] ?? null, arithmetic('+', gap, insert)) as string;
     });
     previous = match.index + match[0].length;
@@ -286,6 +338,26 @@ function row(x: unknown, format: 'csv' | 'tsv'): string {
 
 const HTML_ESCAPES: Record<string, string> = { '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' };
 
+/** `@sh`: strings single-quoted for POSIX shells, other scalars as they are; an array gives space-separated words. */
+function shellQuote(x: unknown): string {
+  const word = (value: unknown) => {
+    if (typeof value === 'string') return `'${value.replace(/'/g, "'\\''")}'`;
+    if (typeOf(value) === 'array' || typeOf(value) === 'object') throw new JqError(`${describe(value)} can not be escaped for shell`);
+    return JSON.stringify(value ?? null);
+  };
+  return Array.isArray(x) ? x.map(word).join(' ') : word(x);
+}
+
+/** `@base64d`: padding optional; the bytes decoded as UTF-8. */
+function base64Decode(x: unknown): string {
+  const text = tostring(x);
+  const data = text.replace(/=+$/, '');
+  if (!/^[A-Za-z0-9+/]*$/.test(data)) throw new JqError(`${describe(x)} is not valid base64 data`);
+  if (data.length % 4 === 1) throw new JqError(`${describe(x)} trailing base64 byte found`);
+  const bytes = Uint8Array.from(atob(data.padEnd(Math.ceil(data.length / 4) * 4, '=')), (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
 /** `@name` formats: each takes the input and returns a string. */
 export const FORMATS: Record<string, (x: unknown) => string> = {
   text: tostring,
@@ -295,9 +367,11 @@ export const FORMATS: Record<string, (x: unknown) => string> = {
   html: (x) => tostring(x).replace(/[<>&'"]/g, (c) => HTML_ESCAPES[c]!),
   uri: (x) => encodeURIComponent(tostring(x)).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`),
   base64: (x) => btoa(Array.from(new TextEncoder().encode(tostring(x)), (byte) => String.fromCharCode(byte)).join('')),
+  base64d: base64Decode,
+  sh: shellQuote,
 };
 
-type Builtin = (input: unknown, ...args: JqFilter[]) => unknown[];
+export type Builtin = (input: unknown, ...args: JqFilter[]) => Iterable<unknown>;
 
 /** Builtins by `name/arity`; the arguments are compiled filters, applied to whatever the builtin needs. */
 export const BUILTINS: Record<string, Builtin> = {
@@ -350,33 +424,33 @@ export const BUILTINS: Record<string, Builtin> = {
   'ascii_downcase/0': (x) => [requireString(x, 'ascii_downcase').replace(/[A-Z]/g, (c) => c.toLowerCase())],
   'ascii_upcase/0': (x) => [requireString(x, 'ascii_upcase').replace(/[a-z]/g, (c) => c.toUpperCase())],
 
-  'select/1': (x, f) =>
-    f(x)
-      .filter(truthy)
-      .map(() => x),
-  'map/1': (x, f) => [iterate(x).flatMap(f)],
+  *'select/1'(x, f) {
+    for (const value of f(x)) if (truthy(value)) yield x;
+  },
+  'map/1': (x, f) => [iterate(x).flatMap((item) => outputs(f, item))],
   'sort_by/1': (x, f) => [sortedByKey(x, f).map(({ item }) => item)],
   'group_by/1': (x, f) => [groupBy(x, f)],
   'unique_by/1': (x, f) => [groupBy(x, f).map((group) => group[0])],
   'min_by/1': (x, f) => [extremeBy(x, f, false)],
   'max_by/1': (x, f) => [extremeBy(x, f, true)],
   'has/1': (x, f) =>
-    f(x).map((key) => {
+    outputs(f, x).map((key) => {
       if (Array.isArray(x) && typeof key === 'number') return key >= 0 && key < x.length;
       if (isObject(x) && typeof key === 'string') return Object.hasOwn(x, key);
       throw new JqError(`Cannot check whether ${typeOf(x)} has a ${typeOf(key)} key`);
     }),
-  'join/1': (x, f) => f(x).map((separator) => joinItems(x, separator)),
-  'split/1': (x, f) => f(x).map((separator) => split(x, separator)),
-  'ltrimstr/1': (x, f) => f(x).map((s) => (typeof x === 'string' && typeof s === 'string' && x.startsWith(s) ? x.slice(s.length) : x)),
+  'join/1': (x, f) => outputs(f, x).map((separator) => joinItems(x, separator)),
+  'split/1': (x, f) => outputs(f, x).map((separator) => split(x, separator)),
+  'ltrimstr/1': (x, f) =>
+    outputs(f, x).map((s) => (typeof x === 'string' && typeof s === 'string' && x.startsWith(s) ? x.slice(s.length) : x)),
   'rtrimstr/1': (x, f) =>
-    f(x).map((s) => (typeof x === 'string' && typeof s === 'string' && s && x.endsWith(s) ? x.slice(0, -s.length) : x)),
-  'startswith/1': (x, f) => f(x).map((s) => requireString(x, 'startswith').startsWith(requireString(s, 'startswith'))),
-  'endswith/1': (x, f) => f(x).map((s) => requireString(x, 'endswith').endsWith(requireString(s, 'endswith'))),
-  'test/1': (x, re) => re(x).map((r) => testRegex(x, r)),
-  'test/2': (x, re, flags) => product([re, flags], x).map(([r, f]) => testRegex(x, r, f)),
-  'sub/2': (x, re, str) => re(x).flatMap((r) => substitute(x, r, str, null, false)),
-  'sub/3': (x, re, str, flags) => product([re, flags], x).flatMap(([r, f]) => substitute(x, r, str, f, false)),
-  'gsub/2': (x, re, str) => re(x).flatMap((r) => substitute(x, r, str, null, true)),
-  'gsub/3': (x, re, str, flags) => product([re, flags], x).flatMap(([r, f]) => substitute(x, r, str, f, true)),
+    outputs(f, x).map((s) => (typeof x === 'string' && typeof s === 'string' && s && x.endsWith(s) ? x.slice(0, -s.length) : x)),
+  'startswith/1': (x, f) => outputs(f, x).map((s) => requireString(x, 'startswith').startsWith(requireString(s, 'startswith'))),
+  'endswith/1': (x, f) => outputs(f, x).map((s) => requireString(x, 'endswith').endsWith(requireString(s, 'endswith'))),
+  'test/1': (x, re) => outputs(re, x).map((r) => testRegex(x, r)),
+  'test/2': (x, re, flags) => Array.from(product([re, flags], x)).map(([r, f]) => testRegex(x, r, f)),
+  'sub/2': (x, re, str) => outputs(re, x).flatMap((r) => substitute(x, r, str, null, false)),
+  'sub/3': (x, re, str, flags) => Array.from(product([re, flags], x)).flatMap(([r, f]) => substitute(x, r, str, f, false)),
+  'gsub/2': (x, re, str) => outputs(re, x).flatMap((r) => substitute(x, r, str, null, true)),
+  'gsub/3': (x, re, str, flags) => Array.from(product([re, flags], x)).flatMap(([r, f]) => substitute(x, r, str, f, true)),
 };

@@ -2,7 +2,7 @@ import { ValidationError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { OptionArity } from '../core/parse.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
-import { renderTable, stringifyCell } from '../output/primitives.ts';
+import { renderTable, sanitizeValue, stringifyCell } from '../output/primitives.ts';
 import { resolveOutputFormat } from '../output/styling.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneActionContext, PadroneInput } from '../types/index.ts';
 import { safeJsonStringify } from '../util/json.ts';
@@ -36,6 +36,18 @@ export type PadroneFormatOptions = {
   pipedTable?: 'table' | 'tsv';
   /** Line ending of `-o csv`: `'crlf'` for RFC 4180 (`\r\n`). Defaults to `'lf'`. */
   csvLineEnding?: 'lf' | 'crlf';
+  /**
+   * Strip terminal escape sequences (colors, cursor moves, OSC titles and links) and control characters from the values
+   * printed by the yaml, csv, tsv and table formats, like go-gh's asciisanitizer, for data that may not be trusted.
+   * Tabs and line breaks stay (table cells get spaces for tabs). Defaults to `false`.
+   */
+  sanitize?: boolean;
+  /**
+   * Guard csv and tsv output against formula injection (OWASP CSV injection): cells starting with `=`, `+`, `-`, `@`,
+   * a tab or a carriage return get a leading `'`, so spreadsheets read them as text. Numbers like `-5` or `+3.2` are left alone.
+   * Defaults to `false`.
+   */
+  csvFormulaEscape?: boolean;
 };
 
 /** Column key → header label, in display order. */
@@ -45,8 +57,8 @@ const ALL_FORMATS: readonly PadroneOutputFormat[] = ['text', 'json', 'yaml', 'cs
 
 type TableFlags = { columns?: string[]; sort?: string; header: boolean };
 
-/** How the table, csv and tsv formats lay out rows: the flags, plus the columns and csv line ending from the options. */
-type TableLayout = TableFlags & { defaults?: PadroneFormatColumns; crlf: boolean };
+/** How the table, csv and tsv formats lay out rows: the flags, plus the columns, csv line ending and escaping from the options. */
+type TableLayout = TableFlags & { defaults?: PadroneFormatColumns; crlf: boolean; sanitize: boolean; formulaEscape: boolean };
 
 // ── Rendering ───────────────────────────────────────────────────────────
 
@@ -101,13 +113,16 @@ function layout(rows: Row[], flags: TableLayout): { rows: Row[]; columns: string
   return { rows: sorted, columns };
 }
 
-const csvCell = (value: unknown) => {
-  const text = stringifyCell(value);
-  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-};
+const FORMULA_START = /^[=+\-@\t\r]/;
+const NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+
+/** A cell a spreadsheet would read as a formula, with a leading `'`; numbers stay numbers. */
+const escapeFormula = (text: string) => (FORMULA_START.test(text) && !NUMBER.test(text) ? `'${text}` : text);
+
+const csvCell = (text: string) => (/[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text);
 
 const TSV_ESCAPES: Record<string, string> = { '\\': '\\\\', '\t': '\\t', '\n': '\\n', '\r': '\\r' };
-const tsvCell = (value: unknown) => stringifyCell(value).replace(/[\\\t\n\r]/g, (c) => TSV_ESCAPES[c]!);
+const tsvCell = (text: string) => text.replace(/[\\\t\n\r]/g, (c) => TSV_ESCAPES[c]!);
 
 /** Renders results in a non-JSON format; `text` is left to auto-output. */
 function createRenderer(
@@ -122,7 +137,11 @@ function createRenderer(
   const eol = format === 'csv' && flags.crlf ? '\r' : '';
   const lines = (rows: Row[], columns: string[], header: boolean): string[] => {
     if (!columns.length) return [];
-    const [cell, separator] = format === 'csv' ? [csvCell, ','] : [tsvCell, '\t'];
+    const [quote, separator] = format === 'csv' ? [csvCell, ','] : [tsvCell, '\t'];
+    const cell = (value: unknown) => {
+      const text = stringifyCell(value);
+      return quote(flags.formulaEscape ? escapeFormula(text) : text);
+    };
     const line = (cells: string[]) => cells.join(separator) + eol;
     const body = rows.map((row) => line(columns.map((column) => cell(row[column]))));
     return header ? [line(columns.map((column) => cell(label(column)))), ...body] : body;
@@ -130,7 +149,11 @@ function createRenderer(
   const table = (value: Row[]): string[] => {
     const { rows, columns } = layout(value, flags);
     if (format !== 'table') return [lines(rows, columns, flags.header).join('\n')].filter(Boolean);
-    const rendered = renderTable(rows, { columns, headers, header: flags.header }, resolveOutputFormat(runtime, caller));
+    const rendered = renderTable(
+      rows,
+      { columns, headers, header: flags.header, sanitize: flags.sanitize },
+      resolveOutputFormat(runtime, caller),
+    );
     return rendered ? [rendered] : [];
   };
 
@@ -143,7 +166,8 @@ function createRenderer(
     render(value, item) {
       // Text (e.g. help or the version) prints as text in every format
       if (typeof value === 'string') return undefined;
-      const plain = JSON.parse(safeJsonStringify(value) ?? 'null');
+      const json = JSON.parse(safeJsonStringify(value) ?? 'null');
+      const plain = flags.sanitize ? sanitizeValue(json) : json;
       if (format === 'yaml') return [item ? `---\n${toYaml(plain)}` : toYaml(plain)];
       const rows = toRows(plain);
       if (!rows) return undefined;
@@ -211,6 +235,8 @@ function createFormatInterceptor(options: PadroneFormatOptions) {
         header: !options.tableFlags || flags.flag('header') !== false,
         defaults: typeof options.columns === 'function' ? options.columns(command) : options.columns,
         crlf: options.csvLineEnding === 'crlf',
+        sanitize: !!options.sanitize,
+        formulaEscape: !!options.csvFormulaEscape,
       };
       flags.delete(...Object.keys(flagOptions));
       // Registered on the program, the parse phase has already read the flags
@@ -266,7 +292,8 @@ function createFormatInterceptor(options: PadroneFormatOptions) {
  * - `csv` / `tsv`: an object or an array of objects as rows with a header (streamed items one row each).
  * - `table`: the same rows through the table primitive (tab-separated when piped, with `pipedTable: 'tsv'`).
  *
- * `columns` sets the columns and their header labels; `csvLineEnding: 'crlf'` ends csv lines with `\r\n`.
+ * `columns` sets the columns and their header labels; `csvLineEnding: 'crlf'` ends csv lines with `\r\n`; `sanitize` strips
+ * terminal escape sequences from untrusted values; `csvFormulaEscape` guards csv/tsv cells against formula injection.
  *
  * String results (e.g. help) are printed as text under every format but json, and other non-objects under csv, tsv and table. `--json`, `--jq` and
  * `--template` take precedence over `--output`. Serve, MCP and tool calls are unaffected.

@@ -7,7 +7,31 @@ import type { HelpFormat } from '../output/formatter.ts';
 export type PadroneSignal = 'SIGINT' | 'SIGTERM' | 'SIGHUP';
 
 /** Value accepted by `PadroneProgress.update()`. */
-export type PadroneProgressUpdate = string | number | { message?: string; progress?: number; indeterminate?: boolean; time?: boolean };
+export type PadroneProgressUpdate =
+  | string
+  | number
+  | {
+      message?: string;
+      progress?: number;
+      indeterminate?: boolean;
+      time?: boolean;
+      /** Text before the indicator (and its final line), like ora's `prefixText`. `''` removes it. */
+      prefixText?: string;
+      /** Text after the message (and in its final line), like ora's `suffixText`. `''` removes it. */
+      suffixText?: string;
+    };
+
+/** Options of `PadroneProgress.stopAndPersist()`. */
+export type PadroneProgressPersistOptions = {
+  /** The symbol before the text. Defaults to `' '` (lined up with `✔` / `✖` lines); `''` for none. */
+  symbol?: string;
+  /** The text to leave. Defaults to the current message. */
+  text?: string;
+  /** Defaults to the current `prefixText`. */
+  prefixText?: string;
+  /** Defaults to the current `suffixText`. */
+  suffixText?: string;
+};
 
 /**
  * A progress indicator instance (spinner, progress bar, etc).
@@ -33,6 +57,11 @@ export type PadroneProgress = {
   succeed: (message?: string | null, options?: { indicator?: string }) => void;
   /** Mark as failed and stop. Pass `null` to stop without rendering a final message. */
   fail: (message?: string | null, options?: { indicator?: string }) => void;
+  /**
+   * Stop and leave a final line with a custom symbol, like ora's `stopAndPersist()`: `stopAndPersist({ symbol: 'ℹ', text: 'Skipped' })`.
+   * Optional for custom renderers: without it, `ctx.context.progress.stopAndPersist()` falls back to `succeed(text, { indicator: symbol })`.
+   */
+  stopAndPersist?: (options?: PadroneProgressPersistOptions) => void;
   /** Control ETA (estimated time remaining) display at runtime. */
   eta: {
     /** Enable ETA tracking. Starts collecting samples from subsequent `update()` calls. */
@@ -114,6 +143,10 @@ export type PadroneProgressOptions = {
   successIndicator?: string;
   /** Character/string shown before the error message. Defaults to `'✖'`. */
   errorIndicator?: string;
+  /** Text before the indicator and its final line, like ora's `prefixText`. Change it with `update({ prefixText })`. */
+  prefixText?: string;
+  /** Text after the message and in its final line, like ora's `suffixText`. Change it with `update({ suffixText })`. */
+  suffixText?: string;
 };
 
 /**

@@ -24,7 +24,7 @@ export function runsForCaller(meta: Pick<InterceptorMeta, 'callers'>, caller: Pa
 }
 
 /** Handlers for `id` of the interceptors that apply to `command` for `caller`, in interceptor order. */
-function eventHandlers(command: AnyPadroneCommand, caller: PadroneCaller, id: string): PadroneEventHandler[] {
+export function eventHandlers(command: AnyPadroneCommand, caller: PadroneCaller, id: string): PadroneEventHandler[] {
   const registered = collectInterceptors(command, getRootCommand(command));
   const lastById = new Map<string, InterceptorMeta>();
   for (const { meta } of registered) if (meta.id) lastById.set(meta.id, meta);

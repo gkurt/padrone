@@ -32,7 +32,7 @@ export const LOCAL_CALLERS = ['cli', 'eval', 'run', 'repl'] as const satisfies r
 export const REMOTE_CALLERS = ['serve', 'mcp', 'tool'] as const satisfies readonly PadroneCaller[];
 
 /** Meta fields stored as own properties of an interceptor function (`name` is the function's name). */
-const META_KEYS = ['id', 'order', 'disabled', 'inherit', 'options', 'env', 'async', 'helpOptions', 'callers'] as const;
+const META_KEYS = ['id', 'order', 'disabled', 'inherit', 'options', 'env', 'async', 'helpOptions', 'callers', 'extraCommands'] as const;
 
 /**
  * Wraps the factory in a new function carrying the meta. `.on()` and `.requires()` build a new interceptor
@@ -133,6 +133,7 @@ export function toRegisteredInterceptor(
         async: metaOrFn.async,
         helpOptions: metaOrFn.helpOptions,
         callers: metaOrFn.callers,
+        extraCommands: metaOrFn.extraCommands,
         requires: (metaOrFn as { '~requires'?: string[] })['~requires'],
         on: (metaOrFn as { '~on'?: InterceptorMeta['on'] })['~on'],
       },
@@ -272,7 +273,7 @@ export function wrapWithLifecycle<T>(
   interceptors: ResolvedInterceptor[],
   command: AnyPadroneCommand,
   input: PadroneInput | undefined,
-  pipeline: (signal: AbortSignal, context: unknown) => T | Promise<T>,
+  pipeline: (signal: AbortSignal, context: unknown, program?: AnyPadroneProgram) => T | Promise<T>,
   wrapErrorResult?: (result: unknown) => T,
   signal?: AbortSignal,
   context?: unknown,
@@ -290,7 +291,7 @@ export function wrapWithLifecycle<T>(
   const effectivePipelineState = pipelineState ?? { phase: 'start' as const };
 
   // Fast path: no lifecycle interceptors
-  if (!hasStart && !hasError && !hasShutdown) return pipeline(signal ?? defaultSignal, context);
+  if (!hasStart && !hasError && !hasShutdown) return pipeline(signal ?? defaultSignal, context, program);
   // Mutable refs: start-phase interceptors can override signal and context (e.g., signal extension, auth),
   // and the overrides propagate to error/shutdown contexts.
   let effectiveSignal = signal ?? defaultSignal;
@@ -387,11 +388,12 @@ export function wrapWithLifecycle<T>(
       hasStart
         ? runInterceptorChain('start', interceptors, startCtx, (ctx) => {
             // Capture overrides from start-phase interceptors so downstream phases see them.
+            // A `program` override (e.g. with plugins loaded) runs the rest of the pipeline on that program.
             effectiveSignal = ctx.signal;
             effectiveContext = ctx.context;
-            return pipeline(ctx.signal, ctx.context);
+            return pipeline(ctx.signal, ctx.context, ctx.program);
           })
-        : pipeline(effectiveSignal, effectiveContext)
+        : pipeline(effectiveSignal, effectiveContext, program)
     ) as T | Promise<T>;
   } catch (e) {
     return runError(e);

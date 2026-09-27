@@ -28,6 +28,8 @@ export type {
   PadroneCaller,
   PadroneCommand,
   PadroneCommandConfig,
+  PadroneHookContext,
+  PadroneHookName,
   PadroneProgramMeta,
 } from './command.ts';
 export type {
@@ -56,6 +58,7 @@ export type {
   PadroneEvent,
   PadroneEventContext,
   PadroneEventHandler,
+  PadroneExtraCommand,
   PadroneInput,
   PadroneInterceptor,
   PadroneInterceptorFn,

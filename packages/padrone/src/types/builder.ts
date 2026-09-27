@@ -33,6 +33,7 @@ import type {
   PadroneActionContext,
   PadroneCommand,
   PadroneCommandConfig,
+  PadroneHookContext,
   PadroneProgramMeta,
 } from './command.ts';
 import type {
@@ -564,6 +565,56 @@ export type PadroneBuilderMethods<
     TContextProvided,
     TGlobals
   >;
+
+  /**
+   * Register a lifecycle hook for this command and every subcommand below it, like cobra's `PersistentPreRun` or
+   * commander's `hook('preAction')`: `preAction` runs before the action (after validation and interceptors such as
+   * `padroneConfirm()`), `postAction` after it succeeds, with its result (awaited when it's a promise). An ancestor's
+   * `preAction` runs before a descendant's, and its `postAction` after. A hook can be async: the action then waits for it,
+   * and the result is a promise, as with an async action. Hooks also run for dry runs (`ctx.dryRun`) and `run()`.
+   * @category Builder
+   */
+  hook: {
+    (
+      name: 'preAction',
+      handler: (
+        ctx: PadroneHookContext<StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>, TContext & TContextProvided>,
+      ) => unknown,
+    ): BuilderOrProgram<
+      TReturn,
+      TProgramName,
+      TName,
+      TParentName,
+      TArgs,
+      TRes,
+      TCommands,
+      TParentArgs,
+      TAsync,
+      TContext,
+      TContextProvided,
+      TGlobals
+    >;
+    (
+      name: 'postAction',
+      handler: (
+        ctx: PadroneHookContext<StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>, TContext & TContextProvided>,
+        result: unknown,
+      ) => unknown,
+    ): BuilderOrProgram<
+      TReturn,
+      TProgramName,
+      TName,
+      TParentName,
+      TArgs,
+      TRes,
+      TCommands,
+      TParentArgs,
+      TAsync,
+      TContext,
+      TContextProvided,
+      TGlobals
+    >;
+  };
 
   /** Wrap an external CLI tool, delegating execution to a shell command. @category Builder */
   wrap: <TWrapArgs extends PadroneSchema = TArgs>(

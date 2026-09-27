@@ -207,6 +207,22 @@ Adds `--dry-run` / `-n` to the command. Under that flag `handler(args, ctx)` run
 
 Return the action's type where possible; a different type widens the result type to a union. Call `.dryRun()` after `.action()` (which sets the result type).
 
+### `.hook(name, handler)`
+
+Runs code around the action of the command **and every subcommand below it** (cobra's `PersistentPreRun`/`PersistentPostRun`, commander's `hook('preAction')`).
+
+```ts
+createPadrone('my-cli')
+  .globalArgs(z.object({ verbose: z.boolean().optional() }))
+  .hook('preAction', (ctx) => { if (ctx.args.verbose) enableDebug(); }) // before the action, after validation
+  .hook('postAction', (ctx, result) => audit(ctx.command.path, result)) // after a successful action
+```
+
+- Ancestor `preAction` first, ancestor `postAction` last; `postAction` is skipped when the action throws.
+- `ctx`: the action context (`command`, `runtime`, `context`, `signal`, `caller`, `program`, `emit`) plus `args` (typed as this command's args incl. globals; in a subcommand they're its args) and `dryRun`.
+- Async hooks are awaited (the result becomes a promise, like an async action); sync hooks keep sync commands sync.
+- Implemented as innermost execute interceptors: they run inside `padroneConfirm()`, for dry runs and `run()`, not for `commandNotFound` replacements.
+
 ### `.command(name, builderFn?)`
 
 Creates or extends a subcommand.
@@ -579,7 +595,7 @@ const withDb = defineInterceptor({ name: 'with-db' })
   }));
 ```
 
-**Metadata:** `name` (string), `order` (number, lower = outermost, default: 0), `id` (string, deduplication key — last wins), `disabled` (boolean), `callers` (callers it runs for, e.g. `LOCAL_CALLERS`/`REMOTE_CALLERS`; still counts for `requires`), `on` (event handlers keyed by event id).
+**Metadata:** `name` (string), `order` (number, lower = outermost, default: 0), `id` (string, deduplication key — last wins), `disabled` (boolean), `callers` (callers it runs for, e.g. `LOCAL_CALLERS`/`REMOTE_CALLERS`; still counts for `requires`), `on` (event handlers keyed by event id), `extraCommands` (commands it runs that aren't in the tree, for help and completion).
 
 **Chaining:** `.provides<T>()` and `.requires<T>(...ids)` for typed context (ids are checked at runtime), `.factory(fn)` to set the factory, `.on(event, handler)` for a typed custom event handler. `.requires()` and `.on()` return a new interceptor (same id, meta and factory); the original is unchanged.
 
@@ -592,6 +608,41 @@ const slack = defineInterceptor({ name: 'slack' }, () => ({})).on(deployed, (pay
 await ctx.emit(deployed, { env, version });
 await program.emit(deployed, { env, version }); // outside an execution: root handlers, caller 'run'
 ```
+
+**`commandNotFound`** (built-in event, exported): emitted when routing finds no command for a name (top level, or under a group without positionals). Payload: `name`, `args` (words after it, as typed), `command` (where it was looked up), `input`, `suggestions`, `handled`, `handle(action)` (runs `action(ctx)` in its place through the command chain's execute interceptors; its return value is the result), `reroute(input)` (routes another input). Handlers run in order until one handles it; unhandled → the usual "Unknown command" error with "Did you mean". Only emitted when a handler exists (stays sync otherwise).
+
+```ts
+const legacy = defineInterceptor({ name: 'legacy' }, () => ({})).on(commandNotFound, (event) => {
+  if (event.name === 'publish') event.reroute(['release', ...event.args]);
+});
+```
+
+Meta `extraCommands: (command) => [{ name, description?, group? }]` lists commands an interceptor runs this way in help (command line only) and completion.
+
+### padroneExternalCommands(options?)
+
+`my-cli foo --bar` runs `my-cli-foo --bar` found on `PATH` (like cargo/clap external subcommands): spawned without a shell, stdio inherited, the run ends with its exit code (`result.exitCode`). Program commands win; unmatched names give the usual error. Listed in help ("External Commands") and completion. Local callers only (never serve/MCP/`tool()`). Windows: `PATHEXT`, `.cmd`/`.bat` via escaped `cmd.exe`.
+
+```ts
+.extend(padroneExternalCommands({ prefix?: 'my-cli-', path?: string[], list?: true, spawn?: (file, args, { env }) => Promise<number> }))
+```
+
+### padronePlugins(options?)
+
+Runtime plugins (oclif `plugins`): modules that default-export a `PadroneExtension` (`(program) => program.command(...)`) or a program (mounted under its name), loaded in the start phase before routing (via `next({ program })`), so their commands route, show in help and complete.
+
+```ts
+.extend(padronePlugins({
+  dir?: string,            // default: `${program.dirs.data}/plugins` (package.json, node_modules, plugins.json)
+  packages?: string[],     // always loaded, before the user's
+  command?: true,          // plugins list | install <pkg> | uninstall <name> | link <path> (built-in, local-only)
+  packageManager?: 'npm' | 'bun' | 'pnpm' | 'yarn',
+  exec?: (command, { cwd }) => Promise<number>, // runs the package manager (inject in tests)
+  import?: (specifier) => Promise<unknown>,     // loads a module (inject in tests)
+}))
+```
+
+A plugin that fails to load is reported on stderr and skipped; `install` refuses specs starting with `-` and uninstalls packages that aren't plugins. No plugins → the run stays sync.
 
 ### PadroneInterceptor Type
 

@@ -10,6 +10,8 @@ export type { PadroneConfirmOptions } from './confirm.ts';
 export { padroneConfirm } from './confirm.ts';
 export type { PadroneEnvOptions } from './env.ts';
 export { padroneEnv } from './env.ts';
+export type { PadroneExternalCommandsOptions } from './external-commands.ts';
+export { padroneExternalCommands } from './external-commands.ts';
 export type { PadroneFormatColumns, PadroneFormatOptions, PadroneOutputFormat } from './format.ts';
 export { padroneFormat } from './format.ts';
 export type { HelpCommand, HelpTopicInfo, PadroneHelpOptions, PadroneHelpTopic, PadroneHelpTopicContext, WithHelp } from './help.ts';
@@ -19,6 +21,8 @@ export type { PadroneJqFunction, PadroneJsonOptions } from './json.ts';
 export { padroneJson } from './json.ts';
 export type { PadroneLogDestination, PadroneLogger, PadroneLoggerConfig, PadroneLogLevel, WithLogger } from './logger.ts';
 export { padroneLogger } from './logger.ts';
+export type { PadronePluginPackageManager, PadronePluginsOptions } from './plugins.ts';
+export { padronePlugins } from './plugins.ts';
 export type {
   PadroneProgressConfig,
   PadroneProgressContext,

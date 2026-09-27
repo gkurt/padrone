@@ -20,7 +20,7 @@ import type {
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
-import { findCommandInTree, frameworkFlags, isErrorReported, markErrorReported, passthroughSchema } from './utils.ts';
+import { findCommandInTree, frameworkFlags, isErrorReported, isRemoteCaller, markErrorReported, passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -112,7 +112,7 @@ function helpHint(rootCommand: AnyPadroneCommand, command: AnyPadroneCommand, fl
   return `Run "${invocation.filter(Boolean).join(' ')}" for usage.`;
 }
 
-type HelpRequest = { detail?: HelpDetail; format?: HelpFormat; all?: boolean };
+type HelpRequest = { detail?: HelpDetail; format?: HelpFormat; all?: boolean; extraCommands?: boolean };
 
 /**
  * Renders help for `command` with the runtime's settings at the time it's shown, so flags read later in
@@ -129,6 +129,7 @@ function renderHelp(runtime: ResolvedPadroneRuntime, command: AnyPadroneCommand,
     all: request.all,
     terminal: runtime.terminal,
     env: runtime.env(),
+    extraCommands: request.extraCommands,
   });
   if (format !== 'json' || runtime.format !== 'json') return text;
   try {
@@ -310,7 +311,10 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
           return next();
         },
         execute(ctx, next) {
-          if (helpRequest !== undefined || showDefaultHelp) return withPager(ctx, renderHelp(ctx.runtime, ctx.command, helpRequest));
+          if (helpRequest !== undefined || showDefaultHelp) {
+            const request = { ...helpRequest, extraCommands: !isRemoteCaller(ctx.caller) };
+            return withPager(ctx, renderHelp(ctx.runtime, ctx.command, request));
+          }
           if (!options.pager || !isHelpCommand(ctx.command)) return next();
           return thenMaybe(next(), (res) => thenMaybe(res.result, (result) => withPager(ctx, result)));
         },
@@ -343,6 +347,7 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
                   theme: ctx.runtime.theme,
                   terminal: ctx.runtime.terminal,
                   env: ctx.runtime.env(),
+                  extraCommands: !isRemoteCaller(ctx.caller),
                 }),
               );
             } else {
@@ -420,6 +425,7 @@ export function padroneHelp(options: PadroneHelpOptions = {}): <T extends Comman
               detail: args.detail as HelpDetail,
               format: args.format as HelpFormat,
               all: args.all,
+              extraCommands: !isRemoteCaller(ctx.caller),
             });
           }),
       )

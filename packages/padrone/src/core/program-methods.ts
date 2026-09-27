@@ -294,6 +294,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
       theme: prefs?.theme ?? runtime.theme,
       terminal: prefs?.terminal ?? runtime.terminal,
       env: prefs?.env ?? runtime.env(),
+      extraCommands: prefs?.extraCommands ?? true,
     });
   };
 

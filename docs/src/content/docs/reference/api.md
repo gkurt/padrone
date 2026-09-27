@@ -243,6 +243,37 @@ program.command('rm', (c) =>
 
 ---
 
+### .hook(name, handler)
+
+Run code before or after the action of this command **and every subcommand below it**, like cobra's `PersistentPreRun` / `PersistentPostRun` or commander's `hook('preAction')`:
+
+```typescript
+const program = createPadrone('my-cli')
+  .globalArgs(z.object({ verbose: z.boolean().optional() }))
+  .hook('preAction', (ctx) => {
+    if (ctx.args.verbose) enableDebugLogs();
+  })
+  .hook('postAction', (ctx, result) => {
+    ctx.runtime.error(`${ctx.command.path} finished`);
+  })
+  .command('db', (db) =>
+    db
+      .hook('preAction', async (ctx) => {
+        await connect(ctx.context);
+      })
+      .command('migrate', (c) => c.action(() => migrate())),
+  );
+// my-cli db migrate --verbose → root preAction, db preAction, action, db postAction, root postAction
+```
+
+- `preAction` runs after validation (and after execute interceptors such as `padroneConfirm()`), right before the action; `postAction` runs after the action succeeds, with its result (awaited when it's a promise). Neither runs when validation fails, and `postAction` doesn't run when the action (or a `preAction`) throws.
+- An ancestor's `preAction` runs before a descendant's, and its `postAction` after. Several hooks on one command run in the order they were added.
+- Handlers get the action's context (`command`, `runtime`, `context`, `signal`, `caller`, `program`, `emit`) plus `args` and `dryRun`. On a command with subcommands, `command`, `args` and `context` are the running subcommand's; they're typed as the command's own, which its [global args](#globalargsschema-meta) always match.
+- A hook can be async: the action waits for it and the run's result is a promise, as with an async action. Sync hooks keep a sync command sync.
+- Hooks are execute-phase interceptors (innermost, order `10000`), so they also run for dry runs (`ctx.dryRun`) and `run()`, but not for what a [`commandNotFound`](#commandnotfound) handler runs.
+
+---
+
 ### padroneEnv(schema)
 
 Extension for parsing environment variables into arguments. The schema validates `process.env` and transforms env var names into argument field names. Imported from `'padrone'`.
@@ -746,6 +777,81 @@ my-cli @deploy.args deploy   # deploy.args: --env staging
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `prefix` | `string` | `'@'` | The character that marks a response file |
+
+---
+
+### padroneExternalCommands(options?)
+
+Extension for git-style external subcommands, like clap's `allow_external_subcommands` or cargo's: a top-level command the program doesn't have runs the executable `<program>-<name>` found on `PATH`, with the words typed after the name.
+
+```typescript
+import { padroneExternalCommands } from 'padrone';
+
+program.extend(padroneExternalCommands());
+```
+
+```bash
+my-cli foo --bar baz   # runs my-cli-foo --bar baz (from PATH), with the terminal's stdin/stdout/stderr
+```
+
+- The executable is spawned directly (no shell), with the arguments as typed (options and `--` included, so `my-cli foo --help` is `my-cli-foo --help`) and the runtime's environment. The run ends with its exit code (`cli()` exits with it; `eval()` results carry it as `exitCode`). On Windows, `PATHEXT` extensions are looked up, and a `.cmd` / `.bat` file runs under `cmd.exe` with its arguments escaped.
+- The program's own commands always win. When no executable matches, the usual "Unknown command" error follows, with "Did you mean" suggestions that include the external commands.
+- Found external commands are listed in help under "External Commands" and offered by shell completion (not in generated docs or man pages, nor in help shown to remote callers).
+- Only for `cli()`, `eval()`, `run()` and the REPL: serve, MCP and `tool()` calls never run external commands.
+- Built on the [`commandNotFound`](#commandnotfound) event, for top-level names only.
+
+**Configuration:**
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `prefix` | `string` | `'<program>-'` | What an executable's name starts with |
+| `path` | `string[]` | `PATH` of `runtime.env()` | Directories to look in, in order |
+| `list` | `boolean` | `true` | List the external commands in help and completion |
+| `spawn` | `(file, args, { env }) => Promise<number>` | spawn with inherited stdio | Runs an external command and resolves with its exit code (e.g. to test without spawning) |
+
+---
+
+### padronePlugins(options?)
+
+Extension for plugins users install at runtime, like oclif's `plugins`. At startup (a start-phase interceptor, before routing) each plugin module is loaded and applied to the program, so its commands route, show in help and complete:
+
+```typescript
+import { padronePlugins } from 'padrone';
+
+createPadrone('my-cli').extend(padronePlugins({ command: true })).cli();
+```
+
+```bash
+my-cli plugins install my-cli-plugin-deploy   # npm install / bun add / pnpm add / yarn add into the plugins directory
+my-cli plugins link ./my-plugin               # use a local directory or module file, for developing a plugin
+my-cli plugins list
+my-cli plugins uninstall my-cli-plugin-deploy
+my-cli deploy                                 # a command the plugin adds
+```
+
+A plugin module default-exports (or exports as `plugin`) a `PadroneExtension`, or a program, which is mounted under its name:
+
+```typescript
+// my-cli-plugin-deploy/index.js
+export default (program) => program.command('deploy', (c) => c.action(() => 'deployed'));
+```
+
+Prefer the extension form: a program export built with another copy of padrone still mounts, but its interceptors come from that copy.
+
+- Plugins are listed in `plugins.json` in the plugins directory, which also holds the installed packages' `package.json` and `node_modules`. A package's entry point comes from its `package.json` (`exports`' `import` / `default`, `module`, `main`).
+- A plugin that fails to load is reported on stderr (`Plugin "x" failed to load: …`) and skipped. `plugins install` checks that the package is a plugin, and uninstalls it again when it isn't; a spec starting with `-` is refused.
+- With no plugins the run stays synchronous; loading plugins makes it async.
+- The `plugins` commands are built-in and only available on the command line (serve, MCP and `tool()` calls are refused); `install`, `uninstall` and `link` are mutation commands. The plugins' own commands are ordinary commands, available to every caller.
+- Plugins are applied with the start phase's `next({ program })`: the rest of the run (parse to execute) uses the program with the plugins, and plugins' root interceptors take part from the parse phase on. So runs with a start phase (`cli()`, `eval()`, the REPL, serve and MCP requests) have them, while `program.help()`, `parse()` and `run()` see the program without them; a REPL session keeps the plugins it started with.
+
+**Configuration:**
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `dir` | `string` | `plugins` in `program.dirs.data` | Where installed plugins and `plugins.json` live |
+| `packages` | `string[]` | none | Plugin modules the program always loads, before the user's (package names or absolute paths) |
+| `command` | `boolean \| string` | `false` | Add the `plugins` group (`list`/`ls`, `install`/`add`, `uninstall`/`remove`/`rm`, `link`); a string names it |
+| `packageManager` | `'npm' \| 'bun' \| 'pnpm' \| 'yarn'` | bun under Bun, else how the program was installed | What `install` / `uninstall` run |
+| `exec` | `(command, { cwd }) => Promise<number>` | spawn without a shell | Runs a package manager command (e.g. to test without installing) |
+| `import` | `(specifier) => Promise<unknown>` | `import()` | Imports a plugin module (a `file:` URL, or a name from `packages`); pass your own to resolve `packages` from your program's location |
 
 ---
 
@@ -1449,6 +1555,7 @@ const withDb = defineInterceptor({ name: 'with-db' })
 | `async` | `boolean` | The interceptor may make validation async |
 | `callers` | `PadroneCaller[]` | Run only for these callers (e.g. `LOCAL_CALLERS` = `cli`/`eval`/`run`/`repl`, `REMOTE_CALLERS` = `serve`/`mcp`/`tool`); skipped otherwise. Still counts as registered for `requires` |
 | `on` | `Record<string, handler>` | Custom event handlers keyed by event id |
+| `extraCommands` | `(command) => { name, description?, group? }[]` | Commands the interceptor runs that aren't in the command tree (e.g. external commands on `PATH`), under `command`: listed in help on the command line and offered by shell completion; a real command of the same name hides one |
 
 **Chaining methods (single-arg form):**
 - `.provides<T>()` — Declare what this interceptor adds to the context (type-level only)
@@ -1475,6 +1582,36 @@ Handlers receive the payload and `{ command, runtime, context, caller, signal, p
 
 **Returns:** A `PadroneInterceptor` — pass to `.intercept()` or use within an extension.
 
+## commandNotFound
+
+A built-in event, emitted when routing finds no command for a name: at the top level (`my-cli deploi`), or under a command that has subcommands and takes no positionals (`my-cli db migrat`). Like oclif's `command_not_found` hook or commander's `command:*`. A handler can run something in the unknown command's place, or route another input instead; when none does, the usual "Unknown command" error follows, with "Did you mean" suggestions.
+
+```typescript
+import { commandNotFound, defineInterceptor } from 'padrone';
+
+const fallback = defineInterceptor({ name: 'fallback' }, () => ({})).on(commandNotFound, (event) => {
+  if (event.name === 'ship') event.reroute(['deploy', ...event.args]); // an input to route instead
+  else if (event.name === 'hello') event.handle((ctx) => `Hello from ${ctx.command.path}`); // runs in its place
+});
+
+program.intercept(fallback);
+```
+
+The payload (`PadroneCommandNotFound`):
+
+| Property | Description |
+|----------|-------------|
+| `name` | The name that matched no command |
+| `args` | The words typed after it, as typed (options included) |
+| `command` | The command it was looked up in (the program for a top-level name) |
+| `input` | The run's whole input |
+| `suggestions` | Similar command names, as "Did you mean" lists them |
+| `handled` | Whether a handler has called `handle()` or `reroute()` |
+| `handle(action)` | Run `action(ctx)` in the unknown command's place: through the execute interceptors of `command`'s chain (not `.hook()` hooks), with no args to validate; its return value is the run's result, printed by `cli()` |
+| `reroute(input)` | Route `input` instead (the parse interceptors don't run again) |
+
+Handlers are those of the interceptors on `command`'s chain, run one at a time in interceptor order until one handles it. The event is only emitted when a handler is registered, so a program without one stays synchronous; interceptors with `callers` only get it from those callers. [`padroneExternalCommands()`](#padroneexternalcommandsoptions) is built on it.
+
 ---
 
 ## Built-in Extension Exports
@@ -1495,6 +1632,8 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneUpgrade(options?)` | `upgrade` command: self-update with the package manager the program was installed with (`--check`, `--exit-code`, `--to`, `--channel`) |
 | `padroneAliases(options?)` | User-defined command aliases (`alias set|list|delete`), expanded before routing (`$1`…`$N` and `$@` placeholders) |
 | `padroneResponseFiles(options?)` | Response files: `@file` arguments expand into the file's arguments (`@@` escapes, `prefix` option) |
+| `padroneExternalCommands(options?)` | Git-style external subcommands: `my-cli foo` runs `my-cli-foo` from `PATH` (no shell, inherited stdio, its exit code); listed in help and completion; local callers only |
+| `padronePlugins(options?)` | Runtime plugins loaded at startup from `plugins.json` and `packages`; `command: true` adds `plugins list\|install\|uninstall\|link` |
 
 The following extensions live in their own subpath imports to keep optional dependencies and large transitive surfaces out of the main bundle:
 
@@ -1540,6 +1679,8 @@ import type {
   PadroneSchema,
   AsyncPadroneSchema,
   PadroneCommandConfig,
+  PadroneHookName,
+  PadroneHookContext,
 
   // Interceptor types
   PadroneInterceptor,
@@ -1547,6 +1688,8 @@ import type {
   PadroneEvent,
   PadroneEventHandler,
   PadroneEventContext,
+  PadroneCommandNotFound,
+  PadroneExtraCommand,
   InterceptorBaseContext,
   InterceptorStartContext,
   InterceptorParseContext,

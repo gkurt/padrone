@@ -125,6 +125,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.globalArgs(schema, meta?)` | Define options shared by a command and all its subcommands, merged into their args |
 | `.action(handler)` | Set handler `(args, ctx, base?) => result` |
 | `.dryRun(handler)` | Add `--dry-run` / `-n`: runs `handler` instead of the action and prints what would change |
+| `.hook('preAction' \| 'postAction', handler)` | Run code before / after the action of the command and all its subcommands (ancestors' pre-hooks first, post-hooks last) |
 | `.command(name, builder)` | Add subcommand (name or `[name, ...aliases]`) |
 | `.context(transform?)` | Define typed context or transform inherited context |
 | `.mount(name, program, options?)` | Mount another program as subcommand tree |
@@ -143,6 +144,8 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.extend(padroneUpgrade(options?))` | `upgrade` self-update command (extension) |
 | `.extend(padroneAliases(options?))` | User-defined command aliases with `$1`/`$@` placeholders (extension) |
 | `.extend(padroneResponseFiles(options?))` | `@file` arguments expand into the file's arguments (extension) |
+| `.extend(padroneExternalCommands(options?))` | External subcommands: `my-cli foo` runs `my-cli-foo` from `PATH` (extension) |
+| `.extend(padronePlugins(options?))` | Plugins users install at runtime (`plugins install\|uninstall\|list\|link`), loaded at startup (extension) |
 | `.async()` | Mark as async validation |
 
 ### Program (run commands)

@@ -1,5 +1,5 @@
 import { extractSchemaMetadata, getJsonSchema, getOptionArity, parsePositionalConfig } from '../core/args.ts';
-import { findCommandByName, getGlobalArgs, resolveCommand } from '../core/commands.ts';
+import { findCommandByName, getExtraCommands, getGlobalArgs, resolveCommand } from '../core/commands.ts';
 import { getDryRunFlagKeys, getInterceptorOptions, parseCommand } from '../core/validate.ts';
 import { getHelpTopics } from '../output/help.ts';
 import type { AnyPadroneCommand, PadroneCompletionItem, PadroneFieldMeta, PadroneSchema, PadroneValueHint } from '../types/index.ts';
@@ -278,10 +278,12 @@ export async function getCompletionResult(rootCommand: AnyPadroneCommand, words:
     return { items: filter([...names, ...dryRun, ...help]), directive: 'nofiles' };
   }
 
-  const visibleCommands = (cmd: AnyPadroneCommand): Candidate[] =>
-    (cmd.commands ?? [])
+  const visibleCommands = (cmd: AnyPadroneCommand): Candidate[] => [
+    ...(cmd.commands ?? [])
       .filter((c) => !c.hidden && c.name && c.name !== COMPLETE_COMMAND)
-      .map((c) => ({ value: c.name, description: c.title ?? c.description, deprecated: !!c.deprecated }));
+      .map((c) => ({ value: c.name, description: c.title ?? c.description, deprecated: !!c.deprecated })),
+    ...getExtraCommands(cmd).map((c) => ({ value: c.name, description: c.description })),
+  ];
   const subcommands = positionals === 0 && !afterDoubleDash ? visibleCommands(command) : [];
   // `help <word>...`: the built-in help command takes a command path (`help db migrate`) or a help topic
   const helpWord = !afterDoubleDash && !!command.flagNames && command.name === 'help' && !!command.parent && !command.parent.parent;

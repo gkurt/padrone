@@ -237,9 +237,22 @@ export type InterceptorMeta = {
    */
   callers?: readonly PadroneCaller[];
   /**
+   * Commands this interceptor runs that aren't in the command tree (e.g. external commands found on `PATH`), under the command
+   * whose subcommands are listed: help lists them and shell completion offers them. A command of the same name hides one.
+   */
+  extraCommands?: (command: AnyPadroneCommand) => readonly PadroneExtraCommand[];
+  /**
    * Custom event handlers keyed by event id. `.on(event, handler)` on the interceptor adds one with the payload typed.
    */
   on?: Readonly<Record<string, PadroneEventHandler<any>>>;
+};
+
+/** A command an interceptor runs that isn't in the command tree, listed in help and offered by completion (`extraCommands`). */
+export type PadroneExtraCommand = {
+  name: string;
+  description?: string;
+  /** Help section to list it under, e.g. `'External Commands'`. */
+  group?: string;
 };
 
 /**

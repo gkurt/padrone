@@ -1,4 +1,4 @@
-import type { AnyPadroneCommand, PadroneGlobalArgsMeta, PadroneSchema } from '../types/index.ts';
+import type { AnyPadroneCommand, PadroneExtraCommand, PadroneGlobalArgsMeta, PadroneSchema } from '../types/index.ts';
 import { offeredLongNames } from '../util/shell-utils.ts';
 import { extractSchemaMetadata, getJsonSchema, markSensitiveProperties } from './args.ts';
 import { resolveRuntime } from './default-runtime.ts';
@@ -348,6 +348,27 @@ export function subcommandNames(command: AnyPadroneCommand): string[] {
     resolveCommand(cmd);
     return cmd.hidden ? [] : [cmd.name, ...(cmd.aliases ?? [])];
   });
+}
+
+/**
+ * Commands interceptors on `command`'s chain run under it without being in the tree (`extraCommands` meta, e.g. external
+ * commands on `PATH`), minus names a subcommand already has. The nearest interceptor of an id wins.
+ */
+export function getExtraCommands(command: AnyPadroneCommand): PadroneExtraCommand[] {
+  const seen = new Set<string>();
+  const found = new Map<string, PadroneExtraCommand>();
+  for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
+    for (const { meta } of [...(current.interceptors ?? [])].reverse()) {
+      if (current !== command && meta.inherit === false) continue;
+      if (meta.id && seen.has(meta.id)) continue;
+      if (meta.id) seen.add(meta.id);
+      if (meta.disabled || !meta.extraCommands) continue;
+      for (const extra of meta.extraCommands(command)) {
+        if (!found.has(extra.name) && !findCommandByName(extra.name, command.commands)) found.set(extra.name, extra);
+      }
+    }
+  }
+  return [...found.values()];
 }
 
 export function findCommandByName(name: string, commands?: AnyPadroneCommand[]): AnyPadroneCommand | undefined {

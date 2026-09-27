@@ -24,6 +24,7 @@ import type {
   PadroneBuilder,
   PadroneCommand,
   PadroneGlobalArgsMeta,
+  PadroneHookName,
   PadroneInput,
   PadroneInterceptorFn,
   PadroneProgram,
@@ -43,7 +44,8 @@ import {
 } from './commands.ts';
 import { RoutingError } from './errors.ts';
 import type { ExecContext } from './exec.ts';
-import { collectInterceptors, errorResultWithSignal, execCommand } from './exec.ts';
+import { collectInterceptors, errorResultWithSignal, execCommand, execContextKey } from './exec.ts';
+import { hookInterceptor } from './hooks.ts';
 import { toRegisteredInterceptor } from './interceptors.ts';
 import { createProgramMethods } from './program-methods.ts';
 import { hasInteractiveConfig, isAsyncBranded, makeThenable, noop, withPromiseDrain } from './results.ts';
@@ -287,6 +289,13 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
       }) as any;
     },
 
+    hook(name: PadroneHookName, handler: (ctx: any, result?: unknown) => unknown) {
+      return createPadroneBuilder({
+        ...existingCommand,
+        interceptors: [...(existingCommand.interceptors ?? []), hookInterceptor(name, handler)],
+      }) as any;
+    },
+
     ...programMethods,
 
     get dirs() {
@@ -308,7 +317,8 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
     '~types': {} as any,
 
     [commandSymbol]: existingCommand,
-  } satisfies AnyPadroneProgram & { [commandSymbol]: AnyPadroneCommand } as any;
+    [execContextKey]: execCtx,
+  } satisfies AnyPadroneProgram & { [commandSymbol]: AnyPadroneCommand; [execContextKey]: ExecContext } as any;
 
   // Fix forward reference: execCtx.builder needs to reference the builder after it's created
   execCtx.builder = builder;

@@ -42,7 +42,7 @@ describe('jq subset', () => {
   it('reports syntax and runtime errors, and ? suppresses runtime ones', () => {
     expect(() => compileJq('.a |')).toThrow('Unexpected end of expression');
     expect(() => compileJq('nope')).toThrow('Unknown function nope/0');
-    expect(() => compileJq('.. | .a')).toThrow('not supported');
+    expect(() => compileJq('reduce .[] as $x (0; . + $x)')).toThrow('Unknown function reduce/0');
     expect(() => jq('.a', [1])).toThrow('Cannot index array with "a"');
     expect(jq('.[] | .a?', [1, { a: 2 }])).toEqual([2]);
   });

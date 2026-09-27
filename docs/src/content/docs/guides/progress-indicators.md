@@ -194,6 +194,7 @@ c.extend(padroneProgress('Importing...'))
 | `update(value)` | Update message, progress, or both (see below) |
 | `succeed(message?, options?)` | Mark as succeeded and stop |
 | `fail(message?, options?)` | Mark as failed and stop |
+| `stopAndPersist({ symbol?, text?, prefixText?, suffixText? })` | Stop and leave a final line with a custom symbol (see below) |
 | `stop()` | Stop without success/fail status |
 | `eta.start()` / `eta.stop()` / `eta.reset()` | Control the ETA display at runtime |
 | `pause()` | Temporarily hide (for clean output) |
@@ -224,6 +225,30 @@ ctx.context.progress.update({ time: true });
 
 // Stop elapsed timer
 ctx.context.progress.update({ time: false });
+
+// Text before the indicator and after the message (kept in the final line)
+ctx.context.progress.update({ prefixText: '[2/3]', suffixText: '(12 MB)' });
+```
+
+### Persisting a Final Line
+
+`stopAndPersist()` stops the indicator and leaves a final line with a symbol of your choice, like ora — for outcomes that are neither a success nor a failure:
+
+```typescript
+c.extend(padroneProgress('Checking for updates...'))
+  .action((args, ctx) => {
+    if (upToDate) return ctx.context.progress.stopAndPersist({ symbol: 'ℹ', text: 'Already up to date' });
+    // ...
+  })
+```
+
+It takes `{ symbol, text, prefixText, suffixText }`: `symbol` defaults to `' '` (lined up under `✔`/`✖` lines, `''` for none) and `text` to the current message. Like `succeed()`, it replaces the auto-managed final message. Without a terminal, only that final line is printed. A custom renderer may leave `stopAndPersist` out; the context's `progress.stopAndPersist()` then calls its `succeed(text, { indicator: symbol })`.
+
+`prefixText` and `suffixText` can also be set up front, in the config or through `progressConfig` in the context:
+
+```typescript
+c.extend(padroneProgress({ message: 'Uploading...', prefixText: '[upload]' }))
+// [upload] ⠹ Uploading...   →   [upload] ✔ Uploading...
 ```
 
 ## Elapsed Time and ETA

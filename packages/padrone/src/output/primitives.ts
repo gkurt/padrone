@@ -23,6 +23,34 @@ export function displayWidth(text: string): number {
   return width;
 }
 
+// ── Sanitizing ──────────────────────────────────────────────────────────
+
+const ESCAPE_SEQUENCE =
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: escape sequences
+  /\x1b\[[0-?]*[ -/]*[@-~]|\x9b[0-?]*[ -/]*[@-~]|(?:\x1b\]|\x9d)[^\x07\x1b\x9c]*(?:\x07|\x1b\\|\x9c)?|(?:\x1b[PX^_]|[\x90\x98\x9e\x9f])[^\x1b\x9c]*(?:\x1b\\|\x9c)?|\x1b[ -/]*[0-~]/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters
+const CONTROL_CHARACTER = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g;
+
+/**
+ * `text` without terminal escape sequences (ANSI/CSI colors and cursor moves, OSC titles and hyperlinks, DCS/APC strings)
+ * and C0/C1 control characters, like go-gh's asciisanitizer; tabs and line breaks stay.
+ */
+export function sanitizeText(text: string): string {
+  return text.replace(ESCAPE_SEQUENCE, '').replace(CONTROL_CHARACTER, '');
+}
+
+/** A copy of `value` with every string (and object key) sanitized by `sanitizeText`. */
+export function sanitizeValue(value: unknown): unknown {
+  if (typeof value === 'string') return sanitizeText(value);
+  if (Array.isArray(value)) return value.map(sanitizeValue);
+  if (!value || typeof value !== 'object' || value instanceof Date) return value;
+  // Defines own properties, so a "__proto__" key is a key
+  return Object.fromEntries(Object.entries(value).map(([key, v]) => [sanitizeText(key), sanitizeValue(v)]));
+}
+
+/** A sanitized table cell: one line per line break, tabs as spaces, stray carriage returns dropped. */
+const sanitizeCell = (text: string) => sanitizeText(text).replace(/\r\n/g, '\n').replace(/\r/g, '').replace(/\t/g, ' ');
+
 // ── Table ───────────────────────────────────────────────────────────────
 
 export type TableOptions = {
@@ -38,6 +66,11 @@ export type TableOptions = {
   border?: boolean;
   /** Show the header row in text output (default: true). */
   header?: boolean;
+  /**
+   * Strip terminal escape sequences and control characters from cells and headers (see `sanitizeText`), for data that
+   * may not be trusted; tabs become spaces. Defaults to `false`, so cells can carry colors.
+   */
+  sanitize?: boolean;
 };
 
 /** A cell's text: nothing for `null`/`undefined`, dates as ISO strings, objects as JSON. */
@@ -85,12 +118,13 @@ export function renderTable(data: Record<string, unknown>[], options: TableOptio
   const columns = options?.columns ?? Object.keys(data[0]!);
   if (columns.length === 0) return '';
 
-  const headers = columns.map((col) => options?.headers?.[col] ?? col);
+  const clean = options?.sanitize ? sanitizeCell : (text: string) => text;
+  const headers = columns.map((col) => clean(options?.headers?.[col] ?? col));
   const maxCol = options?.maxColumnWidth;
 
   const rows = data.map((row) =>
     columns.map((col) => {
-      const text = stringifyCell(row[col]);
+      const text = clean(stringifyCell(row[col]));
       return maxCol
         ? cellLines(text)
             .map((line) => truncate(line, maxCol))
@@ -109,7 +143,7 @@ export function renderTable(data: Record<string, unknown>[], options: TableOptio
   const getAlign = (i: number): 'left' | 'right' | 'center' => options?.align?.[columns[i]!] ?? 'left';
 
   if (ctx.format === 'markdown') return renderTableMarkdown(headers, rows, getAlign);
-  if (ctx.format === 'html') return renderTableHtml(columns, headers, rows, data, getAlign);
+  if (ctx.format === 'html') return renderTableHtml(columns, headers, data, getAlign, clean);
   return renderTableText(headers, rows, colWidths, getAlign, options?.border !== false, options?.header !== false, ctx);
 }
 
@@ -163,9 +197,9 @@ function renderTableMarkdown(headers: string[], rows: string[][], getAlign: (i: 
 function renderTableHtml(
   columns: string[],
   headers: string[],
-  _rows: string[][],
   data: Record<string, unknown>[],
   getAlign: (i: number) => 'left' | 'right' | 'center',
+  clean: (text: string) => string,
 ): string {
   const ths = headers.map((h, i) => {
     const a = getAlign(i);
@@ -179,7 +213,7 @@ function renderTableHtml(
         .map((col, i) => {
           const a = getAlign(i);
           const style = a !== 'left' ? ` style="text-align: ${a};"` : '';
-          return `<td${style}>${escapeHtml(stringifyCell(row[col]))}</td>`;
+          return `<td${style}>${escapeHtml(clean(stringifyCell(row[col])))}</td>`;
         })
         .join('') +
       '</tr>',

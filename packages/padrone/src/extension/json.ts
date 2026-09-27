@@ -2,16 +2,39 @@ import { ValidationError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { OptionArity } from '../core/parse.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
-import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
-import { compileJq, compileTemplate, formatJqOutput } from '../util/jq.ts';
+import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneCaller } from '../types/index.ts';
+import type { JqOptions } from '../util/jq.ts';
+import { compileJq, compileTemplate, DEFAULT_JQ_MAX_STEPS, formatJqOutput } from '../util/jq.ts';
 import { safeJsonStringify } from '../util/json.ts';
 import type { JsonOutputFilter } from './utils.ts';
-import { frameworkFlags, parseWithFallback, rawInputFlag, setJsonOutputFilter, setOutputRenderer, toFlag } from './utils.ts';
+import {
+  frameworkFlags,
+  isRemoteCaller,
+  parseWithFallback,
+  rawInputFlag,
+  setJsonOutputFilter,
+  setOutputRenderer,
+  toFlag,
+} from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-/** A full jq implementation to use for `--jq` instead of the built-in subset: every output for the input. Must be synchronous. */
-export type PadroneJqFunction = (input: unknown, expression: string) => unknown[];
+/**
+ * A full jq implementation to use for `--jq` instead of the built-in subset: every output for the input. Must be synchronous.
+ * `env` is what `$ENV` should see: the runtime's variables, or none for remote callers.
+ */
+export type PadroneJqFunction = (input: unknown, expression: string, options: { env: Record<string, string | undefined> }) => unknown[];
+
+/** Step budgets of the built-in jq engine (see `JqOptions.maxSteps`), for `--jq` and `--template`. */
+export type PadroneJqLimits = {
+  /** For local callers (`cli`, `eval`, `run`, `repl`). Defaults to `10_000_000`. */
+  maxSteps?: number;
+  /** For remote callers (`serve`, `mcp`, `tool`). Defaults to `1_000_000`. */
+  remoteMaxSteps?: number;
+};
+
+/** The default step budget of `--jq` / `--template` for remote callers. */
+export const DEFAULT_REMOTE_JQ_MAX_STEPS = 1_000_000;
 
 export type PadroneJsonOptions = {
   /**
@@ -36,6 +59,11 @@ export type PadroneJsonOptions = {
   fields?: boolean | 'required';
   /** The fields `--json` accepts, or a function giving them for a command (`undefined`: the keys of its result). */
   availableFields?: readonly string[] | ((command: AnyPadroneCommand) => readonly string[] | undefined);
+  /**
+   * Step budgets of the built-in jq engine, so a runaway expression (`[range(1e9)]`) fails fast with an error.
+   * Remote callers get a lower default budget.
+   */
+  jqLimits?: PadroneJqLimits;
 };
 
 // ── Interceptor ─────────────────────────────────────────────────────────
@@ -99,18 +127,30 @@ function createJsonInterceptor(options: PadroneJsonOptions) {
     ...(templateEnabled && { template: 'value' as const }),
   };
 
+  /** The budget and `$ENV` of the jq engine: remote callers never see the server's environment variables. */
+  const jqOptions = (runtime: ResolvedPadroneRuntime, caller: PadroneCaller): Required<JqOptions> =>
+    isRemoteCaller(caller)
+      ? { env: {}, maxSteps: options.jqLimits?.remoteMaxSteps ?? DEFAULT_REMOTE_JQ_MAX_STEPS }
+      : { env: runtime.env(), maxSteps: options.jqLimits?.maxSteps ?? DEFAULT_JQ_MAX_STEPS };
+
   /** Compiled up front, so a bad expression fails before the command runs. `--jq` outputs are indented on a terminal, one line each otherwise. */
-  const outputFilter = (jq: unknown, template: unknown, runtime: ResolvedPadroneRuntime): JsonOutputFilter | undefined => {
+  const outputFilter = (
+    jq: unknown,
+    template: unknown,
+    runtime: ResolvedPadroneRuntime,
+    caller: PadroneCaller,
+  ): JsonOutputFilter | undefined => {
     try {
       if (typeof jq === 'string') {
         const space = runtime.terminal?.isTTY === true ? 2 : undefined;
         const run = typeof options.jq === 'function' ? options.jq : undefined;
-        const filter = run ? (input: unknown) => run(input, jq) : compileJq(jq);
+        const engine = jqOptions(runtime, caller);
+        const filter = run ? (input: unknown) => run(input, jq, { env: engine.env }) : compileJq(jq, engine);
         // The filter sees the value as JSON (bigints as strings, no functions)
         return (value) => filter(JSON.parse(safeJsonStringify(value) ?? 'null')).map((v) => formatJqOutput(v, space));
       }
       if (typeof template === 'string') {
-        const render = compileTemplate(template);
+        const render = compileTemplate(template, jqOptions(runtime, caller));
         return perItem((value) => render(JSON.parse(safeJsonStringify(value) ?? 'null')));
       }
     } catch (err) {
@@ -141,7 +181,7 @@ function createJsonInterceptor(options: PadroneJsonOptions) {
     typeof options.availableFields === 'function' ? options.availableFields(command) : options.availableFields;
 
   return defineInterceptor({ id: 'padrone:json', name: 'padrone:json', order: -1101, options: flagOptions }, () => {
-    const read = (rawArgs: Record<string, unknown>, command: AnyPadroneCommand, runtime: ResolvedPadroneRuntime) => {
+    const read = (rawArgs: Record<string, unknown>, command: AnyPadroneCommand, runtime: ResolvedPadroneRuntime, caller: PadroneCaller) => {
       const flags = frameworkFlags(rawArgs, command);
       const jq = jqEnabled ? flags.get('jq') : undefined;
       const template = templateEnabled ? flags.get('template') : undefined;
@@ -166,7 +206,7 @@ function createJsonInterceptor(options: PadroneJsonOptions) {
       // JSON first, so an invalid expression or field is reported as JSON too
       if (fields || toFlag(rawJson) || typeof jq === 'string' || typeof template === 'string') runtime.format = 'json';
       if (fields && available) checkFields(fields, available, command);
-      const filter = outputFilter(jq, template, runtime);
+      const filter = outputFilter(jq, template, runtime, caller);
       if (fields) setJsonOutputFilter(runtime, withFields(filter, fields, !!available, command));
       else if (filter) setJsonOutputFilter(runtime, filter);
     };
@@ -177,7 +217,7 @@ function createJsonInterceptor(options: PadroneJsonOptions) {
         return parseWithFallback(
           next,
           (res) => {
-            read(res.rawArgs, res.command, ctx.runtime);
+            read(res.rawArgs, res.command, ctx.runtime, ctx.caller);
             return res;
           },
           // Parsing failed (e.g. an unknown command), so the flag is only in the raw input
@@ -194,7 +234,7 @@ function createJsonInterceptor(options: PadroneJsonOptions) {
       },
       // Registered on a command: its parse handler doesn't run
       validate(ctx, next) {
-        read(ctx.rawArgs, ctx.command, ctx.runtime);
+        read(ctx.rawArgs, ctx.command, ctx.runtime, ctx.caller);
         return next();
       },
     };

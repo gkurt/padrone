@@ -53,7 +53,7 @@ export function padroneMcp(defaults?: PadroneMcpPreferences): <T extends Command
           const prefs: PadroneMcpPreferences = {
             ...defaults,
             transport: transport ?? defaults?.transport,
-            port: port && !Number.isNaN(port) ? port : defaults?.port,
+            port: port !== undefined && !Number.isNaN(port) ? port : defaults?.port,
             host: args.host ?? defaults?.host,
             basePath: args['base-path'] ?? defaults?.basePath,
           };

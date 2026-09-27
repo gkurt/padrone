@@ -39,6 +39,7 @@ const inkMeta = { id: 'padrone:ink', name: 'padrone:ink', order: -1050 } as cons
 
 /** Mounts an element on in-memory streams in non-interactive mode, which writes only the final frame, and returns that frame. */
 async function renderHeadless(ink: typeof import('ink'), element: unknown, signal: AbortSignal, timeout: number): Promise<string> {
+  signal.throwIfAborted();
   const { PassThrough, Writable } = await import('node:stream');
   let frame = '';
   const stdout = Object.assign(
@@ -62,17 +63,24 @@ async function renderHeadless(ink: typeof import('ink'), element: unknown, signa
   });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // A render error is the call's error: Ink's error box (with source lines) isn't a result to send to a remote caller
+  let renderError: { error: unknown } | undefined;
+  const exited = instance.waitUntilExit().catch((error: unknown) => {
+    renderError = { error };
+  });
   const stop = () => instance.unmount();
   signal.addEventListener('abort', stop, { once: true });
   try {
     await Promise.race([
-      instance.waitUntilExit().catch(() => {}),
+      exited,
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, timeout);
       }),
     ]);
     instance.unmount();
-    await instance.waitUntilExit().catch(() => {});
+    await exited;
+    if (renderError) throw renderError.error;
+    signal.throwIfAborted();
   } finally {
     clearTimeout(timer);
     signal.removeEventListener('abort', stop);
@@ -100,6 +108,7 @@ function createInkInterceptor(rawOptions?: InkOptions) {
               throw new Error('Returning Ink elements from serve, MCP or tool calls needs an Ink version with renderToString');
             return renderToString(element);
           }
+          ctx.signal.throwIfAborted();
           const instance = ink.render(element as import('react').ReactElement, options.render);
 
           // Unmount on abort so Ink cleans up stdin/stdout

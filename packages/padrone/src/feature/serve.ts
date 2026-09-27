@@ -3,6 +3,7 @@ import { RoutingError, ValidationError } from '../core/errors.ts';
 import { formatIssueMessages } from '../core/validate.ts';
 import { generateHelp } from '../output/help.ts';
 import type { AnyPadroneCommand, AnyPadroneProgram } from '../types/index.ts';
+import { outputValueToText } from '../util/json.ts';
 import { readStreamAsText } from '../util/stream.ts';
 
 export type PadroneServePreferences = {
@@ -76,7 +77,18 @@ function buildOpenApiSpec(existingCommand: AnyPadroneCommand, endpoints: Collect
   const responseSchema = {
     '200': {
       description: 'Successful response',
-      content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean', const: true }, result: {} } } } },
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            properties: {
+              ok: { type: 'boolean', const: true },
+              result: {},
+              output: { type: 'array', items: { type: 'string' }, description: 'Lines the command printed' },
+            },
+          },
+        },
+      },
     },
     '400': {
       description: 'Validation error or bad request',
@@ -144,13 +156,7 @@ function buildOpenApiSpec(existingCommand: AnyPadroneCommand, endpoints: Collect
       pathItem.post = postOp;
     } else {
       // GET: args as query parameters
-      const properties = (inputSchema.properties ?? {}) as Record<string, Record<string, unknown>>;
-      const queryParams = Object.entries(properties).map(([key, schema]) => ({
-        name: key,
-        in: 'query',
-        schema,
-        required: (inputSchema.required as string[] | undefined)?.includes(key) ?? false,
-      }));
+      const queryParams = toQueryParameters(inputSchema);
       pathItem.get = {
         summary: cmd.title || name,
         description,
@@ -173,6 +179,18 @@ function buildOpenApiSpec(existingCommand: AnyPadroneCommand, endpoints: Collect
     },
     paths,
   };
+}
+
+type JsonSchemaObject = Record<string, unknown> & { properties?: Record<string, JsonSchemaObject>; required?: string[] };
+
+/** GET query parameters for an input schema: nested objects become dotted names (`db.host`), which is what the server parses. */
+function toQueryParameters(schema: JsonSchemaObject, prefix = '', parentRequired = true): Record<string, unknown>[] {
+  return Object.entries(schema.properties ?? {}).flatMap(([key, propSchema]) => {
+    const name = `${prefix}${key}`;
+    const required = parentRequired && (schema.required?.includes(key) ?? false);
+    if (propSchema.type === 'object' && propSchema.properties) return toQueryParameters(propSchema, `${name}.`, required);
+    return [{ name, in: 'query', schema: propSchema, required }];
+  });
 }
 
 function scalarDocsHtml(openapiUrl: string, title: string): string {
@@ -218,7 +236,7 @@ export function createServeHandler(
     const headers = new Headers(res.headers);
     headers.set('Access-Control-Allow-Origin', corsOrigin);
     headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    headers.set('Access-Control-Allow-Headers', 'Content-Type');
+    headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
   }
 
@@ -232,7 +250,7 @@ export function createServeHandler(
       // Aborts the command when the client disconnects
       signal: request.signal,
       runtime: {
-        output: (...args: unknown[]) => output.push(args.map(String).join(' ')),
+        output: (...args: unknown[]) => output.push(args.map(outputValueToText).join(' ')),
         error: (text: string) => errors.push(text),
         interactive: 'unsupported',
         format: 'json',
@@ -246,7 +264,8 @@ export function createServeHandler(
       return handleError(new ValidationError(`Validation error:\n${formatIssueMessages(issues)}`, issues as any), request);
     }
 
-    return jsonResponse({ ok: true, result: result.result ?? null });
+    // Printed output (`runtime.output`, `ctx.context.output.*`) is returned alongside the result
+    return jsonResponse({ ok: true, result: result.result ?? null, ...(output.length > 0 && { output }) });
   }
 
   return async function handleRequest(req: Request): Promise<Response> {
@@ -283,8 +302,8 @@ export function createServeHandler(
       }
       pathname = pathname.slice(basePath.length - 1);
     }
-    // Remove leading slash for route matching
-    const routePath = pathname.replace(/^\//, '');
+    // Remove leading and trailing slashes for route matching
+    const routePath = pathname.replace(/^\/+|\/+$/g, '');
 
     // Built-in endpoints
     if (req.method === 'GET') {
@@ -405,7 +424,8 @@ export async function startServeServer(
   const basePath = normalizeBasePath(prefs?.basePath);
 
   const server = http.createServer(async (req, res) => {
-    const url = `http://${host}:${port}${req.url}`;
+    // The request target is a path; IPv6 hosts need brackets in a URL
+    const url = `http://${host.includes(':') ? `[${host}]` : host}:${port}${req.url ?? '/'}`;
     const headers = new Headers();
     for (const [key, value] of Object.entries(req.headers)) {
       if (value) headers.set(key, Array.isArray(value) ? value.join(', ') : value);

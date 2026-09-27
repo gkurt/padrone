@@ -11,6 +11,7 @@ import type {
   PadroneAPI,
   PadroneReplPreferences,
 } from '../types/index.ts';
+import { outputValueToText } from '../util/json.ts';
 import { parsePositionalConfig } from './args.ts';
 import { findCommandByName, getCommandRuntime, resolveAllCommands, serializeArgsToFlags } from './commands.ts';
 import { RoutingError } from './errors.ts';
@@ -18,7 +19,7 @@ import type { ExecContext } from './exec.ts';
 import { collectInterceptors, errorResultWithSignal, execCommand } from './exec.ts';
 import { checkInterceptorRequirements, resolveRegisteredInterceptors, runInterceptorChain } from './interceptors.ts';
 import { errorResult, makeThenable, thenMaybe, warnIfUnexpectedAsync, withDrain, withPromiseDrain } from './results.ts';
-import { coreValidateForParse, takeDryRunFlag } from './validate.ts';
+import { coreValidateForParse, formatIssueMessages, takeDryRunFlag } from './validate.ts';
 
 /** The exit code an error asks for: its own `exitCode` (as `PadroneError` carries), or 1. */
 function errorExitCode(error: unknown): number {
@@ -165,7 +166,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
       type: 'function',
       name: rootCommand.name,
       strict: true,
-      title: rootCommand.description,
+      title: rootCommand.title ?? rootCommand.name,
       description,
       inputExamples: [{ input: { command: '<command> [positionals...] [arguments...]' } }],
       inputSchema: {
@@ -173,6 +174,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
         jsonSchema: {
           type: 'object',
           properties: { command: { type: 'string' } },
+          required: ['command'],
           additionalProperties: false,
         },
         _type: undefined as unknown as { command: string },
@@ -190,18 +192,22 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
         if (parsed.command.needsApproval != null) return !!parsed.command.needsApproval;
         return !!parsed.command.mutation;
       },
-      execute: async (input) => {
+      execute: async (input, options) => {
         const output: string[] = [];
         const errors: string[] = [];
         const result = await evalCommand(input.command, {
           caller: 'tool',
+          signal: options?.abortSignal,
           runtime: {
-            output: (...args) => output.push(args.map(String).join(' ')),
+            output: (...args) => output.push(args.map(outputValueToText).join(' ')),
             error: (text) => errors.push(text),
             interactive: 'unsupported',
             format: 'text',
           },
         });
+        // Failures come back in `error` for the model to read; auto-output only prints errors in `cli()`
+        if (result.error !== undefined) errors.push(result.error instanceof Error ? result.error.message : String(result.error));
+        else if (result.argsResult?.issues) errors.push(`Validation error:\n${formatIssueMessages(result.argsResult.issues)}`);
         return { result: result.result, logs: output.join('\n'), error: errors.join('\n') };
       },
     };

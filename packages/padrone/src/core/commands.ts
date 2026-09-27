@@ -433,13 +433,14 @@ export function getNegativeKeywords(cmd: AnyPadroneCommand): Record<string, stri
 
 /**
  * Serializes args into argv tokens (`--key=value`, one per token, unquoted), for passing to `eval()` as an array:
- * booleans become `--key` / `--no-key` (or the custom negative keyword), arrays repeat the flag, objects become `--a.b=`.
+ * `null` and `undefined` are left out, booleans become `--key` / `--no-key` (or the custom negative keyword), arrays repeat the flag, objects become `--a.b=`.
  */
 export function serializeArgsToFlags(args: Record<string, unknown>, cmd?: AnyPadroneCommand): string[] {
   const negatives = cmd ? getNegativeKeywords(cmd) : {};
   const parts: string[] = [];
   const add = (key: string, value: unknown) => {
-    if (value === undefined) return;
+    // `null` (allowed by nullable fields' JSON Schema) is unset, like an omitted key
+    if (value === undefined || value === null) return;
     if (typeof value === 'boolean') {
       parts.push(value ? `--${key}` : `--${negatives[key] ?? `no-${key}`}`);
     } else if (Array.isArray(value)) {

@@ -17,7 +17,14 @@ The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standa
 
 ### Quick Start
 
-Every Padrone program has a built-in `mcp` command:
+Add the `mcp` command with the `padroneMcp()` extension from `padrone/mcp`:
+
+```typescript
+import { createPadrone } from 'padrone';
+import { padroneMcp } from 'padrone/mcp';
+
+const program = createPadrone('myapp').extend(padroneMcp());
+```
 
 ```bash
 # Start an MCP server over HTTP (default)
@@ -37,6 +44,9 @@ When you run `myapp mcp`, Padrone:
 1. Collects all non-hidden commands that have an action or schema
 2. Exposes each as an MCP tool with a JSON Schema derived from your Zod definitions, named by its path (`db.migrate`); a root command with an action is named after the program
 3. Handles the JSON-RPC protocol (initialize, tools/list, tools/call, ping, etc.), with a session per client over HTTP
+4. Adds a `help` tool that returns the program's or a command's help (named `padrone_help` when a command is already called `help`)
+
+A tool call's result holds what the command printed (`runtime.output`, `ctx.context.output.*`) and its return value (as JSON unless it's a string). Errors and validation failures come back as a result with `isError: true`.
 
 For example, a CLI with `greet` and `deploy` commands becomes two MCP tools that AI assistants can discover and call.
 
@@ -62,7 +72,7 @@ await program.mcp({ port: 3000, host: '127.0.0.1' });
 
 ### Configuration
 
-The `.mcp()` method and `mcp` command accept these options:
+The `.mcp()` method, `padroneMcp(defaults)` and the `mcp` command accept these options:
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -76,17 +86,11 @@ The `.mcp()` method and `mcp` command accept these options:
 
 ### Transports
 
-**Streamable HTTP** (default) — Starts an HTTP server. Responds with `application/json` or `text/event-stream` (SSE) based on the client's `Accept` header, per the MCP spec. Includes session management with `MCP-Session-Id` headers.
+**Streamable HTTP** (default) — Starts an HTTP server. Responds with `application/json` or `text/event-stream` (SSE) based on the client's `Accept` header, per the MCP spec. Includes session management with `MCP-Session-Id` headers. Protocol versions `2025-11-25`, `2025-06-18` and `2025-03-26` are accepted; JSON-RPC batches are rejected, as the spec no longer has them.
 
 **stdio** — Communicates over stdin/stdout with newline-delimited JSON. Use this when the AI tool launches your CLI as a subprocess (e.g., Claude Desktop, `mcp-cli`).
 
-### Disabling MCP
-
-To disable the built-in `mcp` command in `cli()`:
-
-```typescript
-program.cli({ mcp: false });
-```
+The `mcp` command is hidden from help. Leave out `padroneMcp()` to go without it; `program.mcp()` works either way.
 
 ### Tool Naming
 
@@ -106,7 +110,14 @@ Padrone can expose your CLI as a REST API with automatic OpenAPI documentation. 
 
 ### Quick Start
 
-Every Padrone program has a built-in `serve` command:
+Add the `serve` command with the `padroneServe()` extension from `padrone/serve`:
+
+```typescript
+import { createPadrone } from 'padrone';
+import { padroneServe } from 'padrone/serve';
+
+const program = createPadrone('myapp').extend(padroneServe());
+```
 
 ```bash
 # Start a REST server (default port 3000)
@@ -125,7 +136,7 @@ When you run `myapp serve`, Padrone:
 
 1. Collects all non-hidden commands that have an action or schema
 2. Maps each to a URL path (e.g., `users list` → `/users/list`)
-3. For each request, converts query params (GET) or JSON body (POST) to CLI flags and calls `eval()`
+3. For each request, converts query params (GET) or JSON body (POST) to CLI flags and calls `eval()`. Nested objects are passed as dotted query params (`?db.host=localhost`), repeated params fill arrays, `_` gives positional values, and `null` in a JSON body means unset
 4. Returns structured JSON responses
 
 ### Mutation Commands
@@ -192,14 +203,14 @@ await program.serve({
 
 ### Response Format
 
-**Success (200):**
+**Success (200):** `output` holds what the command printed (`runtime.output`, `ctx.context.output.*`) and is left out when it printed nothing
 ```json
-{ "ok": true, "result": <action return value> }
+{ "ok": true, "result": <action return value>, "output": ["line printed by the command"] }
 ```
 
 **Validation error (400):**
 ```json
-{ "ok": false, "error": "validation", "issues": [{ "path": ["name"], "message": "Required" }] }
+{ "ok": false, "error": "validation", "message": "Validation error: ...", "issues": [{ "path": ["name"], "message": "Required" }] }
 ```
 
 **Bad request (400):** input the command can't take, such as an extra positional value, or a body that isn't a JSON object
@@ -209,18 +220,17 @@ await program.serve({
 
 **Not found (404):** no command at that path (or a path outside `basePath`)
 ```json
-{ "ok": false, "error": "not_found", "message": "Command not found: users update" }
+{ "ok": false, "error": "not_found", "message": "Command not found: users/update" }
+```
+
+**Action error (500):** the command threw
+```json
+{ "ok": false, "error": "action_error", "message": "Database unavailable" }
 ```
 
 Validation errors go through `onError` when it's set. Arguments reach the command intact: strings with spaces or quotes, arrays, nested objects (as `--a.b=`) and booleans with a custom `negative` keyword. An empty POST body means no arguments.
 
-### Disabling Serve
-
-To disable the built-in `serve` command in `cli()`:
-
-```typescript
-program.cli({ serve: false });
-```
+The `serve` command is hidden from help. Leave out `padroneServe()` to go without it; `program.serve()` works either way.
 
 ---
 
@@ -332,7 +342,7 @@ Your action handlers should return data that the AI can use:
 })
 ```
 
-The return value is passed back to the AI model, allowing it to incorporate the results into its response.
+The tool returns `{ result, logs, error }` to the AI model: `result` is the action's return value, `logs` what the command printed (`runtime.output`, `ctx.context.output.*`), and `error` the error message when the command failed, its arguments didn't validate, or the command doesn't exist. The AI SDK's `abortSignal` cancels the command through `ctx.signal`.
 
 ### Multiple Tools
 

@@ -23,3 +23,8 @@ export function safeJsonStringify(value: unknown, space?: number): string | unde
     return undefined;
   }
 }
+
+/** A value passed to `runtime.output`, as a line of text: objects as JSON rather than `[object Object]`. */
+export function outputValueToText(value: unknown): string {
+  return typeof value === 'object' && value !== null ? (safeJsonStringify(value, 2) ?? String(value)) : String(value);
+}

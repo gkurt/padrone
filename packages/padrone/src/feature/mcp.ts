@@ -2,6 +2,7 @@ import { buildInputSchema, collectEndpoints, serializeArgsToFlags } from '../cor
 import { formatIssueMessages } from '../core/validate.ts';
 import { generateHelp } from '../output/help.ts';
 import type { AnyPadroneCommand, AnyPadroneProgram } from '../types/index.ts';
+import { outputValueToText } from '../util/json.ts';
 import { readStreamAsText } from '../util/stream.ts';
 
 export type PadroneMcpPreferences = {
@@ -26,6 +27,8 @@ export type PadroneMcpPreferences = {
 };
 
 const PROTOCOL_VERSION = '2025-11-25';
+/** Versions this server can speak; `initialize` echoes the client's when it's one of them. */
+const SUPPORTED_PROTOCOL_VERSIONS = new Set([PROTOCOL_VERSION, '2025-06-18', '2025-03-26']);
 
 type JsonRpcRequest = {
   jsonrpc: '2.0';
@@ -89,7 +92,8 @@ export function createMcpHandler(
 
   const toolMap = new Map(rootTools.map((t) => [t.toolName, t]));
 
-  const helpToolName = 'help';
+  // A command named `help` keeps its name; the built-in help tool steps aside
+  const helpToolName = toolMap.has('help') ? 'padrone_help' : 'help';
   const helpToolDef = {
     name: helpToolName,
     title: 'Help',
@@ -101,33 +105,43 @@ export function createMcpHandler(
     },
   };
 
-  // Tool calls in flight, so `notifications/cancelled` can abort them
-  const inFlight = new Map<string | number, AbortController>();
+  // Tool calls in flight, keyed by session and request id, so `notifications/cancelled` can abort them
+  const inFlight = new Map<string, AbortController>();
+  const flightKey = (session: string, id: string | number) => `${session}\0${typeof id}:${id}`;
 
-  /** `signal` aborts the call too, e.g. when an HTTP client disconnects. Notifications (no `id`) get no response. */
-  return async function handleRequest(req: JsonRpcRequest, signal?: AbortSignal): Promise<JsonRpcResponse | undefined> {
-    const response = await dispatch(req, signal);
+  /**
+   * Handles one JSON-RPC message. `signal` aborts the call too, e.g. when an HTTP client disconnects; `session` scopes
+   * request ids (clients number them independently). Notifications and responses from the client get no response.
+   */
+  return async function handleRequest(message: unknown, signal?: AbortSignal, session = ''): Promise<JsonRpcResponse | undefined> {
+    const kind = classifyMessage(message);
+    if (kind === 'response') return undefined;
+    if (kind === 'invalid') return invalidRequest(message);
+    const req = message as JsonRpcRequest;
+    const response = await dispatch(req, signal, session);
     return req.id === undefined ? undefined : response;
   };
 
-  async function dispatch(req: JsonRpcRequest, signal?: AbortSignal): Promise<JsonRpcResponse | undefined> {
+  async function dispatch(req: JsonRpcRequest, signal: AbortSignal | undefined, session: string): Promise<JsonRpcResponse | undefined> {
     const { id, method, params } = req;
 
     switch (method) {
-      case 'initialize':
+      case 'initialize': {
+        const requested = params?.protocolVersion;
         return {
           jsonrpc: '2.0',
           id: id ?? null,
           result: {
-            protocolVersion: PROTOCOL_VERSION,
+            protocolVersion: typeof requested === 'string' && SUPPORTED_PROTOCOL_VERSIONS.has(requested) ? requested : PROTOCOL_VERSION,
             capabilities: { tools: {} },
             serverInfo: { name: serverName, version: serverVersion },
           },
         };
+      }
 
       case 'notifications/cancelled': {
         const requestId = params?.requestId as string | number | undefined;
-        if (requestId !== undefined) inFlight.get(requestId)?.abort(params?.reason ?? 'Cancelled by the client');
+        if (requestId !== undefined) inFlight.get(flightKey(session, requestId))?.abort(params?.reason ?? 'Cancelled by the client');
         return undefined;
       }
 
@@ -150,6 +164,13 @@ export function createMcpHandler(
         if (toolName === helpToolName) {
           const cmdName = args.command as string | undefined;
           const targetCmd = cmdName ? rootTools.find((t) => t.name === cmdName || t.toolName === cmdName)?.command : undefined;
+          if (cmdName && !targetCmd) {
+            return {
+              jsonrpc: '2.0',
+              id: id ?? null,
+              result: { content: [{ type: 'text', text: `Unknown command: ${cmdName}` }], isError: true },
+            };
+          }
           const helpText = generateHelp(existingCommand, targetCmd ?? existingCommand, { format: 'text', detail: 'full' });
           return {
             jsonrpc: '2.0',
@@ -172,8 +193,11 @@ export function createMcpHandler(
 
         const controller = new AbortController();
         const onAbort = () => controller.abort(signal?.reason);
-        signal?.addEventListener('abort', onAbort, { once: true });
-        if (id != null) inFlight.set(id, controller);
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener('abort', onAbort, { once: true });
+        // A reused id doesn't take over the cancellation of a call still running under it
+        const key = id != null && !inFlight.has(flightKey(session, id)) ? flightKey(session, id) : undefined;
+        if (key) inFlight.set(key, controller);
         try {
           const output: string[] = [];
           const errors: string[] = [];
@@ -181,7 +205,7 @@ export function createMcpHandler(
             caller: 'mcp',
             signal: controller.signal,
             runtime: {
-              output: (...outArgs: unknown[]) => output.push(outArgs.map(String).join(' ')),
+              output: (...outArgs: unknown[]) => output.push(outArgs.map(outputValueToText).join(' ')),
               error: (text: string) => errors.push(text),
               interactive: 'unsupported',
               format: 'text',
@@ -217,7 +241,7 @@ export function createMcpHandler(
             result: { content: [{ type: 'text', text: errorMsg }], isError: true },
           };
         } finally {
-          if (id != null) inFlight.delete(id);
+          if (key) inFlight.delete(key);
           signal?.removeEventListener('abort', onAbort);
         }
       }
@@ -228,10 +252,29 @@ export function createMcpHandler(
   }
 }
 
+type JsonRpcMessageKind = 'request' | 'response' | 'invalid';
+
+function classifyMessage(message: unknown): JsonRpcMessageKind {
+  if (!message || typeof message !== 'object' || Array.isArray(message)) return 'invalid';
+  const msg = message as Record<string, unknown>;
+  const validId = msg.id === undefined || typeof msg.id === 'string' || typeof msg.id === 'number';
+  if (typeof msg.method === 'string') return validId ? 'request' : 'invalid';
+  return msg.id !== undefined && ('result' in msg || 'error' in msg) ? 'response' : 'invalid';
+}
+
+function invalidRequest(message: unknown): JsonRpcResponse {
+  const id = message && typeof message === 'object' ? (message as Record<string, unknown>).id : undefined;
+  return {
+    jsonrpc: '2.0',
+    id: typeof id === 'string' || typeof id === 'number' ? id : null,
+    error: { code: -32600, message: Array.isArray(message) ? 'Invalid Request: batches are not supported' : 'Invalid Request' },
+  };
+}
+
+type McpRequestHandler = ReturnType<typeof createMcpHandler>;
+
 /** stdio transport: newline-delimited JSON per 2025-11-25 spec. */
-async function startStdioTransport(
-  handleRequest: (req: JsonRpcRequest, signal?: AbortSignal) => Promise<JsonRpcResponse | undefined>,
-): Promise<void> {
+async function startStdioTransport(handleRequest: McpRequestHandler): Promise<void> {
   const { stdin, stdout } = await import('node:process');
   const { createInterface } = await import('node:readline');
 
@@ -240,26 +283,34 @@ async function startStdioTransport(
   }
 
   const rl = createInterface({ input: stdin, crlfDelay: Infinity });
+  const pending = new Set<Promise<void>>();
 
   for await (const line of rl) {
     if (!line.trim()) continue;
-    let req: JsonRpcRequest;
+    let message: unknown;
     try {
-      req = JSON.parse(line) as JsonRpcRequest;
+      message = JSON.parse(line);
     } catch {
-      continue; // Ignore malformed JSON
+      send({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+      continue;
     }
     // Not awaited: a long tool call mustn't hold up later messages, such as its own cancellation
-    handleRequest(req).then(
-      (res) => res && send(res),
+    const call = handleRequest(message).then(
+      (res) => {
+        if (res) send(res);
+      },
       () => {},
     );
+    pending.add(call);
+    call.finally(() => pending.delete(call));
   }
+  // Input closed: let calls still running send their responses before returning
+  await Promise.all(pending);
 }
 
 /** Streamable HTTP transport per 2025-11-25 spec. Responds with JSON or SSE based on client's Accept header. */
 async function startHttpTransport(
-  handleRequest: (req: JsonRpcRequest, signal?: AbortSignal) => Promise<JsonRpcResponse | undefined>,
+  handleRequest: McpRequestHandler,
   prefs: PadroneMcpPreferences,
   log: (msg: string) => void,
   onSignal?: (callback: () => void) => () => void,
@@ -277,6 +328,11 @@ async function startHttpTransport(
   const corsOrigin = prefs.cors !== false ? (prefs.cors ?? '*') : undefined;
 
   const server = http.createServer(async (req, res) => {
+    const sendJson = (status: number, body: unknown) => {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(body));
+    };
+
     // CORS headers
     if (corsOrigin) {
       res.setHeader('Access-Control-Allow-Origin', corsOrigin);
@@ -300,13 +356,8 @@ async function startHttpTransport(
     // DELETE: terminate session
     if (req.method === 'DELETE') {
       const reqSessionId = req.headers['mcp-session-id'] as string | undefined;
-      if (reqSessionId && sessions.delete(reqSessionId)) {
-        res.writeHead(200);
-        res.end();
-      } else {
-        res.writeHead(404);
-        res.end();
-      }
+      res.writeHead(!reqSessionId ? 400 : sessions.delete(reqSessionId) ? 200 : 404);
+      res.end();
       return;
     }
 
@@ -332,23 +383,21 @@ async function startHttpTransport(
       return;
     }
 
-    // Validate MCP-Protocol-Version header on post-init requests
+    // Validate MCP-Protocol-Version header: the negotiated version once in a session, a supported one otherwise
     const reqProtocolVersion = req.headers['mcp-protocol-version'] as string | undefined;
-    if (negotiatedVersion && reqProtocolVersion && reqProtocolVersion !== negotiatedVersion) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Protocol version mismatch' } }));
+    if (
+      reqProtocolVersion &&
+      (negotiatedVersion ? reqProtocolVersion !== negotiatedVersion : !SUPPORTED_PROTOCOL_VERSIONS.has(reqProtocolVersion))
+    ) {
+      sendJson(400, { jsonrpc: '2.0', id: null, error: { code: -32600, message: `Unsupported protocol version: ${reqProtocolVersion}` } });
       return;
     }
 
-    // Read request body
-    const body = await readStreamAsText(req as AsyncIterable<Uint8Array>);
-
-    let rpcRequest: JsonRpcRequest;
+    let rpcRequest: unknown;
     try {
-      rpcRequest = JSON.parse(body);
+      rpcRequest = JSON.parse(await readStreamAsText(req as AsyncIterable<Uint8Array>));
     } catch {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }));
+      sendJson(400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
       return;
     }
 
@@ -357,12 +406,24 @@ async function startHttpTransport(
     res.on('close', () => {
       if (!res.writableFinished) disconnected.abort('Client disconnected');
     });
-    const response = await handleRequest(rpcRequest, disconnected.signal);
+    let response: JsonRpcResponse | undefined;
+    try {
+      response = await handleRequest(rpcRequest, disconnected.signal, reqSessionId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      sendJson(500, { jsonrpc: '2.0', id: null, error: { code: -32603, message: `Internal error: ${message}` } });
+      return;
+    }
+    if (response?.error?.code === -32600 && response.id === null) {
+      sendJson(400, response);
+      return;
+    }
 
     // On initialize response: create session and set header
-    if (rpcRequest.method === 'initialize' && response?.result) {
+    const initialized = (response?.result as { protocolVersion?: string } | undefined)?.protocolVersion;
+    if ((rpcRequest as JsonRpcRequest).method === 'initialize' && initialized) {
       const sessionId = crypto.randomUUID();
-      sessions.set(sessionId, PROTOCOL_VERSION);
+      sessions.set(sessionId, initialized);
       res.setHeader('MCP-Session-Id', sessionId);
     }
 

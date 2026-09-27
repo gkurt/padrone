@@ -72,13 +72,13 @@ program.runtime({
 | `argv` | `() => string[]` | `process.argv.slice(2)` | Return raw CLI arguments. Each entry is taken as one token, as the shell split it |
 | `env` | `() => Record<string, string \| undefined>` | `process.env` | Return environment variables |
 | `format` | `string` | `'auto'` | Default help output format |
-| `interactive` | `'supported' \| 'unsupported' \| 'forced' \| 'disabled'` | auto (`'disabled'` in CI or when stdin or stdout isn't a terminal, else `'supported'`) | Whether prompts can be shown. `'unsupported'` can't be overridden; `-i`/`--interactive` and `cli()` preferences override the others (`'forced'` prompts even for given values) |
+| `interactive` | `'supported' \| 'unsupported' \| 'forced' \| 'disabled'` | auto (`'disabled'` in CI (`CI` set to anything but `false`/`0`) or when stdin or stdout isn't a terminal, else `'supported'`) | Whether prompts can be shown. `'unsupported'` can't be overridden; `-i`/`--interactive` and `cli()` preferences override the others (`'forced'` prompts even for given values) |
 | `prompt` | `(config: InteractivePromptConfig) => Promise<unknown>` | Enquirer | Custom prompt implementation. Text answers are coerced like CLI input (`'3'` for a number field, `'a, b'` for an array) |
 | `progress` | `(message: string, options?: PadroneProgressOptions) => PadroneProgress` | Built-in terminal spinner | Progress indicator factory. See [Progress Indicators](/padrone/guides/progress-indicators/) |
-| `terminal` | `{ columns?, rows?, isTTY? }` | From `process.stdout` | Terminal size and whether stdout is a TTY (colors, wrapping, the help pager) |
+| `terminal` | `{ columns?, rows?, isTTY?, stderrIsTTY? }` | From `process.stdout` / `process.stderr` | Terminal size, whether stdout is a TTY (colors, wrapping, the help pager), and whether stderr is (colored log lines; falls back to `isTTY`) |
 | `setExitCode` | `(code: number) => void` | Sets `process.exitCode` | Called by `cli()` when a run ends with an error or a signal. Override to capture or ignore it |
 | `editor` | `(text, { extension? }) => Promise<string>` | `$VISUAL` / `$EDITOR` / `vi` on a temp file | Open text in the user's editor and resolve with what they saved, like `git commit` |
-| `open` | `(target: string) => Promise<void>` | `open` / `xdg-open` / `start` | Open a URL or file with the system's default app |
+| `open` | `(target: string) => Promise<void>` | `open` / `xdg-open` / `cmd /c start` | Open a URL or file with the system's default app (on Windows, spaces and cmd metacharacters in the target are escaped) |
 | `page` | `(text, { always?, pager? }) => Promise<void>` | `$PAGER` / `less -FRX` | Show text through a pager when it's taller than the terminal (or `always`), otherwise print it with `output`. Call it as `ctx.runtime.page(text)` |
 
 In an action, use them through `ctx.runtime`:
@@ -554,11 +554,11 @@ Extension that adds an auto-managed progress indicator to the command (`import {
 | `time` | `boolean` | Show elapsed time (`⏱ M:SS`). Can also be toggled via `update({ time: true/false })` |
 | `eta` | `boolean` | Show estimated time remaining (`ETA M:SS`). Requires numeric `update()` calls |
 | `renderer` | `PadroneProgressRenderer` | Custom renderer factory (defaults to built-in terminal renderer) |
-| `taskRenderer` | `PadroneTaskListRenderer` | Renderer for `progress.tasks()` lists (defaults to `createTerminalTaskList`) |
+| `taskRenderer` | `PadroneTaskListRenderer` | Renderer for `progress.tasks()` lists (defaults to `createTerminalTaskList`, which prints plain lines through `createSimpleTaskList` without a TTY or in CI) |
 
 `PadroneProgressMessages` fields: `validation` (string), `progress` (string), `success` (string/null/callback), `error` (string/null/callback). Callbacks can return a string, `null` (suppress), or `{ message, indicator }` for per-call icon customization. Messages can also be provided from context via `progressConfig.message` — command-level fields take precedence.
 
-The indicator is available in actions as `ctx.context.progress`. `ctx.context.progress.tasks(tasks, options?)` runs a list of tasks drawn as a live list, like listr2: each task is `{ title, task: (t) => ..., skip? }`, where `t` has `update(message)`, `setTitle(title)`, `skip(reason?)`, `tasks(subtasks)` and `signal`. Options: `concurrent` (`true` or a limit) and `exitOnError` (default `true`). Serve, MCP and `tool()` calls get a no-op indicator, and their tasks run without drawing.
+The indicator is available in actions as `ctx.context.progress`. `ctx.context.progress.tasks(tasks, options?)` runs a list of tasks drawn as a live list, like listr2: each task is `{ title, task: (t) => ..., skip?, retry?, rollback? }`, where `t` has `update(message)`, `setTitle(title)`, `skip(reason?)`, `tasks(subtasks)`, `signal` and `retry` (`{ count, error? }`). `retry: n` (or `{ tries, delay }`) runs a failing task again; `rollback: (t, error) => ...` runs once it has failed for good, and the task shows as rolled back. Options: `concurrent` (`true` or a limit), `exitOnError` (default `true`) and `rendererOptions: { collapseSubtasks }` (hide the subtasks of finished tasks). `ctx.context.progress.isActive` and `isPaused` tell whether the indicator (or a task list) is running and whether it's hidden right now. Serve, MCP and `tool()` calls get a no-op indicator, and their tasks run without drawing.
 
 ---
 
@@ -1463,11 +1463,11 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneEnv(schema?, options?)` | Parse environment variables into args (`vars` maps args to variables, `prefix` reads every option from `PREFIX_*`; both shown in help) |
 | `padroneConfig(options)` | Load args from config files (layered with `merge` and `extends`; `profiles`; a `config` command) |
 | `padroneProgress(config)` | Auto-managed progress indicators, and task lists with `progress.tasks()` |
-| `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable). Logs go to stderr with colored level labels; `stdout: true` sends `trace`/`debug`/`info` to stdout, and `format: 'json'` writes JSON lines (`logger.info({ userId }, 'signed in')` adds fields) |
+| `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable). Logs go to stderr with colored level labels; `stdout: true` sends `trace`/`debug`/`info` to stdout, and `format: 'json'` writes JSON lines (`logger.info({ userId }, 'signed in')` adds fields). `logger.child({ requestId })` adds bindings to every line; `redact: ['user.password', '*.token']` (or `{ paths, censor }`) censors logged objects; `destination` writes lines to a file path, a function or a `{ write }` stream instead. Colors follow whether stderr is a terminal |
 | `padroneJson(options?)` | `--json` flag: prints the result as JSON (iterator items one per line). `--jq <expr>` filters it (a built-in jq subset with `if`, `as $x`, arithmetic, regex `test`/`sub`/`gsub` and `@csv`/`@tsv`, or pass `jq: (input, expr) => outputs` for a full implementation; non-string outputs are compact JSON when piped, indented on a terminal) and `--template '{{.name}}'` formats it; both imply `--json`. Errors in `cli()` print as `{ "error": { ... } }` on stdout under JSON output. `fields: true` lets `--json=name,url` keep only those fields (`fields: 'required'`: also `--json name,url`, and a bare `--json` fails listing the fields); `availableFields` declares them |
 | `padroneFormat(options?)` | `--output`/`-o <format>`: `text` (default), `json` (like `--json`), `yaml`, `csv`, `tsv`, `table`. Options: `formats`, `default`, `flags`, `tableFlags` for `--columns a,b`, `--sort [-]column` and `--no-header`, `columns` (`{ id: 'ID' }` or `(command) => …`: default columns and header labels), `pipedTable: 'tsv'` (`-o table` prints TSV when stdout isn't a terminal) and `csvLineEnding: 'crlf'`. Table cells with newlines span several lines. String results print as text under yaml/csv/tsv/table (other non-objects under csv/tsv/table); `--json`/`--jq`/`--template` take precedence |
 | `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and without a terminal (CI, piped stdin or stdout, `--no-interactive`) the command fails unless `--yes` is given. Options: `message`, `when`, `flags` |
-| `padroneTiming()` | Execution timing |
+| `padroneTiming(options?)` | Execution timing: `Done in 1.20s`, or `Failed after 1.20s` when the command fails, printed after its result or error. `enabled: true` turns it on without `--time`; `format: ({ elapsed, duration, failed, error }) => string \| null` changes the line |
 | `padroneUpdateCheck(config)` | Background version checking |
 | `padroneUpgrade(options?)` | `upgrade` command: self-update with the package manager the program was installed with (`--check`, `--to`, `--channel`) |
 | `padroneAliases(options?)` | User-defined command aliases (`alias set|list|delete`), expanded before routing |
@@ -1493,7 +1493,7 @@ The following extensions are applied automatically by `createPadrone()` and can 
 | `padroneRepl()` | `repl` | REPL command and `--repl` flag |
 | `padroneColor()` | `color` | `--color`/`--no-color` support; an unknown `--color=<theme>` is an error listing the themes |
 | `padroneSuggestions(options?)` | `suggestions` | "Did you mean?" suggestions. `run: 'prompt'` asks whether to run the closest command after an unknown one in `cli()`/REPL |
-| `padroneSignalHandling()` | `signal` | Signal handling and AbortSignal |
+| `padroneSignalHandling(options?)` | `signal` | Signal handling and AbortSignal. A second Ctrl+C within `forceExitMs` (default `2000`; `0` turns it off) force-exits; `onForceExit(signal)` runs right before. Configure the builtin with `builtins: { signal: { forceExitMs, onForceExit } }` |
 | `padroneAutoOutput(options?)` | `autoOutput` | Auto-print results and errors. `errorStack: true` (or the `DEBUG` env variable) prints stack traces with their `cause` chain |
 | `padroneStdin()` | `stdin` | Stdin piping support |
 | `padroneInteractive()` | `interactive` | Interactive prompting |

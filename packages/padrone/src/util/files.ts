@@ -17,6 +17,12 @@ export function readTextFile(path: string): string | Promise<string> {
   return import('node:fs').then((mod) => (fs ??= mod).readFileSync(path, 'utf-8'));
 }
 
+/** Appends UTF-8 text to a file, creating it: synchronously once `node:fs` is loaded. */
+export function appendTextFile(path: string, text: string): void | Promise<void> {
+  if (fs) return fs.appendFileSync(path, text, 'utf-8');
+  return import('node:fs').then((mod) => (fs ??= mod).appendFileSync(path, text, 'utf-8'));
+}
+
 /** A short reason a file couldn't be read (`file not found`), for error messages. */
 export function fileErrorReason(err: unknown): string {
   const code = (err as { code?: unknown } | undefined)?.code;

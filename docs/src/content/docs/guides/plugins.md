@@ -21,7 +21,7 @@ When you call `createPadrone('myapp')`, built-in extensions are automatically ap
 | **repl** | `--repl` flag, `repl` command | -1000 |
 | **color** | `--color[=always\|never\|auto\|<theme>]`/`--no-color` flag | -1001 |
 | **suggestions** | "Did you mean?" for unknown commands/options | -500 |
-| **signal** | SIGINT/SIGTERM handling, double-tap force-exit, AbortSignal propagation | -2000 |
+| **signal** | SIGINT/SIGTERM handling, double-tap force-exit (`forceExitMs`, `onForceExit`), AbortSignal propagation | -2000 |
 | **autoOutput** | Auto-print results (strings, promises, iterators) and, in `cli()`, errors the help extension didn't print | -1100 |
 | **stdin** | Pipe stdin into argument fields (text, lines, or stream); not read for serve, MCP and `tool()` calls | -1001 |
 | **interactive** | `--interactive`/`-i` flag, auto-prompting for missing fields | -999 |
@@ -41,11 +41,11 @@ Additional opt-in extensions are available for advanced features:
 | `padroneEnv(schema)` | `'padrone'` | Parse environment variables into args (`vars`, or `prefix` for every option) |
 | `padroneConfig(options)` | `'padrone'` | Load args from config files (`xdg`, `searchParents`, `packageJson`, `merge`, `extends` options), `--profile` profiles (`profiles`), and a `config get\|set\|unset\|list\|path\|edit` command (`command`) |
 | `padroneProgress(config)` | `'padrone'` | Auto-managed progress indicators and `progress.tasks()` task lists (no-op for serve, MCP and `tool()` calls) |
-| `padroneLogger(options)` | `'padrone'` | Structured logging to stderr with levels (`--verbose` repeatable; `shortFlags`, `env`, `stdout`, `format: 'json'` options) |
+| `padroneLogger(options)` | `'padrone'` | Structured logging to stderr with levels (`--verbose` repeatable; `shortFlags`, `env`, `stdout`, `format: 'json'`, `redact`, `destination` options; `child({ requestId })` bindings) |
 | `padroneJson(options?)` | `'padrone'` | `--json` flag: results and errors as JSON; `--jq` and `--template` filter and format the result; `fields` adds gh-style `--json name,url` |
 | `padroneFormat(options?)` | `'padrone'` | `--output`/`-o <format>`: text, json, yaml, csv, tsv or table; `tableFlags` adds `--columns`, `--sort`, `--no-header` |
 | `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`) before `mutation: true` commands |
-| `padroneTiming()` | `'padrone'` | Execution timing (`--time`) |
+| `padroneTiming()` | `'padrone'` | Execution timing (`--time`; `Done in …` / `Failed after …`, `format` option) |
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking |
 | `padroneUpgrade(options?)` | `'padrone'` | Self-update command (`upgrade`, `--check`, `--to`, `--channel`) using the package manager the program was installed with |
 | `padroneAliases(options?)` | `'padrone'` | User-defined command aliases (`alias set co "checkout --force"`), expanded before routing |
@@ -435,7 +435,7 @@ Calling `next()` passes to the next error handler. The innermost core returns `{
 
 #### Shutdown Phase
 
-Always runs after the pipeline completes — whether it succeeded or failed. Use for cleanup like closing connections or flushing logs. Only runs for `eval()` and `cli()`. Runs in two layers: command-level shutdown handlers run first (for the route/validate/execute scope), then root-level shutdown handlers (for the full pipeline scope).
+Always runs after the pipeline completes — whether it succeeded or failed. Use for cleanup like closing connections or flushing logs. Only runs for `eval()` and `cli()`. Runs in two layers: command-level shutdown handlers run first (for the route/validate/execute scope), then root-level shutdown handlers (for the full pipeline scope). When the command fails, its shutdown handlers run once the error has been through the root-level error handlers (which print it in `cli()`), so a command-level `padroneTiming()` reports after the error, like a root-level one.
 
 ```typescript
 const cleanup = defineInterceptor({ name: 'cleanup' }, () => ({
@@ -678,7 +678,7 @@ To run an interceptor for some callers only, set `callers` in its meta: `defineI
 
 Understanding how built-in features are implemented helps illustrate the interceptor model:
 
-**Signal handling** (`padroneSignalHandling`, order: -2000) — The outermost interceptor. In the start phase, creates an `AbortController` and subscribes to OS signals via `runtime.onSignal()`; it also aborts when the caller's `signal` (`eval(input, { signal })`) does. Passes the signal to all downstream phases via `next({ signal })`. The signal is aborted with a `SignalError` as its `reason`, so `ctx.signal.throwIfAborted()` (or an aborted `fetch`) exits with the signal's code (130 for SIGINT). In the error phase, wraps errors with signal info. In shutdown, cleans up subscriptions. Implements double-tap SIGINT force-exit (and force-exit on a repeated SIGTERM/SIGHUP) using closure state shared across phases.
+**Signal handling** (`padroneSignalHandling`, order: -2000) — The outermost interceptor. In the start phase, creates an `AbortController` and subscribes to OS signals via `runtime.onSignal()`; it also aborts when the caller's `signal` (`eval(input, { signal })`) does. Passes the signal to all downstream phases via `next({ signal })`. The signal is aborted with a `SignalError` as its `reason`, so `ctx.signal.throwIfAborted()` (or an aborted `fetch`) exits with the signal's code (130 for SIGINT). In the error phase, wraps errors with signal info. In shutdown, cleans up subscriptions. Implements double-tap SIGINT force-exit within `forceExitMs` (default 2000; `0` turns it off), and force-exit on a repeated SIGTERM/SIGHUP, using closure state shared across phases; `onForceExit(signal)` runs right before the exit. Configure it with `createPadrone(name, { builtins: { signal: { forceExitMs, onForceExit } } })`.
 
 **Auto-output** (`padroneAutoOutput`, order: -1100) — In the execute phase, intercepts the action result and writes it to `runtime.output()`. Handles promises (awaits), iterators (consumes and outputs each value), and plain values. In the error phase of `cli()`, prints the message of any error that no inner extension printed (help prints routing and validation errors), whichever phase threw it. Under JSON output (`--json`), it prints every error as `{ "error": { ... } }` on stdout instead. Extensions that print an error themselves call `markErrorReported(error)` so it isn't printed twice.
 

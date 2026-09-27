@@ -253,11 +253,19 @@ function runErrorChain(
   }
 }
 
+type Deferred = () => unknown;
+
+/**
+ * Command-level shutdowns of a failed command, keyed by the run's pipeline state: the root lifecycle runs them after its
+ * error handlers (which e.g. print the error) and before its own shutdown handlers.
+ */
+const deferredShutdowns = new WeakMap<object, Deferred[]>();
+
 /**
  * Wraps a pipeline with start → error → shutdown lifecycle hooks.
  * - `start` interceptors wrap the pipeline (onion pattern, root interceptors only).
  * - On error: `error` interceptors run (can transform/suppress the error).
- * - Always: `shutdown` interceptors run (success or failure).
+ * - Always: `shutdown` interceptors run (success or failure), after the command-level shutdowns a failed command deferred.
  * - `overridden`: root interceptors a same-id one on the routed command replaces; they skip error and shutdown.
  */
 export function wrapWithLifecycle<T>(
@@ -288,8 +296,12 @@ export function wrapWithLifecycle<T>(
   let effectiveSignal = signal ?? defaultSignal;
   let effectiveContext = context;
   const lifecycleInterceptors = () => (overridden?.size ? interceptors.filter((i) => !overridden.has(i)) : interceptors);
+  const deferred: Deferred[] = [];
+  deferredShutdowns.set(effectivePipelineState, deferred);
+  const runDeferred = () => deferred.splice(0).reduce<unknown>((prev, task) => thenMaybe(prev, task), undefined);
 
-  const runShutdown = (error?: unknown, result?: unknown) => {
+  const runShutdown = (error?: unknown, result?: unknown) => thenMaybe(runDeferred(), () => runOwnShutdown(error, result));
+  const runOwnShutdown = (error?: unknown, result?: unknown) => {
     if (!hasShutdown) return;
     const ctx: InterceptorShutdownContext = withEmit({
       command,
@@ -418,15 +430,20 @@ export function wrapWithCommandLifecycle<T>(
     return runInterceptorChain('shutdown', interceptors, ctx, () => {});
   };
 
-  const runError = (error: unknown): T | Promise<T> => {
-    if (!hasError) {
-      const s = runShutdown(error);
-      if (s instanceof Promise)
-        return s.then(() => {
-          throw error;
-        });
+  /** Rethrows `error` to the root lifecycle, which runs this shutdown after its error handlers (e.g. once the error is printed). */
+  const fail = (error: unknown): T | Promise<T> => {
+    const deferred = deferredShutdowns.get(pipelineState);
+    if (deferred && hasShutdown) {
+      deferred.push(() => runShutdown(error));
       throw error;
     }
+    return thenMaybe(runShutdown(error) as void | Promise<void>, () => {
+      throw error;
+    });
+  };
+
+  const runError = (error: unknown): T | Promise<T> => {
+    if (!hasError) return fail(error);
     const ctx: InterceptorErrorContext = withEmit({
       command,
       input,
@@ -440,12 +457,7 @@ export function wrapWithCommandLifecycle<T>(
     });
     const errorResult = runErrorChain(interceptors, ctx, error);
     return thenMaybe(errorResult, (er) => {
-      if (er.error !== undefined) {
-        const s = runShutdown(er.error);
-        return thenMaybe(s as void | Promise<void>, () => {
-          throw er.error;
-        });
-      }
+      if (er.error !== undefined) return fail(er.error);
       const wrapped = wrapErrorResult ? wrapErrorResult(er.result) : (er.result as T);
       const s = runShutdown(undefined, wrapped);
       return thenMaybe(s as void | Promise<void>, () => wrapped);

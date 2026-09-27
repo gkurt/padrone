@@ -4,14 +4,16 @@ import { canAnimate } from './progress-renderer.ts';
 // Types
 // ---------------------------------------------------------------------------
 
-export type PadroneTaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
+export type PadroneTaskStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'rolling-back' | 'rolled-back';
 
 /** Live state of a task, read by task list renderers. */
 export type PadroneTaskState = {
   readonly title: string;
   readonly status: PadroneTaskStatus;
-  /** The latest `update()` message while running; the skip reason or error message after. */
+  /** The latest `update()` message while running (the previous attempt's error while retrying); the skip reason or error message after. */
   readonly message?: string;
+  /** Set while a failed task is retried: the retry number (1 for the first retry) and how many retries it gets. */
+  readonly retry?: { readonly count: number; readonly tries: number };
   readonly subtasks: readonly PadroneTaskState[];
 };
 
@@ -27,6 +29,8 @@ export type PadroneTaskContext = {
   tasks(tasks: readonly PadroneTask[], options?: PadroneTasksOptions): Promise<void>;
   /** Aborted when the command is cancelled (e.g. Ctrl+C). */
   signal: AbortSignal;
+  /** Which retry this attempt is (`0` for the first attempt), and the error the previous attempt failed with. */
+  retry: { count: number; error?: unknown };
 };
 
 export type PadroneTask = {
@@ -34,6 +38,19 @@ export type PadroneTask = {
   task: (task: PadroneTaskContext) => unknown;
   /** Skip the task: `true`, or a reason. A function is called when the task's turn comes. */
   skip?: boolean | string | (() => boolean | string | Promise<boolean | string>);
+  /** Run a failing task again: this many more times, or `{ tries, delay }` with a delay in milliseconds between attempts. */
+  retry?: number | { tries: number; delay?: number };
+  /**
+   * Undo a failed task's partial work, once its retries are used up. The task is shown as rolled back, and `tasks()` still
+   * fails with the task's error; an error the rollback throws replaces it.
+   */
+  rollback?: (task: PadroneTaskContext, error: unknown) => unknown;
+};
+
+/** Options for the built-in task list renderers, passed as `tasks(list, { rendererOptions })`. */
+export type PadroneTaskRendererOptions = {
+  /** Hide a task's subtasks once it's done or skipped, like listr2. Defaults to `false`. Only the live list collapses. */
+  collapseSubtasks?: boolean;
 };
 
 export type PadroneTasksOptions = {
@@ -44,10 +61,15 @@ export type PadroneTasksOptions = {
    * failure is thrown at the end. Defaults to `true`.
    */
   exitOnError?: boolean;
+  /** Options for the renderer; read by the outermost `tasks()` call, which creates it. */
+  rendererOptions?: PadroneTaskRendererOptions;
 };
 
 /** Draws a task list. `update()` is called on every change; `done()` once every task settled. */
-export type PadroneTaskListRenderer = (tasks: readonly PadroneTaskState[]) => {
+export type PadroneTaskListRenderer = (
+  tasks: readonly PadroneTaskState[],
+  options?: PadroneTaskRendererOptions,
+) => {
   update(): void;
   pause(): void;
   resume(): void;
@@ -61,10 +83,31 @@ export type PadroneTasksFn = (tasks: readonly PadroneTask[], options?: PadroneTa
 // Runner
 // ---------------------------------------------------------------------------
 
-type MutableTaskState = { title: string; status: PadroneTaskStatus; message?: string; subtasks: MutableTaskState[] };
+type MutableTaskState = {
+  title: string;
+  status: PadroneTaskStatus;
+  message?: string;
+  retry?: { count: number; tries: number };
+  subtasks: MutableTaskState[];
+};
 
 class SkipSignal {
   constructor(readonly reason?: string) {}
+}
+
+const errorMessage = (err: unknown) => (err instanceof Error ? err.message : String(err));
+
+/** Resolves after `ms`, or as soon as `signal` aborts. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener('abort', done, { once: true });
+  });
 }
 
 /** Runs `tasks`, recording their state in `states` (appended to) and calling `notify` on every change. */
@@ -86,9 +129,26 @@ export async function runTaskList(
 
   const fail = (state: MutableTaskState, err: unknown) => {
     state.status = 'failed';
-    state.message = err instanceof Error ? err.message : String(err);
+    state.message = errorMessage(err);
     errors.push(err);
   };
+
+  const contextFor = (state: MutableTaskState, retry: PadroneTaskContext['retry']): PadroneTaskContext => ({
+    update(message) {
+      state.message = message;
+      notify();
+    },
+    setTitle(title) {
+      state.title = title;
+      notify();
+    },
+    skip(reason) {
+      throw new SkipSignal(reason);
+    },
+    tasks: (subtasks, subOptions) => runTaskList(subtasks, subOptions ?? {}, state.subtasks, notify, signal),
+    signal,
+    retry,
+  });
 
   const runOne = async (task: PadroneTask, state: MutableTaskState) => {
     let skip: boolean | string | undefined;
@@ -104,34 +164,51 @@ export async function runTaskList(
       return notify();
     }
 
-    state.status = 'running';
-    notify();
-    const context: PadroneTaskContext = {
-      update(message) {
-        state.message = message;
+    const tries = Math.max(0, Math.floor((typeof task.retry === 'object' ? task.retry.tries : task.retry) || 0));
+    const delay = typeof task.retry === 'object' ? (task.retry.delay ?? 0) : 0;
+    let error: unknown;
+    for (let count = 0; ; count++) {
+      state.status = 'running';
+      notify();
+      try {
+        await task.task(contextFor(state, count === 0 ? { count } : { count, error }));
+        state.status = 'done';
+        state.message = undefined;
+        state.retry = undefined;
+        return notify();
+      } catch (err) {
+        if (err instanceof SkipSignal) {
+          state.status = 'skipped';
+          state.message = err.reason;
+          state.retry = undefined;
+          return notify();
+        }
+        error = err;
+        if (count >= tries || signal.aborted) break;
+        state.retry = { count: count + 1, tries };
+        state.message = errorMessage(err);
+        state.subtasks.length = 0;
         notify();
-      },
-      setTitle(title) {
-        state.title = title;
-        notify();
-      },
-      skip(reason) {
-        throw new SkipSignal(reason);
-      },
-      tasks: (subtasks, subOptions) => runTaskList(subtasks, subOptions ?? {}, state.subtasks, notify, signal),
-      signal,
-    };
-    try {
-      await task.task(context);
-      state.status = 'done';
-      state.message = undefined;
-    } catch (err) {
-      if (err instanceof SkipSignal) {
-        state.status = 'skipped';
-        state.message = err.reason;
-      } else {
-        fail(state, err);
+        if (delay > 0) await sleep(delay, signal);
+        if (signal.aborted) break;
       }
+    }
+
+    state.retry = undefined;
+    if (!task.rollback) {
+      fail(state, error);
+      return notify();
+    }
+    state.status = 'rolling-back';
+    state.message = undefined;
+    notify();
+    try {
+      await task.rollback(contextFor(state, { count: 0, error }), error);
+      state.status = 'rolled-back';
+      state.message = errorMessage(error);
+      errors.push(error);
+    } catch (rollbackError) {
+      fail(state, rollbackError);
     }
     notify();
   };
@@ -152,37 +229,69 @@ export async function runTaskList(
 export const noopTaskRenderer: PadroneTaskListRenderer = () => ({ update() {}, pause() {}, resume() {}, done() {} });
 
 // ---------------------------------------------------------------------------
-// Terminal renderer
+// Terminal renderers
 // ---------------------------------------------------------------------------
 
 const SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const ICONS: Record<Exclude<PadroneTaskStatus, 'running'>, string> = { pending: '◻', done: '✔', failed: '✖', skipped: '↓' };
+type FinishedStatus = Exclude<PadroneTaskStatus, 'running' | 'rolling-back'>;
+const ICONS: Record<FinishedStatus, string> = { pending: '◻', done: '✔', failed: '✖', skipped: '↓', 'rolled-back': '↩' };
+
+const isActive = (state: PadroneTaskState) => state.status === 'running' || state.status === 'rolling-back';
+const isFinished = (state: PadroneTaskState) => state.status !== 'pending' && !isActive(state);
 
 function finishedLine(state: PadroneTaskState, indent: string): string {
-  const reason = state.message ? (state.status === 'skipped' ? ` [skipped: ${state.message}]` : `: ${state.message}`) : '';
-  return `${indent}${ICONS[state.status as keyof typeof ICONS]} ${state.title}${state.status === 'skipped' && !state.message ? ' [skipped]' : reason}`;
+  const icon = ICONS[state.status as FinishedStatus];
+  if (state.status === 'skipped') return `${indent}${icon} ${state.title} [${state.message ? `skipped: ${state.message}` : 'skipped'}]`;
+  const tag = state.status === 'rolled-back' ? ' [rolled back]' : '';
+  return `${indent}${icon} ${state.title}${tag}${state.message ? `: ${state.message}` : ''}`;
 }
+
+/** ` [retry 1/3]` or ` [rolling back]` after a running task's title. */
+const activeTag = (state: PadroneTaskState) =>
+  state.status === 'rolling-back' ? ' [rolling back]' : state.retry ? ` [retry ${state.retry.count}/${state.retry.tries}]` : '';
+
+/**
+ * Prints task lists as plain lines on stderr, like listr2's simple renderer: `❯ Title` when a task starts, `  › message`
+ * for updates, `↻` for retries, then `✔` / `✖` / `↓` / `↩` when it finishes. Used by `createTerminalTaskList` when stderr
+ * can't be redrawn (not a TTY, `TERM=dumb`, CI), and usable as `taskRenderer` to get log-friendly output everywhere.
+ */
+export const createSimpleTaskList: PadroneTaskListRenderer = (tasks) => {
+  const stderr = (globalThis.process as NodeJS.Process | undefined)?.stderr;
+  const write = (line: string) => stderr?.write?.(`${line}\n`);
+  const seen = new Map<PadroneTaskState, { status: PadroneTaskStatus; message?: string; retry?: number }>();
+
+  const report = (state: PadroneTaskState, indent: string) => {
+    const prev = seen.get(state);
+    if (prev && prev.status === state.status && prev.message === state.message && prev.retry === state.retry?.count) return;
+    seen.set(state, { status: state.status, message: state.message, retry: state.retry?.count });
+    if (state.status === 'pending') return;
+    if (isFinished(state)) return write(finishedLine(state, indent));
+    if (state.status === 'rolling-back') return write(`${indent}↩ ${state.title}${activeTag(state)}`);
+    if (state.retry && prev?.retry !== state.retry.count) {
+      return write(`${indent}↻ ${state.title}${activeTag(state)}${state.message ? `: ${state.message}` : ''}`);
+    }
+    if (prev?.status !== 'running') return write(`${indent}❯ ${state.title}`);
+    if (state.message) write(`${indent}  › ${state.message}`);
+  };
+
+  // A task's start comes before its subtasks' lines, its result after them
+  const flush = (list: readonly PadroneTaskState[], indent: string) => {
+    for (const state of list) {
+      if (!isFinished(state)) report(state, indent);
+      flush(state.subtasks, `${indent}  `);
+      if (isFinished(state)) report(state, indent);
+    }
+  };
+  return { update: () => flush(tasks, ''), pause() {}, resume() {}, done: () => flush(tasks, '') };
+};
 
 /**
  * Draws tasks on stderr: a live list with spinners on a TTY, redrawn as tasks progress.
- * Without a TTY (or with `TERM=dumb`, or in CI), each task is printed once it finishes.
+ * Without a TTY (or with `TERM=dumb`, or in CI), it prints plain start and finish lines instead (`createSimpleTaskList`).
  */
-export const createTerminalTaskList: PadroneTaskListRenderer = (tasks) => {
-  const proc = globalThis.process as NodeJS.Process | undefined;
-  const stderr = proc?.stderr;
-
-  if (!stderr || !canAnimate(stderr)) {
-    const printed = new Set<PadroneTaskState>();
-    const flush = (list: readonly PadroneTaskState[], indent: string) => {
-      for (const state of list) {
-        flush(state.subtasks, `${indent}  `);
-        if (printed.has(state) || state.status === 'pending' || state.status === 'running') continue;
-        printed.add(state);
-        stderr?.write?.(`${finishedLine(state, indent)}\n`);
-      }
-    };
-    return { update: () => flush(tasks, ''), pause() {}, resume() {}, done: () => flush(tasks, '') };
-  }
+export const createTerminalTaskList: PadroneTaskListRenderer = (tasks, options) => {
+  const stderr = (globalThis.process as NodeJS.Process | undefined)?.stderr;
+  if (!stderr || !canAnimate(stderr)) return createSimpleTaskList(tasks, options);
 
   const write = stderr.write.bind(stderr);
   const startedAt = Date.now();
@@ -193,14 +302,14 @@ export const createTerminalTaskList: PadroneTaskListRenderer = (tasks) => {
   const lines = (list: readonly PadroneTaskState[], indent: string): string[] =>
     list.flatMap((state) => {
       const spinner = SPINNER[Math.floor((Date.now() - startedAt) / 80) % SPINNER.length]!;
-      const head =
-        state.status === 'running'
-          ? `${indent}${spinner} ${state.title}`
-          : state.status === 'pending'
-            ? `${indent}${ICONS.pending} ${state.title}`
-            : finishedLine(state, indent);
-      const detail = state.status === 'running' && state.message ? [`${indent}  › ${state.message}`] : [];
-      return [head, ...detail, ...lines(state.subtasks, `${indent}  `)];
+      const head = isActive(state)
+        ? `${indent}${spinner} ${state.title}${activeTag(state)}`
+        : state.status === 'pending'
+          ? `${indent}${ICONS.pending} ${state.title}`
+          : finishedLine(state, indent);
+      const detail = isActive(state) && state.message ? [`${indent}  › ${state.message}`] : [];
+      const collapsed = options?.collapseSubtasks && (state.status === 'done' || state.status === 'skipped');
+      return [head, ...detail, ...(collapsed ? [] : lines(state.subtasks, `${indent}  `))];
     });
 
   const clear = () => {

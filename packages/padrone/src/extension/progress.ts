@@ -82,7 +82,13 @@ export type PadroneProgressDefaults = Pick<
  * ]);
  * ```
  */
-export type PadroneProgressContext = PadroneProgress & { tasks: PadroneTasksFn };
+export type PadroneProgressContext = PadroneProgress & {
+  tasks: PadroneTasksFn;
+  /** Whether the indicator or a task list is running: `false` once it finished, and when progress output is silent (e.g. under `serve`). */
+  readonly isActive: boolean;
+  /** Whether what's drawn is hidden right now: by `pause()`, or while output, a prompt, the editor or the pager has the terminal. */
+  readonly isPaused: boolean;
+};
 
 /** Builder/program type after applying `padroneProgress()`. Adds `{ progress: PadroneProgress }` to the command context. */
 export type WithProgress<T> = WithInterceptor<T, { progress: PadroneProgressContext }>;
@@ -263,7 +269,7 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
         async (tasks, options) => {
           const { silent, taskRenderer } = settings!;
           const states: PadroneTaskState[] = [];
-          const list = silent ? noopTaskRenderer(states) : taskRenderer(states);
+          const list = silent ? noopTaskRenderer(states) : taskRenderer(states, options?.rendererOptions);
           const outer = activeTaskList;
           (outer ?? indicator)?.pause();
           activeTaskList = list;
@@ -276,6 +282,18 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
             if (holds === 0) (outer ?? indicator)?.resume();
           }
         };
+
+      /** The `progress` handle on the command context, with live `isActive` / `isPaused`. */
+      const progressContext = (base: PadroneProgress, signal: AbortSignal): PadroneProgressContext => ({
+        ...base,
+        tasks: tasksFor(signal),
+        get isActive() {
+          return !settings?.silent && (!!indicator || !!activeTaskList);
+        },
+        get isPaused() {
+          return holds > 0;
+        },
+      });
 
       const resolve = (ctx: { context?: unknown; caller: string }) => (settings ??= resolveSettings(ctx.context, ctx.caller));
 
@@ -368,7 +386,7 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
 
         execute(ctx, next) {
           const { silent, msgs } = resolve(ctx);
-          if (silent) return next({ context: { progress: { ...noopIndicator, tasks: tasksFor(ctx.signal) } } });
+          if (silent) return next({ context: { progress: progressContext(noopIndicator, ctx.signal) } });
 
           // `run()` skips validation, so the indicator may not exist yet
           if (indicator) {
@@ -397,8 +415,7 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
 
           let result: InterceptorExecuteResult | Promise<InterceptorExecuteResult>;
           try {
-            const progress = indicator ? { ...indicator, ...manual } : noopIndicator;
-            result = next({ context: { progress: { ...progress, tasks: tasksFor(ctx.signal) } } });
+            result = next({ context: { progress: progressContext(indicator ? { ...indicator, ...manual } : noopIndicator, ctx.signal) } });
           } catch (err) {
             return onError(err);
           }

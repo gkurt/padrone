@@ -259,7 +259,7 @@ describe('same-id interceptors across root and command lifecycles', () => {
       },
     }));
     makeProgram(log, other as any).eval('fail');
-    expect(log).toEqual(['other:error', 'other:shutdown', 'root:error', 'root:shutdown']);
+    expect(log).toEqual(['other:error', 'root:error', 'other:shutdown', 'root:shutdown']);
   });
 
   it('still removes the signal listener when a command replaces the signal interceptor', async () => {

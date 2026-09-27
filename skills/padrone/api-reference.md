@@ -355,6 +355,7 @@ Custom I/O adapter for non-terminal environments.
   interactive?: 'supported' | 'unsupported' | 'forced' | 'disabled',
   prompt?: (config) => Promise<unknown>,
   readLine?: (prompt: string) => Promise<string | null>,
+  terminal?: { columns?, rows?, isTTY?, stderrIsTTY? },  // isTTY: stdout; stderrIsTTY: stderr (log colors)
   setExitCode?: (code: number) => void,  // cli() calls it on error; default sets process.exitCode
   editor?: (text, { extension? }) => Promise<string>,  // $VISUAL/$EDITOR on a temp file
   open?: (target: string) => Promise<void>,            // system default app

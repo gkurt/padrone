@@ -418,7 +418,7 @@ program.eval('cmd');
 
 ## Task Lists
 
-For work in several steps, `ctx.context.progress.tasks()` runs a list of tasks and draws it live, like [listr2](https://listr2.kilic.dev/): a spinner on the running task, `✔` for done, `✖` for failed and `↓` for skipped ones. Without a TTY, each task is printed once it finishes.
+For work in several steps, `ctx.context.progress.tasks()` runs a list of tasks and draws it live, like [listr2](https://listr2.kilic.dev/): a spinner on the running task, `✔` for done, `✖` for failed, `↓` for skipped and `↩` for rolled-back ones. Without a TTY (or with `TERM=dumb`, or in CI), plain lines are printed instead: `❯ Title` when a task starts, `  › message` for its updates, and the result line when it finishes.
 
 ```typescript
 c.extend(padroneProgress('Releasing...')).action(async (_args, ctx) => {
@@ -441,7 +441,7 @@ c.extend(padroneProgress('Releasing...')).action(async (_args, ctx) => {
 });
 ```
 
-Each task is `{ title, task, skip? }`. `skip` is `true`, a reason string, or a function returning one. The task function receives:
+Each task is `{ title, task, skip?, retry?, rollback? }`. `skip` is `true`, a reason string, or a function returning one. The task function receives:
 
 | Member | Description |
 |--------|-------------|
@@ -450,14 +450,31 @@ Each task is `{ title, task, skip? }`. `skip` is `true`, a reason string, or a f
 | `skip(reason?)` | Stop the task and mark it skipped |
 | `tasks(subtasks, options?)` | Run subtasks nested under this task |
 | `signal` | Aborted when the command is cancelled |
+| `retry` | `{ count, error? }`: which retry this attempt is (`0` for the first attempt) and the previous attempt's error |
 
-Options: `concurrent` runs tasks at the same time (`true` for all, or a number as a limit), and `exitOnError` (default `true`) stops starting tasks after a failure; with `false` every task runs. Either way `tasks()` rejects with the first error. The progress indicator is hidden while the list is drawn, and output written through the runtime pauses the list. Pass `taskRenderer` (a `PadroneTaskListRenderer`) to draw lists yourself; it receives the live task states and is told when they change.
+A failing task with `retry: 3` runs up to three more times (`retry: { tries: 3, delay: 1000 }` waits a second between attempts), shown as `[retry 1/3]` with the last error. Once its retries are used up, `rollback: (task, error) => ...` undoes its partial work; the task is then shown as rolled back, and `tasks()` still rejects with its error (or with the rollback's own error if that fails):
+
+```typescript
+await ctx.context.progress.tasks([
+  { title: 'Download', retry: { tries: 3, delay: 500 }, task: () => download() },
+  {
+    title: 'Migrate database',
+    task: () => migrate(),
+    rollback: async (t) => {
+      t.update('restoring backup');
+      await restore();
+    },
+  },
+]);
+```
+
+Options: `concurrent` runs tasks at the same time (`true` for all, or a number as a limit), and `exitOnError` (default `true`) stops starting tasks after a failure; with `false` every task runs. Either way `tasks()` rejects with the first error. `rendererOptions: { collapseSubtasks: true }` hides the subtasks of a task once it's done or skipped, like listr2. The progress indicator is hidden while the list is drawn, and output written through the runtime pauses the list. Pass `taskRenderer` (a `PadroneTaskListRenderer`) to draw lists yourself; it receives the live task states (and the `rendererOptions`) and is told when they change. `createSimpleTaskList` is the built-in plain-line renderer: pass it as `taskRenderer` for log-friendly output even on a terminal.
 
 ## Output Coordination
 
 When auto-progress is active, `runtime.output` and `runtime.error` are automatically wrapped to pause/resume the indicator. This prevents garbled output when writing to the terminal while a spinner or bar is animating.
 
-Manual calls to `ctx.context.progress.pause()` and `ctx.context.progress.resume()` are available if you need explicit control; output written while paused doesn't bring the indicator back before `resume()`.
+Manual calls to `ctx.context.progress.pause()` and `ctx.context.progress.resume()` are available if you need explicit control; output written while paused doesn't bring the indicator back before `resume()`. `ctx.context.progress.isPaused` tells whether the indicator is hidden right now (by `pause()`, output, a prompt, the editor or the pager), and `isActive` whether it (or a task list) is still running: `false` once it finished, and always when progress output is silent (e.g. under `serve`).
 
 ## How It Works Under the Hood
 

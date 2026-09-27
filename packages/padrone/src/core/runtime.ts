@@ -227,6 +227,8 @@ export type PadroneRuntime = {
     rows?: number;
     /** Whether stdout is a TTY. Affects ANSI color output and interactive features. */
     isTTY?: boolean;
+    /** Whether stderr (where `error` writes) is a TTY, e.g. for colored log lines. Falls back to `isTTY` when unset. */
+    stderrIsTTY?: boolean;
   };
 
   /**

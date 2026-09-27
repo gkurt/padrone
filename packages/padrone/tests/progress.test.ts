@@ -1153,7 +1153,7 @@ describe('progress.tasks()', () => {
     expect(events).toEqual(['pause', 'resume', 'done']);
   });
 
-  it('prints finished tasks without a TTY', async () => {
+  it('prints start and finish lines without a TTY', async () => {
     const written: string[] = [];
     const write = process.stderr.write;
     process.stderr.write = ((chunk: string) => written.push(chunk) > 0) as typeof process.stderr.write;
@@ -1170,6 +1170,6 @@ describe('progress.tasks()', () => {
     } finally {
       process.stderr.write = write;
     }
-    expect(written.join('')).toBe('  ✔ Types\n✔ Build\n↓ Deploy [skipped: no token]\n');
+    expect(written.join('')).toBe('❯ Build\n  ❯ Types\n  ✔ Types\n✔ Build\n↓ Deploy [skipped: no token]\n');
   });
 });

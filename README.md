@@ -101,7 +101,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 
 **Arguments** — positional args, variadic args, short flags (`-v`), long aliases (`--dry-run`), auto kebab-case aliases, negatable booleans (`--no-verbose`), custom negation keywords (`--remote` → sets `local` to `false`).
 
-**Env & Config** — load from environment variables with `.extend(padroneEnv(schema))` and config files with `.extend(padroneConfig({ files, schema }))`. Precedence: CLI > stdin > env > config > defaults.
+**Env & Config** — load from environment variables with `.extend(padroneEnv(schema))` (or `padroneEnv({ prefix: 'MY_APP' })` for every option) and config files with `.extend(padroneConfig({ files, schema }))`. Precedence: CLI > stdin > env > config > defaults.
 
 **Interactive prompts** — auto-prompt for missing fields. Booleans become confirm, enums become select, arrays become multi-select.
 

@@ -717,3 +717,39 @@ describe('padroneLogger verbosity stacking', () => {
     expect(levelOf('-v').result).toBe('1.0.0');
   });
 });
+
+describe('padroneLogger registered on a command', () => {
+  it('reads the log-level flags', () => {
+    const { output, runtime } = createCapture();
+    const program = createPadrone('app')
+      .runtime(runtime)
+      .command('sync', (c) =>
+        c.extend(padroneLogger()).action((_args, ctx) => {
+          ctx.context.logger.debug('debug msg');
+        }),
+      );
+
+    const result = program.eval('sync --verbose');
+    expect(result.argsResult?.issues).toBeUndefined();
+    expect(output).toEqual(['[DEBUG] debug msg']);
+  });
+});
+
+describe('padroneLogger under JSON output', () => {
+  it('writes every level to stderr so stdout stays JSON', () => {
+    const { output, errors, runtime } = createCapture();
+    const program = createPadrone('app')
+      .runtime({ ...runtime, format: 'json' })
+      .extend(padroneLogger())
+      .command('info', (c) =>
+        c.action((_args, ctx) => {
+          ctx.context.logger.info('starting');
+          return { ok: true };
+        }),
+      );
+
+    program.eval('info');
+    expect(errors).toEqual(['[INFO] starting']);
+    expect(output).toEqual([JSON.stringify({ ok: true }, null, 2)]);
+  });
+});

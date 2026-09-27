@@ -32,7 +32,13 @@ export function padroneServe(defaults?: PadroneServePreferences): <T extends Com
     builder.command('serve', (c) =>
       c
         .configure({ description: 'Start a REST HTTP server', hidden: true })
-        .arguments(passthroughSchema({ port: 'string', host: 'string', 'base-path': 'string' }))
+        .arguments(
+          passthroughSchema({
+            port: { type: 'string', description: 'Port to listen on' },
+            host: { type: 'string', description: 'Host to listen on' },
+            'base-path': { type: 'string', description: 'Base path for all endpoints' },
+          }),
+        )
         .async()
         .action(async (args, ctx) => {
           const rootCommand = getRootCommand(ctx.command);

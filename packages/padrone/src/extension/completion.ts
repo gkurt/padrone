@@ -55,7 +55,17 @@ export function padroneCompletion(): <T extends CommandTypesBase>(builder: T) =>
       .command('completion', (c) =>
         c
           .configure({ description: 'Generate shell completion scripts', hidden: true })
-          .arguments(passthroughSchema({ shell: 'string', setup: 'boolean' }), { positional: ['shell'] })
+          .arguments(
+            passthroughSchema({
+              shell: {
+                type: 'string',
+                description: 'Shell to generate the script for (detected when omitted)',
+                enum: ['bash', 'zsh', 'fish', 'powershell'],
+              },
+              setup: { type: 'boolean', description: "Install the script into the shell's config file" },
+            }),
+            { positional: ['shell'] },
+          )
           .async()
           .action(async (args, ctx) => {
             const rootCommand = getRootCommand(ctx.command);

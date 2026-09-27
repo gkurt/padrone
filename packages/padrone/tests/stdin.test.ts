@@ -234,3 +234,27 @@ describe('stdin commands are async', () => {
     expect(errors).toEqual([]);
   });
 });
+
+describe('stdin for serve, MCP and tool calls', () => {
+  it('is not read: the process stdin belongs to the server (MCP stdio reads requests from it)', async () => {
+    let read = false;
+    const stdin = {
+      isTTY: false,
+      text: async () => {
+        read = true;
+        return 'from stdin';
+      },
+      async *lines() {
+        read = true;
+        yield 'from stdin';
+      },
+    };
+    const program = createPadrone('test').command('process', (c) =>
+      c.arguments(z.object({ data: z.string().optional() }), { stdin: 'data' }).action((args) => args.data ?? 'no data'),
+    );
+
+    const result = await program.eval('process', { caller: 'mcp', runtime: { stdin, output: () => {} } });
+    expect(result.result).toBe('no data');
+    expect(read).toBe(false);
+  });
+});

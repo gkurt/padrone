@@ -16,26 +16,57 @@ export function frameworkFlags(rawArgs: Record<string, unknown>, command: AnyPad
   };
 }
 
-type SchemaShape = Record<string, 'string' | 'string[]' | 'boolean'>;
+/** Callers that return results through their own transport (HTTP, MCP, AI tool calls): no terminal, no stdin. */
+const REMOTE_CALLERS = new Set<string>(['serve', 'mcp', 'tool']);
 
+export function isRemoteCaller(caller: string): boolean {
+  return REMOTE_CALLERS.has(caller);
+}
+
+type PassthroughType = 'string' | 'string[]' | 'boolean';
+type PassthroughField = PassthroughType | { type: PassthroughType; description?: string; enum?: readonly string[] };
+type SchemaShape = Record<string, PassthroughField>;
+
+type InferPassthroughType<T> = T extends 'string' ? string : T extends 'string[]' ? string[] : T extends 'boolean' ? boolean : never;
 type InferPassthroughSchema<T extends SchemaShape> = {
-  [K in keyof T]: T[K] extends 'string' ? string : T[K] extends 'string[]' ? string[] : T[K] extends 'boolean' ? boolean : never;
+  [K in keyof T]: InferPassthroughType<T[K] extends { type: infer U } ? U : T[K]>;
 };
 
-/** Minimal Standard Schema that passes through known fields, ignoring unknown ones. */
+const PASSTHROUGH_JSON_TYPES = {
+  string: { type: 'string' },
+  'string[]': { type: 'array', items: { type: 'string' } },
+  boolean: { type: 'boolean' },
+} as const;
+
+function passthroughFieldJsonSchema(field: PassthroughField): Record<string, unknown> {
+  if (typeof field === 'string') return PASSTHROUGH_JSON_TYPES[field];
+  return {
+    ...PASSTHROUGH_JSON_TYPES[field.type],
+    ...(field.description && { description: field.description }),
+    ...(field.enum && { enum: field.enum }),
+  };
+}
+
+/**
+ * Minimal Standard Schema for built-in commands. Its JSON Schema lists the fields,
+ * so help shows them and boolean fields parse as flags (`--setup bash` doesn't take `bash` as its value).
+ * Values are passed through without validation.
+ */
 export function passthroughSchema<TShape extends SchemaShape>(fields: TShape): PadroneSchema<InferPassthroughSchema<TShape>> {
+  const jsonSchema = () => ({
+    type: 'object',
+    properties: Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, passthroughFieldJsonSchema(field)])),
+  });
   return {
     '~standard': {
       version: 1 as const,
       vendor: 'padrone' as const,
-      jsonSchema: {
-        input: () => ({}),
-        output: () => ({}),
-      },
+      jsonSchema: { input: jsonSchema, output: jsonSchema },
       validate: (value) => {
         const input = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
         const result: Record<string, unknown> = {};
-        for (const [name, type] of Object.entries(fields)) {
+        for (const [name, field] of Object.entries(fields)) {
+          const type = typeof field === 'string' ? field : field.type;
           const v = input[name];
           if (v === undefined) continue;
           if (type === 'string[]') {

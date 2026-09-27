@@ -19,11 +19,11 @@ When you call `createPadrone('myapp')`, built-in extensions are automatically ap
 | **help** | `--help`/`-h` flag, `help` command and `<cmd> help`, error-phase help display | -1000 |
 | **version** | `--version`/`-v` flag, `version` command | -1000 |
 | **repl** | `--repl` flag, `repl` command | -1000 |
-| **color** | `--color`/`--no-color` flag, theme override | -1001 |
+| **color** | `--color[=always\|never\|auto\|<theme>]`/`--no-color` flag | -1001 |
 | **suggestions** | "Did you mean?" for unknown commands/options | -500 |
 | **signal** | SIGINT/SIGTERM handling, double-tap force-exit, AbortSignal propagation | -2000 |
 | **autoOutput** | Auto-print results (strings, promises, iterators) and, in `cli()`, errors the help extension didn't print | -1100 |
-| **stdin** | Pipe stdin into argument fields (text, lines, or stream) | -1001 |
+| **stdin** | Pipe stdin into argument fields (text, lines, or stream); not read for serve, MCP and `tool()` calls | -1001 |
 | **interactive** | `--interactive`/`-i` flag, auto-prompting for missing fields | -999 |
 
 Each can be disabled individually:
@@ -38,13 +38,13 @@ Additional opt-in extensions are available for advanced features:
 
 | Extension | Import | What it does |
 |-----------|--------|-------------|
-| `padroneEnv(schema)` | `'padrone'` | Parse environment variables into args |
-| `padroneConfig(options)` | `'padrone'` | Load args from config files |
-| `padroneProgress(config)` | `'padrone'` | Auto-managed progress indicators |
+| `padroneEnv(schema)` | `'padrone'` | Parse environment variables into args (`vars`, or `prefix` for every option) |
+| `padroneConfig(options)` | `'padrone'` | Load args from config files (`xdg`, `searchParents`, `packageJson` options) |
+| `padroneProgress(config)` | `'padrone'` | Auto-managed progress indicators (no-op for serve, MCP and `tool()` calls) |
 | `padroneLogger(options)` | `'padrone'` | Structured logging with levels (`--verbose` repeatable; `shortFlags`, `env`, `stderr` options) |
 | `padroneJson()` | `'padrone'` | `--json` flag: results and errors as JSON |
 | `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`) before `mutation: true` commands |
-| `padroneTiming()` | `'padrone'` | Execution timing |
+| `padroneTiming()` | `'padrone'` | Execution timing (`--time`) |
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking |
 | `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
@@ -238,6 +238,8 @@ const startup = defineInterceptor({ name: 'startup' }, () => ({
 #### Parse Phase
 
 Runs when CLI input is being parsed into a command and raw arguments. Only root-level interceptors run during parsing — subcommand interceptors are not invoked.
+
+An interceptor that reads its own flags from `rawArgs` in the parse phase (like `--verbose`) should also read them in the validate phase when parse didn't run, so it works when applied to a single command. The built-in logger, timing and `--json` extensions do this.
 
 ```typescript
 const parseLogger = defineInterceptor({ name: 'parse-logger' }, () => ({
@@ -603,7 +605,7 @@ Understanding how built-in features are implemented helps illustrate the interce
 
 **Auto-output** (`padroneAutoOutput`, order: -1100) — In the execute phase, intercepts the action result and writes it to `runtime.output()`. Handles promises (awaits), iterators (consumes and outputs each value), and plain values. In the error phase of `cli()`, prints the message of any error that no inner extension printed (help prints routing and validation errors), whichever phase threw it. Extensions that print an error themselves call `markErrorReported(error)` so it isn't printed twice.
 
-**Help** (`padroneHelp`, order: -1000) — Adds a `help` command and registers an interceptor with parse, execute, and error phases. The parse phase detects `--help` flags and reroutes to the help command. The error phase formats routing/validation errors with help text in CLI mode.
+**Help** (`padroneHelp`, order: -1000) — Adds a `help` command and registers an interceptor with parse, validate, execute, and error phases. The parse phase detects `--help` flags; the execute phase renders the help, so flags read later in parsing (`--no-color`, `--json`) apply. Under JSON output the help is returned as an object. The error phase formats routing/validation errors with help text in CLI mode.
 
 **Config file loading** (`padroneConfig`, order: -999) — Not included by default; must be explicitly applied via `.extend(padroneConfig(...))`. In the validate phase, loads the config file from the file system (or via a custom `loadConfig` function) and merges values into `rawArgs` before schema validation.
 

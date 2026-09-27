@@ -32,9 +32,17 @@ export function padroneMcp(defaults?: PadroneMcpPreferences): <T extends Command
     builder.command('mcp', (c) =>
       c
         .configure({ description: 'Start a Model Context Protocol server', hidden: true })
-        .arguments(passthroughSchema({ transport: 'string', port: 'string', host: 'string', 'base-path': 'string' }), {
-          positional: ['transport'],
-        })
+        .arguments(
+          passthroughSchema({
+            transport: { type: 'string', description: 'Transport to serve over', enum: ['http', 'stdio'] },
+            port: { type: 'string', description: 'Port for the HTTP transport' },
+            host: { type: 'string', description: 'Host for the HTTP transport' },
+            'base-path': { type: 'string', description: 'Base path for the HTTP transport' },
+          }),
+          {
+            positional: ['transport'],
+          },
+        )
         .async()
         .action(async (args, ctx) => {
           const rootCommand = getRootCommand(ctx.command);

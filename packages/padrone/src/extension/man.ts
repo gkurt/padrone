@@ -31,7 +31,12 @@ export function padroneMan(): <T extends CommandTypesBase>(builder: T) => WithMa
     builder.command('man', (c) =>
       c
         .configure({ description: 'Generate man pages', hidden: true })
-        .arguments(passthroughSchema({ setup: 'boolean', remove: 'boolean' }))
+        .arguments(
+          passthroughSchema({
+            setup: { type: 'boolean', description: 'Install the man pages' },
+            remove: { type: 'boolean', description: 'Remove installed man pages' },
+          }),
+        )
         .async()
         .action(async (args, ctx) => {
           const rootCommand = getRootCommand(ctx.command);

@@ -90,7 +90,7 @@ describe('runtime', () => {
       );
 
       program.eval('serve --config=my.json');
-      expect(mockLoadConfig).toHaveBeenCalledWith('my.json', undefined);
+      expect(mockLoadConfig).toHaveBeenCalledWith('my.json', undefined, undefined);
     });
 
     it('should use custom loadConfig with auto-detection', async () => {
@@ -103,7 +103,7 @@ describe('runtime', () => {
       );
 
       const result = await program.eval('serve');
-      expect(mockLoadConfig).toHaveBeenCalledWith(['config.json', 'config.yaml'], undefined);
+      expect(mockLoadConfig).toHaveBeenCalledWith(['config.json', 'config.yaml'], undefined, undefined);
       expect(result.result).toBe(9090);
     });
   });

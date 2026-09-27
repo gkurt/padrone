@@ -167,6 +167,12 @@ describe('color flags', () => {
     expect(run('--color=ocean')).toBe('ansi ocean');
   });
 
+  it('takes --color=always|never|auto', () => {
+    expect(run('--color=always')).toBe('ansi -');
+    expect(run('--color=never')).toBe('text -');
+    expect(run('--color=auto')).toBe(run(''));
+  });
+
   it('honors FORCE_COLOR over NO_COLOR, CI and a non-TTY', () => {
     expect(shouldUseAnsi({ FORCE_COLOR: '1', NO_COLOR: '1', CI: 'true' }, false)).toBe(true);
     expect(shouldUseAnsi({ FORCE_COLOR: '' }, false)).toBe(true);

@@ -6,6 +6,8 @@ import { frameworkFlags } from './utils.ts';
 
 // ── Interceptor ─────────────────────────────────────────────────────────
 
+const FORCE_VALUES = new Set(['true', '1', 'always']);
+
 const colorInterceptor = defineInterceptor(
   { id: 'padrone:color', name: 'padrone:color', order: -1001, options: { color: 'optional' } },
   () => ({
@@ -18,11 +20,12 @@ const colorInterceptor = defineInterceptor(
 
         const { runtime } = ctx;
         const auto = runtime.format === 'auto';
-        if (color === false || color === 'false' || color === '0') {
+        if (color === 'auto') return res;
+        if (color === false || color === 'false' || color === '0' || color === 'never') {
           if (auto || runtime.format === 'ansi' || runtime.format === 'console') runtime.format = 'text';
           return res;
         }
-        if (typeof color === 'string' && color !== 'true' && color !== '1') runtime.theme = color as ColorTheme;
+        if (typeof color === 'string' && !FORCE_VALUES.has(color)) runtime.theme = color as ColorTheme;
         if (auto) runtime.format = 'ansi';
         return res;
       });
@@ -34,8 +37,9 @@ const colorInterceptor = defineInterceptor(
 
 /**
  * Extension that handles `--color` / `--no-color` flags:
- * - `--color` or `--color=true` → force colors, even when output isn't a TTY
- * - `--color=false` or `--no-color` → disable colors (text format)
+ * - `--color`, `--color=true` or `--color=always` → force colors, even when output isn't a TTY
+ * - `--color=false`, `--color=never` or `--no-color` → disable colors (text format)
+ * - `--color=auto` → detect from the terminal (the default)
  * - `--color=<theme>` → force colors with the named theme
  *
  * Modifies the runtime's format and theme accordingly. An explicit non-ANSI `format` (e.g. `'json'`) is kept.

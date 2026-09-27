@@ -1,7 +1,7 @@
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
-import type { AnyPadroneBuilder, CommandTypesBase, InterceptorMeta } from '../types/index.ts';
-import { frameworkFlags } from './utils.ts';
+import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, InterceptorMeta } from '../types/index.ts';
+import { frameworkFlags, isRemoteCaller } from './utils.ts';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -25,25 +25,38 @@ const timingMeta: InterceptorMeta = {
 function createTimingInterceptor(enabledByDefault: boolean) {
   return defineInterceptor(timingMeta, () => {
     let enabled = enabledByDefault;
-    let startTime = 0;
+    let flagsRead = false;
+    // Replaced in the start phase; interceptors registered on a command only join from the route phase
+    let startTime = performance.now();
+
+    const readFlags = (rawArgs: Record<string, unknown>, command: AnyPadroneCommand) => {
+      flagsRead = true;
+      const flags = frameworkFlags(rawArgs, command);
+      if (flags.has('timing')) enabled = flags.get('timing') !== false;
+      if (flags.has('time')) enabled = flags.get('time') !== false;
+      flags.delete('timing', 'time');
+    };
 
     return {
-      parse(_ctx, next) {
-        return thenMaybe(next(), (res) => {
-          const flags = frameworkFlags(res.rawArgs, res.command);
-          if (flags.has('timing')) enabled = flags.get('timing') !== false;
-          if (flags.has('time')) enabled = flags.get('time') !== false;
-          flags.delete('timing', 'time');
-          return res;
-        });
-      },
       start(_ctx, next) {
         startTime = performance.now();
         return next();
       },
+      parse(_ctx, next) {
+        return thenMaybe(next(), (res) => {
+          readFlags(res.rawArgs, res.command);
+          return res;
+        });
+      },
+      // Registered on a command: its parse handler doesn't run
+      validate(ctx, next) {
+        if (!flagsRead) readFlags(ctx.rawArgs, ctx.command);
+        return next();
+      },
       shutdown(ctx, next) {
         return thenMaybe(next(), (res) => {
-          if (enabled) {
+          // Serve and MCP handle requests; they have no terminal to report to
+          if (enabled && !isRemoteCaller(ctx.caller)) {
             const elapsed = performance.now() - startTime;
             ctx.runtime.error(`\nDone in ${formatDuration(elapsed)}`);
           }

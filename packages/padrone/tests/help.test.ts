@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test';
-import type { HelpInfo } from 'padrone';
-import { createPadrone } from 'padrone';
+import type { HelpInfo, PadroneSchema } from 'padrone';
+import { createPadrone, padroneJson } from 'padrone';
+import { padroneCompletion } from 'padrone/completion';
+import { padroneServe } from 'padrone/serve';
 import * as z from 'zod/v4';
 import { createTasksProgram } from './common.ts';
 
@@ -385,5 +387,65 @@ describe('help with groups', () => {
     expect(help).not.toContain('Commands:');
     expect(help).toContain('Group1:');
     expect(help).toContain('Group2:');
+  });
+});
+
+describe('help flags read later in parsing', () => {
+  const capture = (runtime: Record<string, unknown> = {}) => {
+    const output: unknown[] = [];
+    return { output, runtime: { output: (...args: unknown[]) => output.push(...args), error: () => {}, ...runtime } };
+  };
+  const program = createPadrone('app')
+    .extend(padroneJson())
+    .command('greet', (c) => c.arguments(z.object({ name: z.string().optional() })).action(() => 'hi'));
+
+  it('--no-color applies to --help', () => {
+    const { output, runtime } = capture({ format: 'ansi' });
+    program.eval('greet --help --no-color', { runtime });
+    expect(output[0]).toStartWith('Usage: app greet');
+  });
+
+  it('--json prints the help once, as JSON', () => {
+    const { output, runtime } = capture();
+    program.eval('greet --help --json', { runtime });
+    expect(JSON.parse(output[0] as string).usage.command).toBe('app greet');
+
+    output.length = 0;
+    program.eval('help greet --json', { runtime });
+    expect(JSON.parse(output[0] as string).name).toBe('greet');
+  });
+
+  it('the help command takes -d and -f', () => {
+    const help = program.eval('help greet -f json -d full', { runtime: capture().runtime }).result;
+    expect(JSON.parse(help as string).name).toBe('greet');
+  });
+});
+
+describe('help for built-in commands and non-Zod schemas', () => {
+  it('lists the options of built-in commands', () => {
+    const program = createPadrone('app').extend(padroneServe());
+    const help = program.help('serve', { format: 'text' });
+    expect(help).toContain('--port');
+    expect(help).toContain('Port to listen on');
+  });
+
+  it('parses boolean options of built-in commands as flags', async () => {
+    const program = createPadrone('app').extend(padroneCompletion());
+    const { args } = await program.parse('completion --setup bash');
+    expect(args).toEqual({ setup: true, shell: 'bash' });
+  });
+
+  it('lists options of any Standard Schema with a JSON Schema', () => {
+    const jsonSchema = () => ({ type: 'object', properties: { port: { type: 'number', description: 'Port' } } });
+    const schema: PadroneSchema<{ port?: number }> = {
+      '~standard': {
+        version: 1,
+        vendor: 'custom',
+        jsonSchema: { input: jsonSchema, output: jsonSchema },
+        validate: (value) => ({ value: value as { port?: number } }),
+      },
+    };
+    const program = createPadrone('app').command('start', (c) => c.arguments(schema).action(() => {}));
+    expect(program.help('start', { format: 'text' })).toContain('--port');
   });
 });

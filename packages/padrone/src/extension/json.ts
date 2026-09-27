@@ -46,7 +46,8 @@ const jsonInterceptor = defineInterceptor({ id: 'padrone:json', name: 'padrone:j
       // Parsing failed (e.g. an unknown command), so the flag is only in the raw input
       const onError = (err: unknown): never => {
         const { input } = ctx;
-        if (Array.isArray(input) ? input.includes('--json') : /(^|\s)--json(\s|$)/.test(input ?? '')) enabled = true;
+        const isFlag = (token: string) => token === '--json' || token === '--json=true';
+        if (Array.isArray(input) ? input.some(isFlag) : /(^|\s)--json(=true)?(\s|$)/.test(input ?? '')) enabled = true;
         throw err;
       };
       let parsed: InterceptorParseResult | Promise<InterceptorParseResult>;

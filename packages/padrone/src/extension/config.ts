@@ -37,25 +37,41 @@ export type PadroneConfigOptions = {
    */
   xdg?: string | boolean;
   /**
+   * Also search the parent directories of cwd, nearest first, like cosmiconfig and lilconfig do
+   * (so a config at the project root applies in its subdirectories). Defaults to `false`.
+   */
+  searchParents?: boolean;
+  /**
+   * Read config from a key of `package.json` in a searched directory, after its config files:
+   * `true` uses the program name (`{ "my-cli": { ... } }`), a string names the key. Defaults to `false`.
+   */
+  packageJson?: string | boolean;
+  /**
    * Custom config loader. When provided, replaces the built-in file system loader.
    * Useful for testing or non-CLI environments.
    */
   loadConfig?: (
     files: string | string[],
     xdgAppName?: string,
+    search?: ConfigSearchOptions,
   ) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
 };
+
+/** Where the built-in loader looks beyond cwd, from `searchParents` and `packageJson`. */
+export type ConfigSearchOptions = { parents?: boolean; packageJsonKey?: string };
 
 // ── File system config loader ───────────────────────────────────────────
 
 // Lazily resolved Node.js modules — cached after first import to keep loadConfig sync after initialization.
 let _fs: typeof import('node:fs') | undefined;
 let _path: typeof import('node:path') | undefined;
+let _url: typeof import('node:url') | undefined;
 
 async function initNodeModules(): Promise<void> {
-  if (_fs && _path) return;
+  if (_fs && _path && _url) return;
   _fs = await import('node:fs');
   _path = await import('node:path');
+  _url = await import('node:url');
 }
 
 // Eagerly start caching node modules so loadConfig is sync by the time it's called.
@@ -85,24 +101,51 @@ function getUserConfigDir(path: typeof import('node:path'), appName: string): st
   return path.join(home, '.config', appName);
 }
 
+/** A config file, or a `package.json` whose `key` holds the config. */
+type FoundConfig = { file: string; key?: string };
+
+/** `package.json` at `file` has `key` (an unreadable one counts as not having it). */
+function packageJsonHasKey(fs: typeof import('node:fs'), file: string, key: string): boolean {
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    return !!data && typeof data === 'object' && Object.hasOwn(data, key);
+  } catch {
+    return false;
+  }
+}
+
+/** `dir`, then each of its parents up to the filesystem root. */
+function* ancestorDirs(path: typeof import('node:path'), dir: string): Generator<string> {
+  for (let current = dir, parent = path.dirname(dir); ; current = parent, parent = path.dirname(parent)) {
+    yield current;
+    if (parent === current) return;
+  }
+}
+
 function resolveConfigPath(
   fs: typeof import('node:fs'),
   path: typeof import('node:path'),
   cwd: string,
   files: string | string[],
   xdgAppName?: string,
-): string | undefined {
+  search?: ConfigSearchOptions,
+): FoundConfig | undefined {
   // A single path comes from `--config`: it must exist
   if (typeof files === 'string') {
     const abs = path.isAbsolute(files) ? files : path.resolve(cwd, files);
     if (!fs.existsSync(abs)) throw new ConfigError(`Config file not found: ${abs}`);
-    return abs;
+    return { file: abs };
   }
 
-  // Search in cwd first
-  for (const candidate of files) {
-    const abs = path.isAbsolute(candidate) ? candidate : path.resolve(cwd, candidate);
-    if (fs.existsSync(abs)) return abs;
+  // Search in cwd (and its parents with `searchParents`) first
+  for (const dir of search?.parents ? ancestorDirs(path, cwd) : [cwd]) {
+    for (const candidate of files) {
+      const abs = path.isAbsolute(candidate) ? candidate : path.resolve(dir, candidate);
+      if (fs.existsSync(abs)) return { file: abs };
+    }
+    const key = search?.packageJsonKey;
+    const pkg = path.join(dir, 'package.json');
+    if (key && fs.existsSync(pkg) && packageJsonHasKey(fs, pkg, key)) return { file: pkg, key };
   }
 
   // Then search in the user config directory (XDG / platform-specific)
@@ -111,7 +154,7 @@ function resolveConfigPath(
     if (configDir) {
       for (const candidate of files) {
         const abs = path.join(configDir, candidate);
-        if (fs.existsSync(abs)) return abs;
+        if (fs.existsSync(abs)) return { file: abs };
       }
     }
   }
@@ -177,13 +220,22 @@ function loadConfigSync(
   path: typeof import('node:path'),
   files: string | string[],
   xdgAppName?: string,
+  search?: ConfigSearchOptions,
 ): Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined> {
-  const absolutePath = resolveConfigPath(fs, path, process.cwd(), files, xdgAppName);
-  if (!absolutePath) return undefined;
+  const found = resolveConfigPath(fs, path, process.cwd(), files, xdgAppName, search);
+  if (!found) return undefined;
+  const absolutePath = found.file;
+  if (found.key) {
+    const data = parseConfigText(fs.readFileSync(absolutePath, 'utf-8'), '.json', absolutePath)[found.key];
+    if (data && typeof data === 'object' && !Array.isArray(data)) return data as Record<string, unknown>;
+    throw new ConfigError(`Invalid config in ${absolutePath}: "${found.key}" must be an object`);
+  }
 
   const ext = path.extname(absolutePath).toLowerCase();
   if (ext === '.js' || ext === '.cjs' || ext === '.mjs' || ext === '.ts' || ext === '.cts' || ext === '.mts') {
-    return import(/* @vite-ignore */ absolutePath).then((mod) => mod.default ?? mod);
+    // A file URL: Node's ESM loader rejects Windows paths like `C:\...`
+    const specifier = _url ? _url.pathToFileURL(absolutePath).href : absolutePath;
+    return import(/* @vite-ignore */ specifier).then((mod) => mod.default ?? mod);
   }
   // Unknown extensions are read as JSON
   return parseConfigText(fs.readFileSync(absolutePath, 'utf-8'), ext, absolutePath);
@@ -197,11 +249,12 @@ function loadConfigSync(
 function loadConfig(
   files: string | string[],
   xdgAppName?: string,
+  search?: ConfigSearchOptions,
 ): Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined> {
   if (typeof process === 'undefined') return undefined;
-  if (_fs && _path) return loadConfigSync(_fs, _path, files, xdgAppName);
+  if (_fs && _path) return loadConfigSync(_fs, _path, files, xdgAppName, search);
   return initNodeModules().then(
-    () => loadConfigSync(_fs!, _path!, files, xdgAppName),
+    () => loadConfigSync(_fs!, _path!, files, xdgAppName, search),
     () => undefined,
   );
 }
@@ -213,7 +266,8 @@ function loadConfig(
  *
  * Features:
  * - `--config` / `-c` flag for explicit config file path (can be disabled via `flag: false`)
- * - Auto-detection of config files from a list of candidate names
+ * - Auto-detection of config files from a list of candidate names, optionally in parent directories (`searchParents`)
+ *   and in a `package.json` key (`packageJson`)
  * - Optional schema validation and transformation of config data
  * - Directly accesses the file system (gracefully no-ops in non-CLI environments)
  *
@@ -239,6 +293,7 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
   const flagEnabled = options?.flag !== false;
   const inherit = options?.inherit;
   const xdgOption = options?.xdg;
+  const packageJsonOption = options?.packageJson;
   const configLoader = options?.loadConfig ?? loadConfig;
 
   const interceptor = defineInterceptor(
@@ -260,15 +315,18 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
         }
 
         // Skip entirely when there's nothing to load
-        if (!explicitConfigPath && !configFiles) return next();
+        if (!explicitConfigPath && !configFiles && !packageJsonOption) return next();
 
-        // Resolve XDG app name: true → derive from root command name, string → use as-is
-        let xdgAppName: string | undefined;
-        if (typeof xdgOption === 'string') xdgAppName = xdgOption;
-        else if (xdgOption === true) xdgAppName = getRootCommand(ctx.command).name;
+        // `true` → the root command's name, string → as-is
+        const programName = () => getRootCommand(ctx.command).name;
+        const xdgAppName = typeof xdgOption === 'string' ? xdgOption : xdgOption === true ? programName() : undefined;
+        const packageJsonKey =
+          typeof packageJsonOption === 'string' ? packageJsonOption : packageJsonOption === true ? programName() : undefined;
+        const search: ConfigSearchOptions | undefined =
+          options?.searchParents || packageJsonKey ? { parents: options?.searchParents, packageJsonKey } : undefined;
 
         // Load config data: explicit --config flag takes priority, then auto-detect
-        const configDataOrPromise = configLoader(explicitConfigPath ?? configFiles ?? [], xdgAppName);
+        const configDataOrPromise = configLoader(explicitConfigPath ?? configFiles ?? [], xdgAppName, search);
 
         const applyConfig = (configData: Record<string, unknown> | undefined) => {
           if (!configData) return next();

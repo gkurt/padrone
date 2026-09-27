@@ -2309,3 +2309,48 @@ describe('cli() runtime override', () => {
     expect(program.cli({ runtime: { argv: () => ['b'] } }).result).toBe('b');
   });
 });
+
+describe('padroneConfig search', () => {
+  const inDir = async (dir: string, fn: () => unknown): Promise<{ result?: unknown }> => {
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      return (await fn()) as { result?: unknown };
+    } finally {
+      process.chdir(cwd);
+    }
+  };
+  const projectWithSubdir = () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'padrone-search-')));
+    const sub = path.join(root, 'packages', 'app');
+    fs.mkdirSync(sub, { recursive: true });
+    return { root, sub };
+  };
+  const programWith = (options: Parameters<typeof padroneConfig>[0]) =>
+    createPadrone('my-cli')
+      .extend(padroneConfig(options))
+      .arguments(z.object({ port: z.number().optional() }))
+      .action((args) => args.port);
+
+  it('finds a config file in a parent directory with searchParents', async () => {
+    const { root, sub } = projectWithSubdir();
+    fs.writeFileSync(path.join(root, '.myclirc.json'), '{ "port": 1 }');
+
+    expect((await inDir(sub, () => programWith({ files: ['.myclirc.json'] }).eval(''))).result).toBeUndefined();
+    expect((await inDir(sub, () => programWith({ files: ['.myclirc.json'], searchParents: true }).eval(''))).result).toBe(1);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('reads a package.json key, nearest directory first', async () => {
+    const { root, sub } = projectWithSubdir();
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'root', 'my-cli': { port: 2 } }));
+    fs.writeFileSync(path.join(sub, 'package.json'), JSON.stringify({ name: 'app' }));
+
+    const result = await inDir(sub, () => programWith({ packageJson: true, searchParents: true }).eval(''));
+    expect(result.result).toBe(2);
+
+    fs.writeFileSync(path.join(sub, 'package.json'), JSON.stringify({ name: 'app', custom: { port: 3 } }));
+    expect((await inDir(sub, () => programWith({ packageJson: 'custom' }).eval(''))).result).toBe(3);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+});

@@ -45,7 +45,9 @@ export function padroneRepl(
       .command('repl', (c) =>
         c
           .configure({ description: 'Start an interactive REPL', hidden: true })
-          .arguments(passthroughSchema({ scope: 'string' }), { positional: ['scope'] })
+          .arguments(passthroughSchema({ scope: { type: 'string', description: 'Command to scope the REPL to' } }), {
+            positional: ['scope'],
+          })
           .async()
           .action(async (args, ctx) => {
             const prefs: PadroneReplPreferences = { ...defaults, scope: args.scope ?? defaults?.scope };

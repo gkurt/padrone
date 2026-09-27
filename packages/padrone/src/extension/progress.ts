@@ -10,6 +10,7 @@ import type {
 import type { WithInterceptor } from '../util/type-utils.ts';
 import type { PadroneProgressRenderer } from './progress-renderer.ts';
 import { createTerminalProgress } from './progress-renderer.ts';
+import { isRemoteCaller } from './utils.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -108,7 +109,7 @@ function cleanup(indicator: PadroneProgress, msgs: ResolvedMessages, isError: bo
 
 type ResolvedMessages = { progress: string; validation: string; success: unknown; error: unknown };
 
-type ProgressPhaseContext = Pick<InterceptorExecuteContext, 'context' | 'runtime'>;
+type ProgressPhaseContext = Pick<InterceptorExecuteContext, 'context' | 'runtime' | 'caller'>;
 
 function resolveMessages(raw: string | PadroneProgressMessages | undefined): ResolvedMessages {
   if (!raw || typeof raw === 'string') {
@@ -143,7 +144,7 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
   const isObj = typeof config === 'object';
   const rawMessage = typeof config === 'string' ? config : isObj ? config.message : undefined;
 
-  function resolveSettings(context: unknown) {
+  function resolveSettings(context: unknown, caller: string) {
     const ctxCfg = (context as { progressConfig?: PadroneProgressDefaults } | undefined)?.progressConfig;
     // Constructor values win; undefined means "not set by caller"
     const spinner = (isObj ? config.spinner : undefined) ?? ctxCfg?.spinner;
@@ -153,7 +154,8 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
     const options: PadroneProgressOptions | undefined =
       spinner !== undefined || bar !== undefined || time !== undefined || eta !== undefined ? { spinner, bar, time, eta } : undefined;
     return {
-      silent: (isObj ? config.silent : undefined) ?? ctxCfg?.silent ?? false,
+      // Serve, MCP and tool calls have no terminal to draw on
+      silent: isRemoteCaller(caller) || ((isObj ? config.silent : undefined) ?? ctxCfg?.silent ?? false),
       renderer: (isObj ? config.renderer : undefined) ?? ctxCfg?.renderer ?? createTerminalProgress,
       options,
       msgs: mergeMessages(resolveMessages(rawMessage), resolveMessages(ctxCfg?.message), rawMessage),
@@ -167,7 +169,7 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
       let indicator: PadroneProgress | undefined;
       let restoreOutput: (() => void) | undefined;
 
-      const resolve = (ctx: { context?: unknown }) => (settings ??= resolveSettings(ctx.context));
+      const resolve = (ctx: { context?: unknown; caller: string }) => (settings ??= resolveSettings(ctx.context, ctx.caller));
 
       /** Creates the indicator and routes runtime output through pause/resume. No-op if already started or silent. */
       const start = (ctx: ProgressPhaseContext, message: string) => {
@@ -296,7 +298,7 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
  * Access it in action handlers as `ctx.context.progress`.
  *
  * Uses the built-in terminal renderer by default. Pass a custom `renderer` for non-terminal
- * environments (web UIs, testing, etc).
+ * environments (web UIs, testing, etc). Serve, MCP and `tool()` calls get a no-op indicator.
  *
  * Usage:
  * ```ts

@@ -222,6 +222,7 @@ program.extend(
 **Parameters:**
 - `schema`: A Standard Schema that validates env vars and transforms them to argument names
 - `options.vars`: Map arguments to variables directly, without a schema: `padroneEnv({ vars: { port: 'APP_PORT', token: ['API_TOKEN', 'TOKEN'] } })`. The first variable that is set wins, and values are coerced by the command's schema like CLI input. These variables are shown in help (`Env: APP_PORT`). Can be combined with a schema.
+- `options.prefix`: Read every option from a prefixed variable, like yargs' `.env('MY_APP')`: `padroneEnv({ prefix: 'MY_APP' })` reads `--dry-run` / `dryRun` from `MY_APP_DRY_RUN`. Variables named in `vars` take precedence. Shown in help.
 - `options.modes`, `local`, `dir`, `override`, `base`: `.env` file loading
 
 Env values are applied after CLI args and stdin, but before config file values. Can be applied at the program level (inherited by all commands) or at the command level.
@@ -252,6 +253,9 @@ program.extend(
 // Multiple file paths (first found wins)
 program.extend(padroneConfig({ files: ['app.config.json', '.apprc'] }));
 
+// Look in parent directories too, and in the "myapp" key of package.json
+program.extend(padroneConfig({ files: ['.myapprc.json'], searchParents: true, packageJson: 'myapp' }));
+
 // Disable config loading
 program.extend(padroneConfig({ files: 'app.config.json', disabled: true }));
 ```
@@ -264,7 +268,10 @@ program.extend(padroneConfig({ files: 'app.config.json', disabled: true }));
 | `disabled` | `boolean` | Disable config file loading |
 | `flag` | `boolean` | Enable/disable the `--config`/`-c` flag (default: `true`) |
 | `inherit` | `boolean` | Whether the config interceptor inherits to subcommands (default: `true`) |
-| `loadConfig` | `(files: string \| string[]) => Record<string, unknown> \| undefined \| Promise<...>` | Custom config loader function. Replaces the built-in JSON/YAML/TOML loader |
+| `xdg` | `boolean \| string` | Also search the user config directory (`~/.config/<app>`, `~/Library/Application Support/<app>`, `%APPDATA%\<app>`) after cwd. `true` uses the program name |
+| `searchParents` | `boolean` | Also search the parent directories of cwd, nearest first, like cosmiconfig (default: `false`) |
+| `packageJson` | `boolean \| string` | Read config from a `package.json` key in each searched directory, after its config files. `true` uses the program name (default: `false`) |
+| `loadConfig` | `(files: string \| string[], xdgAppName?: string, search?: { parents?, packageJsonKey? }) => Record<string, unknown> \| undefined \| Promise<...>` | Custom config loader function. Replaces the built-in JSON/YAML/TOML loader |
 
 Config values have the lowest precedence: CLI > stdin > env > config. Not included by default — must be explicitly applied via `.extend(padroneConfig(...))`. Can be applied at the program level (inherited by all commands) or at the command level.
 
@@ -1056,11 +1063,14 @@ Use the `--color` global flag, or the `NO_COLOR` / `FORCE_COLOR` environment var
 ```bash
 # Disable colors
 myapp --help --no-color
-myapp --help --color=false
+myapp --help --color=never   # or --color=false
 
 # Force colors, e.g. when piping to a pager
-myapp --help --color | less -R
+myapp --help --color | less -R   # or --color=always
 myapp --help --color=ocean
+
+# Detect from the terminal (the default)
+myapp --help --color=auto
 
 # Or via environment (FORCE_COLOR wins over NO_COLOR; FORCE_COLOR=0 disables)
 NO_COLOR=1 myapp --help
@@ -1239,10 +1249,10 @@ These extensions are available as named exports from `'padrone'`:
 
 | Export | Purpose |
 |--------|---------|
-| `padroneEnv(schema?, options?)` | Parse environment variables into args (`vars` maps args to variables and shows them in help) |
+| `padroneEnv(schema?, options?)` | Parse environment variables into args (`vars` maps args to variables, `prefix` reads every option from `PREFIX_*`; both shown in help) |
 | `padroneConfig(options)` | Load args from config files |
 | `padroneProgress(config)` | Auto-managed progress indicators |
-| `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable, `stderr: true` keeps stdout for results) |
+| `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable, `stderr: true` keeps stdout for results; under `--json` every level goes to stderr) |
 | `padroneJson()` | `--json` flag: prints the result as JSON (iterator items one per line) and, in `cli()`, errors as `{ "error": { ... } }` on stdout |
 | `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and without a terminal the command fails unless `--yes` is given. Options: `message`, `when`, `flags` |
 | `padroneTiming()` | Execution timing |

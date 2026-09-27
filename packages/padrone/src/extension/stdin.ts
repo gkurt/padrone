@@ -3,6 +3,7 @@ import { resolveStdin, resolveStdinAlways } from '../core/default-runtime.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { AnyPadroneBuilder, CommandTypesBase, InterceptorValidateContext } from '../types/index.ts';
 import { createStdinStream } from '../util/stream.ts';
+import { isRemoteCaller } from './utils.ts';
 
 // ── Interceptor ─────────────────────────────────────────────────────────
 
@@ -17,7 +18,8 @@ const stdinMeta = { id: 'padrone:stdin', name: 'padrone:stdin', order: -1001 } a
 const stdinInterceptor = defineInterceptor(stdinMeta, () => ({
   validate(ctx: InterceptorValidateContext, next) {
     const stdinField = ctx.command.meta?.stdin;
-    if (!stdinField) return next();
+    // Serve, MCP and tool calls pass the field as an argument; the process's stdin isn't theirs (MCP's stdio transport reads it)
+    if (!stdinField || isRemoteCaller(ctx.caller)) return next();
 
     // Skip if the field was already provided via CLI flags or positionally
     if (stdinField in ctx.rawArgs && ctx.rawArgs[stdinField] !== undefined) return next();
@@ -64,6 +66,7 @@ const stdinInterceptor = defineInterceptor(stdinMeta, () => ({
  * - `AsyncIterable` field → returns a stream for line-by-line async consumption
  *
  * Stdin is only read when piped (not a TTY) and the field wasn't already provided via CLI flags or positionally.
+ * It's never read for serve, MCP and `tool()` calls.
  */
 export function padroneStdin(options?: { disabled?: boolean }): <T extends CommandTypesBase>(builder: T) => T {
   const interceptor = options?.disabled ? defineInterceptor({ ...stdinMeta, disabled: true }, () => ({})) : stdinInterceptor;

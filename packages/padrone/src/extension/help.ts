@@ -2,8 +2,9 @@ import { resolveAllCommands, resolveCommand } from '../core/commands.ts';
 import { RoutingError, ValidationError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
+import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import { formatIssueMessages } from '../core/validate.ts';
-import type { HelpDetail, HelpFormat } from '../output/formatter.ts';
+import type { HelpDetail, HelpFormat, HelpInfo } from '../output/formatter.ts';
 import { generateHelp } from '../output/help.ts';
 import type {
   AnyPadroneBuilder,
@@ -23,7 +24,8 @@ import { findCommandInTree, frameworkFlags, isErrorReported, markErrorReported, 
 
 type HelpArgs = { command?: string[]; detail?: HelpDetail; format?: HelpFormat; all?: boolean };
 
-export type HelpCommand = PadroneCommand<'help', '', PadroneSchema<HelpArgs>, string, [], ['h', ''], false>;
+/** Help text, or the help as an object when output is JSON (e.g. `--json`). */
+export type HelpCommand = PadroneCommand<'help', '', PadroneSchema<HelpArgs>, string | HelpInfo, [], ['h', ''], false>;
 
 export type WithHelp<T> = WithCommand<T, 'help', HelpCommand>;
 
@@ -63,6 +65,32 @@ function helpHint(rootCommand: AnyPadroneCommand, command: AnyPadroneCommand, fl
   return `Run "${invocation.filter(Boolean).join(' ')}" for usage.`;
 }
 
+type HelpRequest = { detail?: HelpDetail; format?: HelpFormat; all?: boolean };
+
+/**
+ * Renders help for `command` with the runtime's settings at the time it's shown, so flags read later in
+ * parsing (`--no-color`, `--json`) apply. Under JSON output the help is returned parsed, so it's printed once as JSON.
+ */
+function renderHelp(runtime: ResolvedPadroneRuntime, command: AnyPadroneCommand, request: HelpRequest = {}): string | HelpInfo {
+  const rootCommand = getRootCommand(command);
+  resolveAllCommands(rootCommand);
+  const format = request.format ?? runtime.format;
+  const text = generateHelp(rootCommand, command, {
+    detail: request.detail,
+    format,
+    theme: runtime.theme,
+    all: request.all,
+    terminal: runtime.terminal,
+    env: runtime.env(),
+  });
+  if (format !== 'json' || runtime.format !== 'json') return text;
+  try {
+    return JSON.parse(text) as HelpInfo;
+  } catch {
+    return text;
+  }
+}
+
 const createHelpInterceptor = (options: PadroneHelpOptions) => {
   const helpFlags = options.flags ?? DEFAULT_HELP_FLAGS;
   return defineInterceptor(
@@ -80,7 +108,7 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
       },
     },
     () => {
-      let helpText: string | undefined;
+      let helpRequest: HelpRequest | undefined;
       let showDefaultHelp = false;
 
       return {
@@ -90,27 +118,17 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
             const hasHelpFlag = helpFlags.some((flag) => flags.get(flag));
 
             if (hasHelpFlag || reverseHelp) {
-              const detail = flags.get('detail') as HelpDetail | undefined;
-              const format = flags.get('format') as HelpFormat | undefined;
-              const all = flags.get('all') as boolean | undefined;
+              helpRequest = {
+                detail: (flags.get('detail') ?? flags.get('d')) as HelpDetail | undefined,
+                format: (flags.get('format') ?? flags.get('f')) as HelpFormat | undefined,
+                all: flags.get('all') as boolean | undefined,
+              };
               flags.delete(...helpFlags, 'detail', 'format', 'all', 'd', 'f');
-
-              const rootCommand = getRootCommand(res.command);
-              resolveAllCommands(rootCommand);
-
-              helpText = generateHelp(rootCommand, res.command, {
-                detail,
-                format: format ?? ctx.runtime.format,
-                theme: ctx.runtime.theme,
-                all,
-                terminal: ctx.runtime.terminal,
-                env: ctx.runtime.env(),
-              });
               return res;
             }
 
             // Track whether the parsed command has no action (for default help in execute phase)
-            if (helpText === undefined) {
+            if (helpRequest === undefined) {
               const { command } = res;
               const hasSubcommands = command.commands && command.commands.length > 0;
               const hasSchema = command.argsSchema != null;
@@ -139,23 +157,11 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
           return parsed instanceof Promise ? parsed.then((res) => handle(res), retryAsHelp) : handle(parsed);
         },
         validate(_ctx, next) {
-          if (helpText !== undefined) return { args: undefined as any, argsResult: { value: undefined } as any };
+          if (helpRequest !== undefined) return { args: undefined as any, argsResult: { value: undefined } as any };
           return next();
         },
         execute(ctx, next) {
-          if (helpText !== undefined) return { result: helpText };
-          if (showDefaultHelp) {
-            const rootCommand = getRootCommand(ctx.command);
-            resolveAllCommands(rootCommand);
-            return {
-              result: generateHelp(rootCommand, ctx.command, {
-                format: ctx.runtime.format,
-                theme: ctx.runtime.theme,
-                terminal: ctx.runtime.terminal,
-                env: ctx.runtime.env(),
-              }),
-            };
-          }
+          if (helpRequest !== undefined || showDefaultHelp) return { result: renderHelp(ctx.runtime, ctx.command, helpRequest) };
           return next();
         },
         error(ctx, next) {
@@ -226,21 +232,24 @@ export function padroneHelp(options: PadroneHelpOptions = {}): <T extends Comman
             hidden: true,
             flagNames: options.flags ?? DEFAULT_HELP_FLAGS,
           } as PadroneCommandConfig)
-          .arguments(passthroughSchema({ command: 'string[]', detail: 'string', format: 'string', all: 'boolean' }), {
-            positional: ['...command'],
-          })
+          .arguments(
+            passthroughSchema({
+              command: { type: 'string[]', description: 'The command to show help for' },
+              detail: { type: 'string', description: 'How much detail to show', enum: ['minimal', 'standard', 'full'] },
+              format: { type: 'string', description: 'Output format', enum: ['text', 'ansi', 'console', 'markdown', 'html', 'json'] },
+              all: { type: 'boolean', description: 'Show all global commands and options' },
+            }),
+            { positional: ['...command'], fields: { detail: { flags: 'd' }, format: { flags: 'f' } } },
+          )
           .action((args, ctx) => {
             const rootCommand = getRootCommand(ctx.command);
             resolveAllCommands(rootCommand);
             const commandName = args.command?.join(' ');
-            const targetCommand = commandName ? findCommandInTree(commandName, rootCommand) : rootCommand;
-            return generateHelp(rootCommand, targetCommand ?? rootCommand, {
+            const targetCommand = (commandName ? findCommandInTree(commandName, rootCommand) : undefined) ?? rootCommand;
+            return renderHelp(ctx.runtime, targetCommand, {
               detail: args.detail as HelpDetail,
-              format: (args.format as HelpFormat) ?? ctx.runtime.format,
-              theme: ctx.runtime.theme,
+              format: args.format as HelpFormat,
               all: args.all,
-              terminal: ctx.runtime.terminal,
-              env: ctx.runtime.env(),
             });
           }),
       )

@@ -7,7 +7,7 @@ import {
   parsePositionalConfig,
 } from '../core/args.ts';
 import { findCommandByName, getGlobalArgs, resolveCommand } from '../core/commands.ts';
-import type { AnyPadroneCommand, PadroneSchema } from '../types/index.ts';
+import type { AnyPadroneCommand, InterceptorMeta, PadroneSchema } from '../types/index.ts';
 import { getRootCommand } from '../util/utils.ts';
 import type { ColorConfig, ColorTheme } from './colorizer.ts';
 import {
@@ -85,9 +85,6 @@ function extractPositionalArgsInfo(
 function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSchemaMeta, 'fields'>, positionalNames?: Set<string>) {
   const result: HelpArgumentInfo[] = [];
   if (!schema) return result;
-
-  const vendor = schema['~standard'].vendor;
-  if (!vendor.includes('zod')) return result;
 
   const argsMeta = meta?.fields;
 
@@ -358,9 +355,9 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
     : [];
 
   const visibleArgs = [...ownArgs, ...inheritedArgs].filter((arg) => !arg.hidden);
-  const envVars = collectInterceptorEnv(cmd);
+  const envVarsOf = collectInterceptorEnv(cmd);
   for (const arg of visibleArgs) {
-    const names = envVars[arg.name];
+    const names = envVarsOf(arg.name);
     if (names) arg.env = typeof names === 'string' ? names : [...names];
   }
   if (visibleArgs.length > 0) {
@@ -446,15 +443,21 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
  * Env variables that interceptors on the command chain read into args (e.g. `padroneEnv({ vars })`), keyed by arg name.
  * The nearest declaration wins; an ancestor's interceptor counts only when it is inherited.
  */
-function collectInterceptorEnv(command: AnyPadroneCommand): Record<string, string | readonly string[]> {
-  const env: Record<string, string | readonly string[]> = {};
+function collectInterceptorEnv(command: AnyPadroneCommand): (arg: string) => string | readonly string[] | undefined {
+  const sources: NonNullable<InterceptorMeta['env']>[] = [];
   for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
     for (const { meta } of current.interceptors ?? []) {
       if (meta.disabled || !meta.env || (current !== command && meta.inherit === false)) continue;
-      for (const [arg, names] of Object.entries(meta.env)) env[arg] ??= names;
+      sources.push(meta.env);
     }
   }
-  return env;
+  return (arg) => {
+    for (const env of sources) {
+      const names = typeof env === 'function' ? env(arg) : Object.hasOwn(env, arg) ? env[arg] : undefined;
+      if (names?.length) return names;
+    }
+    return undefined;
+  };
 }
 
 /** The flag that shows help (`--help`, or a renamed one), from the help command's flags. */

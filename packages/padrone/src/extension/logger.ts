@@ -2,7 +2,7 @@ import { defineInterceptor } from '#src/core/interceptors.ts';
 import { thenMaybe } from '#src/core/results.ts';
 import type { ResolvedPadroneRuntime } from '#src/core/runtime.ts';
 import { getKnownOptionNames } from '#src/core/validate.ts';
-import type { AnyPadroneBuilder, CommandTypesBase } from '#src/types/index.ts';
+import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '#src/types/index.ts';
 import { safeJsonStringify } from '#src/util/json.ts';
 import type { WithInterceptor } from '#src/util/type-utils.ts';
 import type { PadroneTracer } from './tracing.ts';
@@ -48,6 +48,7 @@ export type PadroneLoggerConfig = {
   /**
    * Write every level to the runtime's `error` stream (stderr), keeping `output` (stdout) for command results.
    * Defaults to `false`: `trace`, `debug` and `info` go to `output`; `warn` and `error` to `error`.
+   * Under JSON output (`--json`, `format: 'json'`) every level goes to `error`, so stdout stays valid JSON.
    */
   stderr?: boolean;
 };
@@ -183,7 +184,7 @@ function createLogger(
         'log.level': lvl,
         'log.message': formatArgs(args),
       });
-      if (config.stderr || lvl === 'error' || lvl === 'warn') runtime.error(message);
+      if (config.stderr || lvl === 'error' || lvl === 'warn' || runtime.format === 'json') runtime.error(message);
       else runtime.output(message);
     };
 
@@ -224,13 +225,24 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
     .requires<{ tracing?: PadroneTracer; loggerConfig?: PadroneLoggerConfig }>()
     .factory(() => {
       let cliLevel: PadroneLogLevel | undefined;
+      let flagsRead = false;
+      const readFlags = (rawArgs: Record<string, unknown>, command: AnyPadroneCommand) => {
+        flagsRead = true;
+        cliLevel = resolveCliLevel(rawArgs, new Set(getKnownOptionNames(command)), !!rawConfig?.shortFlags);
+      };
 
       return {
         parse(_ctx, next) {
           return thenMaybe(next(), (res) => {
-            cliLevel = resolveCliLevel(res.rawArgs, new Set(getKnownOptionNames(res.command)), !!rawConfig?.shortFlags);
+            readFlags(res.rawArgs, res.command);
             return res;
           });
+        },
+
+        // Registered on a command: its parse handler doesn't run
+        validate(ctx, next) {
+          if (!flagsRead) readFlags(ctx.rawArgs, ctx.command);
+          return next();
         },
 
         execute(ctx, next) {

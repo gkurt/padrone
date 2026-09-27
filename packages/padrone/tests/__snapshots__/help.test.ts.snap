@@ -276,11 +276,19 @@ Run "padrone-test [command] --help" for more information. Use "--all" for all gl
 Subcommand Details:
 
 ────────────────────────────────────────────────────────────
-Usage: padrone-test help
+Usage: padrone-test help [...command] [options]
 
 Aliases: h
 
 Display help for a command
+
+Arguments:
+  ...command  The command to show help for
+
+Options:
+  -d, --detail  [string]  How much detail to show (choices: minimal, standard, full)
+  -f, --format  [string]  Output format (choices: text, ansi, console, markdown, html, json)
+      --all               Show all global commands and options
 
 ────────────────────────────────────────────────────────────
 Usage: padrone-test version
@@ -288,9 +296,12 @@ Usage: padrone-test version
 Display the version number
 
 ────────────────────────────────────────────────────────────
-Usage: padrone-test repl
+Usage: padrone-test repl [scope]
 
 Start an interactive REPL
+
+Arguments:
+  scope  Command to scope the REPL to
 
 ────────────────────────────────────────────────────────────
 Usage: padrone-test list [command] [options]
@@ -490,10 +501,63 @@ exports[`help with full detail mode should generate full help with all nested co
       "usage": {
         "command": "padrone-test help",
         "hasSubcommands": false,
-        "hasPositionals": false,
-        "hasArguments": false,
+        "hasPositionals": true,
+        "hasArguments": true,
         "helpFlag": "--help"
-      }
+      },
+      "positionals": [
+        {
+          "name": "...command",
+          "description": "The command to show help for",
+          "optional": true,
+          "type": "array<string>"
+        }
+      ],
+      "arguments": [
+        {
+          "name": "detail",
+          "description": "How much detail to show",
+          "optional": true,
+          "type": "string",
+          "enum": [
+            "minimal",
+            "standard",
+            "full"
+          ],
+          "variadic": false,
+          "negatable": false,
+          "flags": [
+            "d"
+          ]
+        },
+        {
+          "name": "format",
+          "description": "Output format",
+          "optional": true,
+          "type": "string",
+          "enum": [
+            "text",
+            "ansi",
+            "console",
+            "markdown",
+            "html",
+            "json"
+          ],
+          "variadic": false,
+          "negatable": false,
+          "flags": [
+            "f"
+          ]
+        },
+        {
+          "name": "all",
+          "description": "Show all global commands and options",
+          "optional": true,
+          "type": "boolean",
+          "variadic": false,
+          "negatable": true
+        }
+      ]
     },
     {
       "name": "version",
@@ -514,10 +578,18 @@ exports[`help with full detail mode should generate full help with all nested co
       "usage": {
         "command": "padrone-test repl",
         "hasSubcommands": false,
-        "hasPositionals": false,
+        "hasPositionals": true,
         "hasArguments": false,
         "helpFlag": "--help"
-      }
+      },
+      "positionals": [
+        {
+          "name": "scope",
+          "description": "Command to scope the REPL to",
+          "optional": true,
+          "type": "string"
+        }
+      ]
     },
     {
       "name": "list",
@@ -1061,7 +1133,7 @@ exports[`help with full detail mode should generate full help with all nested co
 
 *────────────────────────────────────────────────────────────*
 
-**Usage:** **padrone-test help**
+**Usage:** **padrone-test help** *[...command]* *[options]*
 
 
 
@@ -1070,6 +1142,26 @@ exports[`help with full detail mode should generate full help with all nested co
 
 
 Display help for a command
+
+
+
+### Arguments:
+
+  \`...command\`  The command to show help for
+
+
+
+### Options:
+
+  \`-d\`, \`--detail\`  \`[string]\`  How much detail to show
+
+    *(choices: minimal, standard, full)*
+
+  \`-f\`, \`--format\`  \`[string]\`  Output format
+
+    *(choices: text, ansi, console, markdown, html, json)*
+
+      \`--all\`               Show all global commands and options
 
 
 
@@ -1085,11 +1177,17 @@ Display the version number
 
 *────────────────────────────────────────────────────────────*
 
-**Usage:** **padrone-test repl**
+**Usage:** **padrone-test repl** *[scope]*
 
 
 
 Start an interactive REPL
+
+
+
+### Arguments:
+
+  \`scope\`  Command to scope the REPL to
 
 
 

@@ -415,3 +415,33 @@ describe('padroneEnv file options', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe('padroneEnv prefix', () => {
+  const program = createPadrone('test')
+    .extend(padroneEnv({ prefix: 'MY_APP', vars: { token: 'API_TOKEN' } }))
+    .arguments(
+      z.object({
+        dryRun: z.boolean().optional(),
+        port: z.coerce.number().optional(),
+        token: z.string().optional(),
+      }),
+    )
+    .action((args) => args);
+  const run = (input: string, env: Record<string, string>) => program.eval(input, { runtime: { env: () => env, output: () => {} } });
+
+  it('reads every option from a prefixed variable, CLI flags first', async () => {
+    const env = { MY_APP_DRY_RUN: 'true', MY_APP_PORT: '8080' };
+    expect((await run('', env)).args).toEqual({ dryRun: true, port: 8080 });
+    expect((await run('--port 1', env)).args).toEqual({ dryRun: true, port: 1 });
+  });
+
+  it('prefers the variables named in vars', async () => {
+    expect((await run('', { API_TOKEN: 'a', MY_APP_TOKEN: 'b' })).args).toEqual({ token: 'a' });
+  });
+
+  it('shows the variables in help', () => {
+    const help = program.help(undefined, { format: 'text' });
+    expect(help).toContain('MY_APP_DRY_RUN');
+    expect(help).toContain('API_TOKEN');
+  });
+});

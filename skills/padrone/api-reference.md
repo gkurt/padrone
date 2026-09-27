@@ -275,6 +275,9 @@ import { createPadrone, padroneEnv } from 'padrone';
 
 // Or map args to variables directly (coerced by the command schema, shown in help as `Env: …`)
 .extend(padroneEnv({ vars: { port: 'MY_APP_PORT', host: ['MY_APP_HOST', 'HOST'] } }))
+
+// Or read every option from MY_APP_* variables (`dryRun` ← MY_APP_DRY_RUN), like yargs' .env('MY_APP')
+.extend(padroneEnv({ prefix: 'MY_APP' }))
 ```
 
 #### `padroneConfig(options)` extension
@@ -290,6 +293,8 @@ import { createPadrone, padroneConfig } from 'padrone';
 .extend(padroneConfig({ files: 'app.config.json', flag: false })) // disable --config/-c flag
 .extend(padroneConfig({ files: 'app.config.json', inherit: false })) // don't inherit to subcommands
 .extend(padroneConfig({ files: 'app.config.json', loadConfig: myLoader })) // custom config loader
+.extend(padroneConfig({ files: '.apprc.json', searchParents: true, packageJson: true })) // parent dirs + package.json "<program>" key
+.extend(padroneConfig({ files: 'config.json', xdg: true })) // also ~/.config/<program>/
 ```
 
 ### `.wrap(config)` *(experimental)*

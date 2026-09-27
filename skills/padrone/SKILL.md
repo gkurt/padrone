@@ -159,7 +159,7 @@ Padrone's core is minimal — most features are implemented as extensions compos
 |-----------|-------|-------------|
 | `signal` | -2000 | SIGINT/SIGTERM handling, AbortSignal propagation |
 | `autoOutput` | -1100 | Auto-print results (strings, promises, iterators) |
-| `color` | -1001 | `--color`/`--no-color` flag support |
+| `color` | -1001 | `--color[=always\|never\|auto\|<theme>]`/`--no-color` flag support |
 | `stdin` | -1001 | Pipe stdin into argument fields |
 | `help` | -1000 | `--help` flag, `help` command, error-phase help display |
 | `version` | -1000 | `--version` flag |

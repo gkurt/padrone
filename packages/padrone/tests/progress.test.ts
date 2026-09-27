@@ -1007,3 +1007,19 @@ describe('progress', () => {
     });
   });
 });
+
+describe('progress for serve, MCP and tool calls', () => {
+  it('provides a no-op indicator instead of drawing on the server terminal', async () => {
+    const { factory, indicators } = createMockProgress();
+    const program = createPadrone('app').command('deploy', (c) =>
+      c.extend(padroneProgress({ message: 'Deploying...', renderer: factory })).action((_args, ctx) => {
+        ctx.context.progress.update('halfway');
+        return 'deployed';
+      }),
+    );
+
+    const result = await program.eval('deploy', { caller: 'serve', runtime: { output: () => {} } });
+    expect(result.result).toBe('deployed');
+    expect(indicators).toEqual([]);
+  });
+});

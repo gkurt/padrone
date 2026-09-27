@@ -86,15 +86,18 @@ for await (const result of program.repl({ scope: 'db' })) {
 The prompt reflects the current scope:
 
 ```
-myapp> .scope db
-myapp/db> migrate up
+myapp ❯ .scope db
+myapp/db ❯ migrate up
 # Runs: db migrate up
-myapp/db> .scope migrate
-myapp/db/migrate> up
+myapp/db ❯ .scope migrate
+myapp/db/migrate ❯ up
 # Runs: db migrate up
-myapp/db/migrate> ..
-myapp/db> .
+myapp/db/migrate ❯ ..
+myapp/db ❯ .
 # Runs: db (executes the scoped command itself)
+myapp/db ❯ ..
+myapp ❯ .scope db migrate
+myapp/db/migrate ❯
 ```
 
 The `scope` option is strongly typed to valid command paths in your program.
@@ -103,7 +106,7 @@ The `scope` option is strongly typed to valid command paths in your program.
 
 The REPL provides tab completion for:
 - Command names and subcommands
-- Option names (e.g., `--port`, `--host`)
+- Option names (e.g., `--port`, `--host`), including global options and the help flags
 - Aliases
 
 Tab completion is enabled by default. Disable it with `completion: false`.
@@ -132,7 +135,7 @@ program.repl({
 });
 ```
 
-The default prompt is the program name with a bold `>` in ANSI-capable terminals.
+The default prompt is the program name (bold in ANSI-capable terminals) and the scope path, followed by `❯`: `myapp/db ❯ `.
 
 ### Greeting and Hint
 
@@ -152,14 +155,17 @@ Control separators before and after command output:
 ```typescript
 program.repl({
   // Blank line before and after each command output
-  spacing: '',
+  spacing: true,
 
   // Repeated character
   spacing: '-',  // Prints a line of dashes
 
+  // Several lines: a blank line, then a line of dashes
+  spacing: [true, '-'],
+
   // Independent before/after
   spacing: {
-    before: '',
+    before: true,
     after: '-',
   },
 });
@@ -187,7 +193,7 @@ This adds `| ` before each line of output, creating a visual distinction.
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `prompt` | `string \| (() => string)` | `"<name>> "` | REPL prompt |
+| `prompt` | `string \| (() => string)` | `"<name> ❯ "` | REPL prompt |
 | `greeting` | `string \| false` | Program name + version | Welcome message |
 | `hint` | `string \| false` | Help/exit instructions | Hint shown below greeting |
 | `history` | `string[]` | `[]` | Initial history entries |

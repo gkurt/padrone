@@ -8,7 +8,7 @@ import type { PadroneActionContext } from './command.ts';
 export type PadroneReplSpacing = boolean | string | (boolean | string)[];
 
 export type PadroneReplPreferences<TScope extends string = string> = {
-  /** The prompt string displayed before each input, or a function returning it. Defaults to `"<programName>> "`. */
+  /** The prompt string displayed before each input, or a function returning it. Defaults to `"<programName> ❯ "` (with the scope path, e.g. `"<programName>/db ❯ "`). */
   prompt?: string | (() => string);
   /**
    * A greeting message displayed when the REPL starts.

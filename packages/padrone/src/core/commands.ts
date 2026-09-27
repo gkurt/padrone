@@ -184,33 +184,36 @@ export function buildReplCompleter(
         } else break;
       }
 
-      // Get options for this command
+      // Options of this command, then its global options
       const options: string[] = [];
-      if (targetCommand.argsSchema) {
+      const globals = getGlobalArgs(targetCommand);
+      for (const [schema, meta] of [
+        [targetCommand.argsSchema, targetCommand.meta],
+        [globals?.schema, globals?.meta],
+      ] as const) {
+        if (!schema) continue;
         try {
-          const argsMeta = targetCommand.meta?.fields;
-          const { flags, aliases } = extractSchemaMetadata(targetCommand.argsSchema, argsMeta, targetCommand.meta?.autoAlias);
-          const jsonSchema = getJsonSchema(targetCommand.argsSchema) as Record<string, any>;
+          const { flags, aliases } = extractSchemaMetadata(schema, meta?.fields, meta?.autoAlias);
+          const jsonSchema = getJsonSchema(schema) as Record<string, any>;
           if (jsonSchema.type === 'object' && jsonSchema.properties) {
-            for (const key of Object.keys(jsonSchema.properties)) {
-              options.push(`--${key}`);
-            }
-            for (const flag of Object.keys(flags)) {
-              options.push(`-${flag}`);
-            }
-            for (const alias of Object.keys(aliases)) {
-              options.push(`--${alias}`);
-            }
+            for (const key of Object.keys(jsonSchema.properties)) options.push(`--${key}`);
+            for (const flag of Object.keys(flags)) options.push(`-${flag}`);
+            for (const alias of Object.keys(aliases)) options.push(`--${alias}`);
           }
         } catch {
           // Ignore schema parsing errors
         }
       }
-      // Add global flags
-      options.push('--help', '-h');
+      // The flags of the built-in help command (`--help`, or as renamed with `padroneHelp({ flags })`)
+      let root = targetCommand;
+      while (root.parent) root = root.parent;
+      const helpCommand = root.commands?.find((c) => c.name === 'help');
+      const helpFlags = (helpCommand && resolveCommand(helpCommand).flagNames) ?? [];
+      options.push(...helpFlags.map((flag) => (flag.length > 1 ? `--${flag}` : `-${flag}`)));
 
-      const hits = options.filter((o) => o.startsWith(lastPart));
-      return [hits.length ? hits : options, lastPart];
+      const unique = [...new Set(options)];
+      const hits = unique.filter((o) => o.startsWith(lastPart));
+      return [hits.length ? hits : unique, lastPart];
     }
 
     // Completing command names
@@ -233,7 +236,7 @@ export function buildReplCompleter(
       for (const cmd of targetCommand.commands) {
         if (!cmd.hidden) {
           candidates.push(cmd.name);
-          if (cmd.aliases) candidates.push(...cmd.aliases);
+          if (cmd.aliases) candidates.push(...cmd.aliases.filter(Boolean));
         }
       }
     }

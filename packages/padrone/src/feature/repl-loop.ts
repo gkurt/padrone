@@ -34,16 +34,13 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
   // Track command history for .history built-in
   const commandHistory: string[] = [];
 
-  // Resolve the initial scope command from options.scope (command path like 'db' or 'db migrate')
-  const resolveScope = (scope: string): AnyPadroneCommand[] => {
-    const parts = scope.split(/\s+/);
+  // The commands along a scope path (like 'db' or 'db migrate') from `from`, up to the first unknown name
+  const resolveScope = (scope: string, from = existingCommand): AnyPadroneCommand[] => {
     const stack: AnyPadroneCommand[] = [];
-    let current = existingCommand;
-    for (const part of parts) {
-      const found = findCommandByName(part, current.commands);
+    for (const part of scope.split(/\s+/)) {
+      const found = findCommandByName(part, (stack.at(-1) ?? from).commands);
       if (!found) break;
       stack.push(found);
-      current = found;
     }
     return stack;
   };
@@ -198,17 +195,14 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
               updateCompleter();
             }
           } else {
-            const scopeCmd = getScopeCommand();
-            const found = findCommandByName(target, scopeCmd.commands);
-            if (found) {
-              if (found.commands?.length) {
-                scopeStack.push(found);
-                updateCompleter();
-              } else {
-                runtime.error(`"${target}" has no subcommands to scope into.`);
-              }
-            } else {
+            const found = resolveScope(target, getScopeCommand());
+            if (found.length < target.split(/\s+/).length) {
               runtime.error(`Unknown command: ${target}`);
+            } else if (!found.at(-1)!.commands?.length) {
+              runtime.error(`"${target}" has no subcommands to scope into.`);
+            } else {
+              scopeStack.push(...found);
+              updateCompleter();
             }
           }
           continue;

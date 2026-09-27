@@ -1,9 +1,20 @@
 import { extractSchemaMetadata, getJsonSchema } from '../core/args.ts';
 import type { AnyPadroneCommand, PadroneGlobalArgsMeta, PadroneSchema } from '../types/index.ts';
 import { detectShell, getRcFile, type ShellType, writeToRcFile } from '../util/shell-utils.ts';
-import { generateDynamicCompletion } from './complete.ts';
+import { builtinLongFlags, generateDynamicCompletion } from './complete.ts';
 
 export { detectShell, escapeRegExp, getRcFile, type ShellType, writeToRcFile } from '../util/shell-utils.ts';
+
+/** The built-in `--help` / `--version` flags (as renamed with `flags`), with descriptions; none for a built-in that's off. */
+function builtinFlags(program: AnyPadroneCommand): { flag: string; description: string }[] {
+  return [
+    ...builtinLongFlags(program, 'help').map((flag) => ({ flag, description: 'Show help information' })),
+    ...builtinLongFlags(program, 'version').map((flag) => ({ flag, description: 'Show version number' })),
+  ];
+}
+
+/** Escapes text for a single-quoted Fish string. */
+const fishQuote = (text: string) => text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
 /**
  * Collects all commands from a program recursively.
@@ -102,9 +113,7 @@ export function generateBashCompletion(program: AnyPadroneCommand): string {
   const uniqueArgs = collectUniqueArgs(program, commands);
 
   // Collect all option names
-  const allArguments = new Set<string>();
-  allArguments.add('--help');
-  allArguments.add('--version');
+  const allArguments = new Set<string>(builtinFlags(program).map((b) => b.flag));
 
   for (const arg of uniqueArgs.values()) {
     allArguments.add(`--${arg.name}`);
@@ -214,9 +223,7 @@ export function generateZshCompletion(program: AnyPadroneCommand): string {
     .join('\n');
 
   // Collect all args with descriptions and enum values
-  const argumentCompletions: string[] = [];
-  argumentCompletions.push("      '--help[Show help information]'");
-  argumentCompletions.push("      '--version[Show version number]'");
+  const argumentCompletions = builtinFlags(program).map((b) => `      '${b.flag}[${b.description}]'`);
 
   const uniqueArgs = collectUniqueArgs(program, commands);
 
@@ -294,20 +301,17 @@ export function generateFishCompletion(program: AnyPadroneCommand): string {
 
   for (const cmd of commands) {
     const desc = cmd.description || cmd.title || '';
-    const escapedDesc = desc.replace(/'/g, "\\'");
-    lines.push(`complete -c ${programName} -n "__fish_use_subcommand" -a "${cmd.name}" -d '${escapedDesc}'`);
+    lines.push(`complete -c ${programName} -n "__fish_use_subcommand" -a "${cmd.name}" -d '${fishQuote(desc)}'`);
   }
 
   lines.push('');
   lines.push('# Global arguments');
-  lines.push(`complete -c ${programName} -l help -d 'Show help information'`);
-  lines.push(`complete -c ${programName} -l version -d 'Show version number'`);
+  for (const b of builtinFlags(program)) lines.push(`complete -c ${programName} -l ${b.flag.slice(2)} -d '${b.description}'`);
 
   const uniqueArgs = collectUniqueArgs(program, commands);
 
   for (const arg of uniqueArgs.values()) {
-    const desc = arg.description || '';
-    const escapedDesc = desc.replace(/'/g, "\\'");
+    const escapedDesc = fishQuote(arg.description || '');
     // Fish: -xa 'val1 val2' provides exclusive value completions
     const valueFlag = arg.enum?.length ? ` -xa '${arg.enum.join(' ')}'` : '';
 
@@ -336,7 +340,7 @@ export function generatePowerShellCompletion(program: AnyPadroneCommand): string
   const commandNames = commands.map((c) => `'${c.name}'`).join(', ');
 
   // Collect all option names
-  const argNames: string[] = ["'--help'", "'--version'"];
+  const argNames = builtinFlags(program).map((b) => `'${b.flag}'`);
   for (const arg of uniqueArgs.values()) {
     argNames.push(`'--${arg.name}'`);
     if (arg.alias) argNames.push(`'--${arg.alias}'`);
@@ -451,7 +455,11 @@ ${programName} completion powershell >> $PROFILE`;
  * Generates the completion output with automatic shell detection.
  * If shell is not specified, detects the current shell and provides instructions.
  */
-export async function generateCompletionOutput(program: AnyPadroneCommand, shell?: ShellType): Promise<string> {
+export async function generateCompletionOutput(
+  program: AnyPadroneCommand,
+  shell?: ShellType,
+  env?: Record<string, string | undefined>,
+): Promise<string> {
   const programName = program.name;
 
   if (shell) {
@@ -459,7 +467,7 @@ export async function generateCompletionOutput(program: AnyPadroneCommand, shell
   }
 
   // Auto-detect shell and provide instructions
-  const detectedShell = await detectShell();
+  const detectedShell = await detectShellFromEnv(env);
 
   if (detectedShell) {
     const instructions = getCompletionInstallInstructions(programName, detectedShell);
@@ -491,6 +499,19 @@ ${script}`;
 #   ${programName} completion zsh >> ~/.zshrc
 #   ${programName} completion fish > ~/.config/fish/completions/${programName}.fish
 #   ${programName} completion powershell >> $PROFILE`;
+}
+
+/**
+ * Detects the shell from a runtime's environment (`runtime.env()`). With the process's own environment (or none),
+ * the process's parent is also checked.
+ */
+export async function detectShellFromEnv(env?: Record<string, string | undefined>): Promise<ShellType | undefined> {
+  if (!env || (typeof process !== 'undefined' && env === process.env)) return detectShell();
+  const shell = env.SHELL ?? '';
+  const found = (['zsh', 'bash', 'fish'] as const).find((name) => shell.includes(name));
+  if (found) return found;
+  if (env.PSModulePath || env.POWERSHELL_DISTRIBUTION_CHANNEL) return 'powershell';
+  return undefined;
 }
 
 export interface SetupCompletionsResult {

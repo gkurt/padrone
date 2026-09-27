@@ -5,7 +5,7 @@ import { tokenizeInput } from '../core/parse.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneInput } from '../types/index.ts';
 import { getProgramDirs } from '../util/dirs.ts';
 import { getRootCommand } from '../util/utils.ts';
-import { passthroughSchema } from './utils.ts';
+import { passthroughSchema, quoteToken } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -86,6 +86,15 @@ function inputTokens(input: PadroneInput | undefined, root: AnyPadroneCommand): 
   return tokens[0] === root.name && !findCommandByName(root.name, root.commands) ? tokens.slice(1) : tokens;
 }
 
+/**
+ * Joins `alias set` words into the stored expansion. One word is kept as typed (`alias set st "status --short"`);
+ * of several, a word with spaces or quotes is quoted so it expands back into one word.
+ */
+function joinExpansion(words: readonly string[]): string {
+  if (words.length === 1) return words[0]!.trim();
+  return words.map(quoteToken).join(' ');
+}
+
 // ── Extension ────────────────────────────────────────────────────────────
 
 const ALIAS_NAME = /^[^\s-][^\s]*$/;
@@ -133,7 +142,7 @@ export function padroneAliases(options: PadroneAliasesOptions = {}): <T extends 
         .configure({ description: 'Manage command aliases' })
         .command('set', (s) =>
           s
-            .configure({ description: 'Add or replace an alias' })
+            .configure({ description: 'Add or replace an alias', mutation: true })
             .arguments(
               passthroughSchema({
                 name: { type: 'string', description: 'The alias' },
@@ -144,7 +153,7 @@ export function padroneAliases(options: PadroneAliasesOptions = {}): <T extends 
             .async()
             .action(async (args, ctx) => {
               const { name } = args;
-              const expansion = args.expansion?.join(' ').trim();
+              const expansion = args.expansion && joinExpansion(args.expansion);
               if (!name || !expansion) throw new ActionError(`Usage: ${commandName} set <name> <command...>`);
               if (!ALIAS_NAME.test(name)) throw new ActionError(`Invalid alias name "${name}": no spaces, and it can't start with "-"`);
               const root = getRootCommand(ctx.command);
@@ -170,7 +179,7 @@ export function padroneAliases(options: PadroneAliasesOptions = {}): <T extends 
         )
         .command(['delete', 'rm'], (d) =>
           d
-            .configure({ description: 'Remove an alias' })
+            .configure({ description: 'Remove an alias', mutation: true })
             .arguments(passthroughSchema({ name: { type: 'string', description: 'The alias' } }), { positional: ['name'] })
             .async()
             .action(async (args, ctx) => {

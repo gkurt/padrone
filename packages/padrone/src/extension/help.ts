@@ -256,14 +256,14 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
 
             const rootCommand = getRootCommand(ctx.command);
             const targetPath = er.error.command;
-            const sourceCmd = (targetPath ? findCommandInTree(targetPath, rootCommand) : undefined) ?? rootCommand;
+            const sourceCmd = resolveCommand((targetPath ? findCommandInTree(targetPath, rootCommand) : undefined) ?? rootCommand);
 
             if (er.error instanceof RoutingError) {
               ctx.runtime.error(er.error.message);
-              const visibleCommands = (sourceCmd.commands ?? []).filter((c: AnyPadroneCommand) => !c.hidden && c.name);
+              // Resolved first: a lazily defined command's `hidden` is only known once it's resolved
+              const visibleCommands = (sourceCmd.commands ?? []).map((c) => resolveCommand(c)).filter((c) => !c.hidden && c.name);
               if (!options.showHelpOnError && visibleCommands.length > 0) {
-                for (const cmd of visibleCommands) resolveCommand(cmd);
-                ctx.runtime.error(`\nAvailable commands: ${visibleCommands.map((c: AnyPadroneCommand) => c.name).join(', ')}`);
+                ctx.runtime.error(`\nAvailable commands: ${visibleCommands.map((c) => c.name).join(', ')}`);
               }
             } else {
               ctx.runtime.error(`Validation error:\n${formatIssueMessages(er.error.issues)}`);

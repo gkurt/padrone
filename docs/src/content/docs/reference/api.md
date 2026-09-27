@@ -682,7 +682,7 @@ my-cli alias delete pr
 | `file` | `string` | `aliases.json` in `program.dirs.config` | Where users' aliases are kept |
 | `command` | `string \| false` | `'alias'` | Name of the management command (`set`, `list`/`ls`, `delete`/`rm`), or `false` for none |
 
-A command always wins over an alias of the same name, and `alias set` refuses names of existing commands. Words after the alias that no `$N` uses are appended.
+A command always wins over an alias of the same name, and `alias set` refuses names of existing commands. Words after the alias that no `$N` uses are appended. Given as several words, a word with spaces stays one word (`alias set co checkout "my branch"`). `alias set` and `alias delete` are mutation commands (POST-only in serve, `destructiveHint` in MCP).
 
 ---
 
@@ -1192,11 +1192,11 @@ Use the `--color` global flag, or the `NO_COLOR` / `FORCE_COLOR` environment var
 ```bash
 # Disable colors
 myapp --help --no-color
-myapp --help --color=never   # or --color=false
+myapp --help --color=never   # or --color=false / off / no / 0
 
 # Force colors, e.g. when piping to a pager
-myapp --help --color | less -R   # or --color=always
-myapp --help --color=ocean
+myapp --help --color | less -R   # or --color=always / on / yes
+myapp --help --color=ocean       # a theme; values need `=` (`--color ocean` leaves `ocean` as an argument)
 
 # Detect from the terminal (the default)
 myapp --help --color=auto

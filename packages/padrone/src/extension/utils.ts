@@ -226,3 +226,8 @@ export function valuesForCommand(
   }
   return result;
 }
+
+/** A token written so that tokenizing an input string gives it back as one token (`my branch` → `"my branch"`). */
+export function quoteToken(token: string): string {
+  return token === '' || /[\s"'`]/.test(token) ? `"${token.replace(/[\\"]/g, '\\$&')}"` : token;
+}

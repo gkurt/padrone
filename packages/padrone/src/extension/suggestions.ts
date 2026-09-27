@@ -1,10 +1,13 @@
-import { resolveCommand, suggestSimilar } from '../core/commands.ts';
+import { findCommandByName, resolveCommand, suggestSimilar } from '../core/commands.ts';
 import { RoutingError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
+import { parseCliInputToParts, tokenizeInput } from '../core/parse.ts';
 import { thenMaybe } from '../core/results.ts';
-import { getKnownOptionNames } from '../core/validate.ts';
+import { createParseResolver, getKnownOptionNames } from '../core/validate.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, InterceptorParseContext, PadroneInput } from '../types/index.ts';
 import { camelToKebab } from '../util/shell-utils.ts';
+import { getRootCommand } from '../util/utils.ts';
+import { quoteToken } from './utils.ts';
 
 function formatSuggestions(names: string[], prefix = ''): string {
   if (names.length === 0) return '';
@@ -30,7 +33,8 @@ function findSourceCommand(commandPath: string | undefined, root: AnyPadroneComm
 
 /** The mistyped command term of a routing error and the commands it may have meant. */
 function similarCommands(err: RoutingError, rootCommand: AnyPadroneCommand): { term: string; similar: string[] } | undefined {
-  const unknownMatch = err.message.match(/^Unknown command: (\S+)/);
+  // `help db migrat` reports "Unknown command: db migrat" for `db`: the mistyped term is the last word
+  const unknownMatch = err.message.match(/^Unknown command: (?:\S+ )*(\S+)$/m);
   const unexpectedMatch = err.message.match(/^Unexpected arguments for '[^']+': (\S+)/);
   const term = unknownMatch?.[1] ?? unexpectedMatch?.[1];
   if (!term) return undefined;
@@ -52,7 +56,7 @@ function similarCommands(err: RoutingError, rootCommand: AnyPadroneCommand): { t
 }
 
 function enrichRoutingError(err: unknown, rootCommand: AnyPadroneCommand): unknown {
-  if (!(err instanceof RoutingError)) return err;
+  if (!(err instanceof RoutingError) || err.suggestions?.length) return err;
   const found = similarCommands(err, rootCommand);
   const suggestionText = found ? formatSuggestions(found.similar) : '';
   if (!suggestionText) return err;
@@ -90,15 +94,41 @@ function enrichIssuesWithSuggestions(
   });
 }
 
-/** `input` with the first `term` token replaced by `replacement`, or `undefined` when there's no such token. */
-function replaceTerm(input: PadroneInput | undefined, term: string, replacement: string): PadroneInput | undefined {
-  if (Array.isArray(input)) {
-    const index = input.indexOf(term);
-    return index === -1 ? undefined : input.with(index, replacement);
+const MARKER = 'padrone0suggestion0term';
+
+/** The first term of the input that doesn't route to a subcommand. */
+function unroutedTerm(tokens: readonly string[], rootCommand: AnyPadroneCommand, skipRootName: boolean): string | undefined {
+  const parts = parseCliInputToParts(tokens, createParseResolver(rootCommand, findCommandByName, skipRootName));
+  const terms = parts.filter((p) => p.type === 'term').map((p) => p.value);
+  if (skipRootName && terms[0] === rootCommand.name) terms.shift();
+  let command = rootCommand;
+  for (const term of terms) {
+    const found = findCommandByName(term, command.commands);
+    if (!found) return term;
+    command = found;
   }
-  if (typeof input !== 'string') return undefined;
-  const pattern = new RegExp(`(^|\\s)${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=\\s|$)`);
-  return pattern.test(input) ? input.replace(pattern, `$1${replacement}`) : undefined;
+  return undefined;
+}
+
+/**
+ * `input` with the mistyped command `term` replaced by `replacement`, or `undefined` when there's no such token.
+ * Only the token routing stopped at is replaced, not an option value or positional spelled the same.
+ */
+function replaceTerm(
+  input: PadroneInput | undefined,
+  term: string,
+  replacement: string,
+  rootCommand: AnyPadroneCommand,
+): PadroneInput | undefined {
+  if (input === undefined) return undefined;
+  const skipRootName = typeof input === 'string';
+  const tokens = tokenizeInput(input);
+  const index = tokens.findIndex(
+    (token, i) => token === term && unroutedTerm(tokens.with(i, MARKER), rootCommand, skipRootName) === MARKER,
+  );
+  if (index === -1) return undefined;
+  const replaced = tokens.with(index, replacement);
+  return typeof input === 'string' ? replaced.map(quoteToken).join(' ') : replaced;
 }
 
 /** People type commands in `cli()` and the REPL; there the runtime must be able to ask. */
@@ -122,7 +152,7 @@ function createSuggestionsInterceptor(options: PadroneSuggestionsOptions) {
           if (options.run !== 'prompt' || tries >= 5 || !(err instanceof RoutingError) || !canAsk(ctx)) throw enriched;
           const suggestion = similarCommands(err, ctx.command);
           const replacement = suggestion?.similar[0];
-          const input = replacement && replaceTerm(overrides?.input ?? ctx.input, suggestion.term, replacement);
+          const input = replacement && replaceTerm(overrides?.input ?? ctx.input, suggestion.term, replacement, ctx.command);
           if (!input) throw enriched;
           const message = `Unknown command "${suggestion.term}". Run "${replacement}" instead?`;
           return ctx.runtime.prompt!({ name: 'suggestion', message, type: 'confirm', default: true }).then((yes) => {
@@ -138,6 +168,14 @@ function createSuggestionsInterceptor(options: PadroneSuggestionsOptions) {
         }
       };
       return attempt(undefined, 0);
+    },
+    // Routing errors from later phases, e.g. `help <unknown command>`
+    error(ctx, next) {
+      return thenMaybe(next(), (er) => {
+        if (!(er.error instanceof RoutingError)) return er;
+        const enriched = enrichRoutingError(er.error, getRootCommand(ctx.command));
+        return enriched === er.error ? er : { ...er, error: enriched };
+      });
     },
     validate(ctx, next) {
       const result = next();

@@ -36,7 +36,7 @@ Errors during execution are caught and printed to the terminal without crashing 
 
 ## REPL from the CLI
 
-Users can enter the REPL from the command line using the `--repl` flag:
+Users can enter the REPL from the command line using the `--repl` flag (in `cli()` and `eval()`; for serve, MCP and `tool()` calls it's an unknown option):
 
 ```bash
 # Start REPL

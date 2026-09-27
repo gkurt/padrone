@@ -70,16 +70,16 @@ export function padroneCompletion(): <T extends CommandTypesBase>(builder: T) =>
           .action(async (args, ctx) => {
             const rootCommand = getRootCommand(ctx.command);
             resolveAllCommands(rootCommand);
-            const { detectShell, generateCompletionOutput, setupCompletions } = await import('../feature/completion.ts');
+            const { detectShellFromEnv, generateCompletionOutput, setupCompletions } = await import('../feature/completion.ts');
             const shell = args.shell as ShellType;
-            const setup = args.setup;
-            if (setup) {
-              const resolvedShell = shell ?? (await detectShell());
+            const env = ctx.runtime.env();
+            if (args.setup) {
+              const resolvedShell = shell ?? (await detectShellFromEnv(env));
               if (!resolvedShell) throw new Error('Could not detect shell. Specify one: completion bash --setup');
               const setupResult = await setupCompletions(rootCommand.name, resolvedShell);
               return `${setupResult.updated ? 'Updated' : 'Added'} ${rootCommand.name} completions in ${setupResult.file}`;
             }
-            return generateCompletionOutput(rootCommand, shell);
+            return generateCompletionOutput(rootCommand, shell, env);
           }),
       )
       .intercept(completeInterceptor)) as any;

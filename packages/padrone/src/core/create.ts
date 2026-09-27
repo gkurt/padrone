@@ -108,13 +108,10 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
 ): TBuilder & { [commandSymbol]: AnyPadroneCommand } {
   // Re-parent direct subcommands so getCommandRuntime walks to the current root,
   // not a stale parent from before .runtime()/.configure()/etc.
-  const existingCommand =
-    inputCommand.commands?.length && inputCommand.commands.some((c) => c.parent && c.parent !== inputCommand)
-      ? {
-          ...inputCommand,
-          commands: inputCommand.commands.map((c) => (c.parent && c.parent !== inputCommand ? { ...c, parent: inputCommand } : c)),
-        }
-      : inputCommand;
+  // They point at the command object this builder holds, so walking up from a subcommand reaches this tree, not a copy of it.
+  const stale = inputCommand.commands?.some((c) => c.parent && c.parent !== inputCommand);
+  const existingCommand: AnyPadroneCommand = stale ? { ...inputCommand } : inputCommand;
+  if (stale) existingCommand.commands = inputCommand.commands!.map((c) => (c.parent ? { ...c, parent: existingCommand } : c));
 
   const parseCommandFn = (input: PadroneInput | undefined) => parseCommand(input, existingCommand, findCommandByName);
   const collectInterceptorsFn = (cmd: AnyPadroneCommand) => collectInterceptors(cmd, existingCommand);

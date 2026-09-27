@@ -1,5 +1,5 @@
 import { extractSchemaMetadata, getJsonSchema, getOptionArity, parsePositionalConfig } from '../core/args.ts';
-import { findCommandByName, getGlobalArgs } from '../core/commands.ts';
+import { findCommandByName, getGlobalArgs, resolveCommand } from '../core/commands.ts';
 import { getDryRunFlagKeys, getInterceptorOptions, parseCommand } from '../core/validate.ts';
 import type { AnyPadroneCommand, PadroneFieldMeta, PadroneSchema } from '../types/index.ts';
 import type { ShellType } from '../util/shell-utils.ts';
@@ -75,6 +75,23 @@ async function fieldValues(field: CompletionField | undefined, prefix: string, a
   return field.values ?? [];
 }
 
+/** Long flags of a built-in `help` / `version` command (`--help`, or the names given with `flags`); none when it's turned off. */
+export function builtinLongFlags(rootCommand: AnyPadroneCommand, name: 'help' | 'version'): string[] {
+  const found = rootCommand.commands?.find((c) => c.name === name);
+  const command = found && resolveCommand(found);
+  return (command?.flagNames ?? []).filter((flag) => flag.length > 1).map((flag) => `--${flag}`);
+}
+
+/** Joins the words bash splits at `=` (`--env`, `=`, `prod` → `--env=prod`); a trailing `=` stays, as the word being typed follows it. */
+function joinSplitValues(words: readonly string[]): string[] {
+  const joined: string[] = [];
+  for (let i = 0; i < words.length; i++) {
+    if (words[i] === '=' && joined.length > 0 && i + 1 < words.length) joined.push(`${joined.pop()}=${words[++i]}`);
+    else joined.push(words[i]!);
+  }
+  return joined;
+}
+
 /**
  * Completion candidates for the word being typed. `words` are the words after the program name;
  * the last one is the word under the cursor (`''` when starting a new word).
@@ -83,7 +100,7 @@ async function fieldValues(field: CompletionField | undefined, prefix: string, a
  */
 export async function getCompletions(rootCommand: AnyPadroneCommand, words: readonly string[]): Promise<string[]> {
   const current = words.at(-1) ?? '';
-  const typed = words.slice(0, -1);
+  const typed = joinSplitValues(words.slice(0, -1));
 
   // Bash splits `--opt=val` into `--opt`, `=`, `val`: complete `val` (or the word after a bare `=`) as the option's value
   const splitOption = current === '=' ? typed.at(-1) : typed.at(-1) === '=' ? typed.at(-2) : undefined;
@@ -117,7 +134,8 @@ export async function getCompletions(rootCommand: AnyPadroneCommand, words: read
       }
       continue;
     }
-    const subcommand = positionals === 0 ? findCommandByName(word, command.commands) : undefined;
+    // After `--` every word is a positional, as when the command runs
+    const subcommand = positionals === 0 && !afterDoubleDash ? findCommandByName(word, command.commands) : undefined;
     if (subcommand) command = subcommand;
     else positionals++;
   }
@@ -131,12 +149,12 @@ export async function getCompletions(rootCommand: AnyPadroneCommand, words: read
   }
   const filter = (candidates: string[], prefix = current) => [...new Set(candidates)].filter((c) => c.startsWith(prefix));
 
+  if (splitOption?.startsWith('-') && !afterDoubleDash) {
+    return filter(await fieldValues(findOption(fields, splitOption), valuePrefix, rawArgs, command), valuePrefix);
+  }
   if (pending) return filter(await fieldValues(pending, current, rawArgs, command));
   // No known values: the shell falls back to file names
   if (extensionValue) return [];
-  if (splitOption?.startsWith('-')) {
-    return filter(await fieldValues(findOption(fields, splitOption), valuePrefix, rawArgs, command), valuePrefix);
-  }
 
   if (!afterDoubleDash && current.startsWith('-')) {
     const eq = current.indexOf('=');
@@ -147,11 +165,13 @@ export async function getCompletions(rootCommand: AnyPadroneCommand, words: read
     }
     const names = fields.filter((f) => !f.meta?.hidden).flatMap((f) => f.longNames.map((n) => `--${n}`));
     const dryRun = getDryRunFlagKeys(command).includes('dry-run') ? ['--dry-run'] : [];
-    return filter([...names, ...dryRun, '--help']);
+    return filter([...names, ...dryRun, ...builtinLongFlags(rootCommand, 'help')]);
   }
 
   const subcommands =
-    positionals === 0 ? (command.commands ?? []).filter((c) => !c.hidden && c.name && c.name !== COMPLETE_COMMAND).map((c) => c.name) : [];
+    positionals === 0 && !afterDoubleDash
+      ? (command.commands ?? []).filter((c) => !c.hidden && c.name && c.name !== COMPLETE_COMMAND).map((c) => c.name)
+      : [];
   const positional = parsePositionalConfig(command.meta?.positional ?? []);
   const slot = positional[positionals] ?? (positional.at(-1)?.variadic ? positional.at(-1) : undefined);
   const values = slot

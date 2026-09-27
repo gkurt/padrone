@@ -290,7 +290,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
   const completion: AnyPadroneProgram['completion'] = async (shell) => {
     resolveAllCommands(rootCommand);
     const { generateCompletionOutput } = await import('../feature/completion.ts');
-    return generateCompletionOutput(rootCommand, shell as ShellType | undefined);
+    return generateCompletionOutput(rootCommand, shell as ShellType | undefined, getCommandRuntime(rootCommand).env());
   };
 
   const mcp: AnyPadroneProgram['mcp'] = async (prefs) => {

@@ -14,7 +14,7 @@ import type {
 } from '../types/index.ts';
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
-import { frameworkFlags, passthroughSchema, toFlag } from './utils.ts';
+import { frameworkFlags, isRemoteCaller, passthroughSchema, toFlag } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -62,6 +62,8 @@ export function padroneRepl(
 function createReplInterceptor(defaults?: PadroneReplPreferences, disabled?: boolean) {
   return defineInterceptor({ id: 'padrone:repl', name: 'padrone:repl', order: -1000, disabled, options: { repl: 'flag' } }, () => ({
     start(ctx: InterceptorStartContext, next: () => unknown) {
+      // Remote callers (serve, MCP, AI tools) have no terminal: `--repl` stays in the input and is reported as an unknown option
+      if (isRemoteCaller(ctx.caller)) return next();
       const replInfo = checkReplFlag(ctx.input, ctx.command);
       if (!replInfo) return next();
 
@@ -77,7 +79,8 @@ function createReplInterceptor(defaults?: PadroneReplPreferences, disabled?: boo
         .then((r: any) => withDrain({ command: ctx.command, args: undefined, result: r.value }));
     },
     // `--no-repl` / `--repl=false` reach parsing: consume them
-    parse(_ctx, next) {
+    parse(ctx, next) {
+      if (isRemoteCaller(ctx.caller)) return next();
       return thenMaybe(next(), (res) => {
         frameworkFlags(res.rawArgs, res.command).delete('repl');
         return res;

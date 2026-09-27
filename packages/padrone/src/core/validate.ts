@@ -70,7 +70,7 @@ function getSchemaOptionInfo(schema: PadroneSchema | undefined, meta: PadroneGlo
   const metadata = schema
     ? extractSchemaMetadata(schema, meta?.fields, meta?.autoAlias)
     : { flags: {}, aliases: {}, negatives: {}, customNegation: new Set<string>() };
-  const rules = extractFieldRules(schema, meta?.fields);
+  const rules = extractFieldRules(schema, meta?.fields, meta);
   const schemaArity = createOptionArityLookup(schema, metadata, rules);
 
   const arrayArguments = new Set<string>();

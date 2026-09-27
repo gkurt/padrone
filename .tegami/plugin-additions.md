@@ -11,7 +11,7 @@ packages:
 - `builtins: { help: { pickSubcommand: true } }` asks which subcommand to run when a group command runs without one.
 - `ctx.runtime.editor(text)` opens the user's editor and returns what they saved, `ctx.runtime.open(url)` opens a URL or file with the default app, and `ctx.runtime.page(text)` shows long output through a pager. All three can be replaced in the runtime.
 - `program.dirs` gives the program's standard `config`, `cache`, `data`, `state` and `log` directories for each platform (XDG on Linux); `getProgramDirs()` computes them for any name.
-- `exactlyOne` and `atLeastOne` field meta require exactly one, or at least one, of a group of options.
+- `.arguments(schema, { exactlyOne: ['file', 'url'], atLeastOne: ['email', 'slack'] })` requires exactly one, or at least one, of a group of options (several groups as an array of arrays; also on `.globalArgs()`).
 - `.requires<T>('padrone:logger')` (or `requires` in interceptor meta) checks at runtime that the named interceptors are registered, and fails with an error naming a missing one.
 - Pre-release versions are ordered correctly (`beta.10` after `beta.2`, `alpha` before `beta`) in update checks.
 - Interceptor meta `async` is kept by `defineInterceptor(meta, factory)`, so config and env loading no longer print the "not marked as async" warning.

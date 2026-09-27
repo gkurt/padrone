@@ -1,6 +1,7 @@
 export type {
   PadroneArgsSchemaMeta,
   PadroneCompleteContext,
+  PadroneFieldGroups,
   PadroneFieldMeta,
   PadroneGlobalArgsMeta,
   SingleChar,

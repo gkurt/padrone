@@ -127,6 +127,8 @@ type ArgsMeta = {
   interactive?: boolean | string[];   // prompt for missing required fields
   optionalInteractive?: boolean | string[]; // prompt for optional fields too
   autoAlias?: boolean;                // auto kebab-case aliases for camelCase (default: true)
+  exactlyOne?: string[] | string[][]; // exactly one of these options (several groups as arrays)
+  atLeastOne?: string[] | string[][]; // at least one of these options
   stdin?: string | { field: string; as?: 'text' | 'lines' };
   fields?: Record<string, {
     flags?: string | string[];        // single-char short flags (-n, -v)
@@ -140,8 +142,6 @@ type ArgsMeta = {
     variadic?: boolean;               // array: --tag a b c (up to the next option or --)
     conflicts?: string | string[];    // options that can't be combined with this one
     implies?: Record<string, unknown>; // values for other options when this one is used
-    exactlyOne?: string[];             // this option + these: exactly one must be given
-    atLeastOne?: string[];             // this option + these: at least one must be given
   }>;
 };
 ```
@@ -157,7 +157,7 @@ createPadrone('app')
   .command('cloud', (c) => c.globalArgs((inherited) => inherited.extend({ region: z.string().optional() })))
 ```
 
-`meta`: `{ fields?, autoAlias?, interactive?, optionalInteractive? }` (interactive prompts for missing globals in the whole subtree and makes it async). Validated separately from `.arguments()`; shown under "Global Options" in help/man/docs; included in completions and MCP/serve input schemas. A command's own `interactive: true` also prompts for missing required globals.
+`meta`: `{ fields?, autoAlias?, interactive?, optionalInteractive?, exactlyOne?, atLeastOne? }` (interactive prompts for missing globals in the whole subtree and makes it async). Validated separately from `.arguments()`; shown under "Global Options" in help/man/docs; included in completions and MCP/serve input schemas. A command's own `interactive: true` also prompts for missing required globals.
 
 ### `.context(transform?)`
 

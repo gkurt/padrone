@@ -68,14 +68,6 @@ export interface PadroneFieldMeta {
    */
   implies?: Record<string, unknown>;
   /**
-   * This option and the listed ones (by field name) form a group of which exactly one must be provided,
-   * like oclif's `exactlyOne`: `fields: { file: { exactlyOne: ['url'] } }` requires `--file` or `--url`, not both.
-   * Only values the user provided count (config and env included, schema defaults don't).
-   */
-  exactlyOne?: readonly string[];
-  /** This option and the listed ones (by field name) form a group of which at least one must be provided. */
-  atLeastOne?: readonly string[];
-  /**
    * Values shell completion offers for this option or positional (needs `padroneCompletion()`),
    * e.g. branch names read at completion time. Enum values are offered without it.
    */
@@ -125,8 +117,13 @@ export type StdinConfig<TObj = Record<string, any>> = keyof TObj & string;
  */
 export type PadroneGlobalArgsMeta<TObj = Record<string, any>> = Pick<
   PadroneArgsSchemaMeta<TObj>,
-  'fields' | 'autoAlias' | 'interactive' | 'optionalInteractive'
+  'fields' | 'autoAlias' | 'interactive' | 'optionalInteractive' | 'exactlyOne' | 'atLeastOne'
 >;
+
+/** A group of fields (by name), or several groups. */
+export type PadroneFieldGroups<TObj = Record<string, any>> =
+  | readonly (keyof TObj & string)[]
+  | readonly (readonly (keyof TObj & string)[])[];
 
 export interface PadroneArgsSchemaMeta<TObj = Record<string, any>> {
   /**
@@ -139,6 +136,14 @@ export interface PadroneArgsSchemaMeta<TObj = Record<string, any>> {
    * Per-argument metadata.
    */
   fields?: { [K in keyof TObj]?: PadroneFieldMeta };
+  /**
+   * Options of which exactly one must be provided, like oclif's `exactlyOne`: `exactlyOne: ['file', 'url']` requires
+   * `--file` or `--url`, not both. Pass several groups as an array of arrays: `[['file', 'url'], ['json', 'yaml']]`.
+   * Only values the user provided count (command line, stdin, env and config; schema defaults don't).
+   */
+  exactlyOne?: PadroneFieldGroups<TObj>;
+  /** Options of which at least one must be provided: `atLeastOne: ['email', 'slack']`. Several groups as an array of arrays. */
+  atLeastOne?: PadroneFieldGroups<TObj>;
   /**
    * Automatically generate kebab-case aliases for camelCase option names.
    * For example, `dryRun` automatically gets `--dry-run` as an alias.

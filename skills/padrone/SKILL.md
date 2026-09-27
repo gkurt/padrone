@@ -103,6 +103,7 @@ The second parameter to `.arguments()` configures positional args, interactive p
   positional: ['source', '...files'],     // '...' prefix = variadic
   interactive: true,                       // or ['fieldName'] for specific fields
   autoAlias: true,                         // auto kebab-case aliases for camelCase (default: true)
+  exactlyOne: ['file', 'url'],             // exactly one of --file/--url (or [['a', 'b'], ['c', 'd']]); atLeastOne: one or more
   stdin: 'data',                           // infers text/lines from schema type; use zodAsyncStream() for streaming
   fields: {
     output: { flags: 'o', description: 'Output path', examples: ['./dist'] },
@@ -112,7 +113,6 @@ The second parameter to `.arguments()` configures positional args, interactive p
     old: { deprecated: 'Use --new instead', group: 'Legacy' },
     level: { flags: 'v', count: true },   // -vvv → 3
     json: { conflicts: 'table', implies: { color: false } },
-    // file: { exactlyOne: ['url'] } — exactly one of --file/--url; atLeastOne: [...] — one or more
   },
 })
 ```

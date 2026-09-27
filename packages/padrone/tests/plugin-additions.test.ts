@@ -21,14 +21,12 @@ describe('exactlyOne / atLeastOne', () => {
   const program = createPadrone('app')
     .command('fetch', (c) =>
       c
-        .arguments(z.object({ file: z.string().optional(), url: z.string().optional() }), { fields: { file: { exactlyOne: ['url'] } } })
+        .arguments(z.object({ file: z.string().optional(), url: z.string().optional() }), { exactlyOne: ['file', 'url'] })
         .action((args) => args),
     )
     .command('notify', (c) =>
       c
-        .arguments(z.object({ email: z.string().optional(), slack: z.string().optional() }), {
-          fields: { email: { atLeastOne: ['slack'] } },
-        })
+        .arguments(z.object({ email: z.string().optional(), slack: z.string().optional() }), { atLeastOne: ['email', 'slack'] })
         .action((args) => args),
     );
   const messages = (input: string) => (program.eval(input).argsResult?.issues ?? []).map((i) => i.message);
@@ -42,6 +40,33 @@ describe('exactlyOne / atLeastOne', () => {
   it('requires at least one of a group', () => {
     expect(messages('notify --email a --slack b')).toEqual([]);
     expect(messages('notify')).toEqual(['At least one of "--email", "--slack" is required']);
+  });
+
+  it('takes several groups, and groups on global args', () => {
+    const multi = createPadrone('app')
+      .globalArgs(z.object({ token: z.string().optional(), tokenFile: z.string().optional() }), { exactlyOne: ['token', 'tokenFile'] })
+      .command('export', (c) =>
+        c
+          .arguments(
+            z.object({
+              json: z.boolean().optional(),
+              yaml: z.boolean().optional(),
+              out: z.string().optional(),
+              stdout: z.boolean().optional(),
+            }),
+            {
+              exactlyOne: [
+                ['json', 'yaml'],
+                ['out', 'stdout'],
+              ],
+            },
+          )
+          .action(() => 'ok'),
+      );
+    const issues = (input: string) => (multi.eval(input).argsResult?.issues ?? []).map((i) => i.message);
+    expect(issues('export --token t --json --stdout')).toEqual([]);
+    expect(issues('export --token t --json')).toEqual(['Exactly one of "--out", "--stdout" is required']);
+    expect(issues('export --json --stdout')).toEqual(['Exactly one of "--token", "--token-file" is required']);
   });
 });
 

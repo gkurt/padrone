@@ -1,5 +1,5 @@
 import { findCommandByName } from '../core/commands.ts';
-import { ActionError, ConfigError } from '../core/errors.ts';
+import { ActionError, ConfigError, PadroneError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { tokenizeInput } from '../core/parse.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneInput } from '../types/index.ts';
@@ -54,7 +54,7 @@ async function writeAliases(file: string, aliases: AliasMap): Promise<void> {
 // ── Expansion ────────────────────────────────────────────────────────────
 
 /**
- * Expands an alias in the first word of `tokens`: `$1`, `$2`, … take the words after it, and the rest are appended.
+ * Expands an alias in the first word of `tokens`: `$1`, `$2`, … take the words after it (too few is an error), and the rest are appended.
  * Aliases of aliases expand too; a command of the same name always wins.
  */
 export function expandAlias(tokens: readonly string[], aliases: AliasMap, root: AnyPadroneCommand): string[] | undefined {
@@ -65,14 +65,19 @@ export function expandAlias(tokens: readonly string[], aliases: AliasMap, root: 
     if (!name || name.startsWith('-') || seen.has(name) || !Object.hasOwn(aliases, name) || findCommandByName(name, root.commands)) break;
     seen.add(name);
     const used = new Set<number>();
+    let needed = 0;
     const expanded = tokenizeInput(aliases[name]!).map((token) =>
       token.replace(/\$(\d+)/g, (placeholder, n: string) => {
         const index = Number(n) - 1;
-        if (index < 0 || index >= rest.length) return placeholder;
+        if (index < 0) return placeholder;
+        needed = Math.max(needed, index + 1);
         used.add(index);
-        return rest[index]!;
+        return rest[index] ?? placeholder;
       }),
     );
+    if (needed > rest.length) {
+      throw new PadroneError(`Alias "${name}" needs ${needed} argument${needed === 1 ? '' : 's'}: ${aliases[name]}`, { phase: 'parse' });
+    }
     current = [...expanded, ...rest.filter((_, i) => !used.has(i))];
   }
   return seen.size > 0 ? current : undefined;

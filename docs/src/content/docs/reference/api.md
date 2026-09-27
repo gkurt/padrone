@@ -703,7 +703,7 @@ my-cli alias delete pr
 | `file` | `string` | `aliases.json` in `program.dirs.config` | Where users' aliases are kept |
 | `command` | `string \| false` | `'alias'` | Name of the management command (`set`, `list`/`ls`, `delete`/`rm`), or `false` for none |
 
-A command always wins over an alias of the same name, and `alias set` refuses names of existing commands. Words after the alias that no `$N` uses are appended. Given as several words, a word with spaces stays one word (`alias set co checkout "my branch"`). `alias set` and `alias delete` are mutation commands (POST-only in serve, `destructiveHint` in MCP).
+A command always wins over an alias of the same name, and `alias set` refuses names of existing commands. Words after the alias that no `$N` uses are appended; fewer words than its `$N` placeholders take is an error (`Alias "pr" needs 1 argument`). Given as several words, a word with spaces stays one word (`alias set co checkout "my branch"`). `alias set` and `alias delete` are mutation commands (POST-only in serve, `destructiveHint` in MCP).
 
 ---
 
@@ -1278,7 +1278,7 @@ Configure stdin reading in the `.arguments()` meta to pipe data into argument fi
 
 ```bash
 echo "hello" | myapp
-# args.data = "hello"
+# args.data = "hello\n" (the text as piped, trailing newline included)
 ```
 
 ### Reading Lines

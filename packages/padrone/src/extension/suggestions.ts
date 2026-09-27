@@ -1,15 +1,24 @@
-import { findCommandByName, resolveCommand, suggestSimilar } from '../core/commands.ts';
+import { getJsonSchema } from '../core/args.ts';
+import { findCommandByName, getGlobalArgs, resolveCommand, suggestSimilar } from '../core/commands.ts';
 import { RoutingError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { parseCliInputToParts, tokenizeInput } from '../core/parse.ts';
 import { thenMaybe } from '../core/results.ts';
 import { createParseResolver, getKnownOptionNames } from '../core/validate.ts';
 import { getHelpTopics } from '../output/help.ts';
-import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, InterceptorParseContext, PadroneInput } from '../types/index.ts';
+import type {
+  AnyPadroneBuilder,
+  AnyPadroneCommand,
+  CommandTypesBase,
+  InterceptorParseContext,
+  PadroneFieldMeta,
+  PadroneInput,
+  PadroneSchema,
+} from '../types/index.ts';
 import { camelToKebab } from '../util/shell-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
 import { isTopicLookupError } from './help.ts';
-import { quoteToken } from './utils.ts';
+import { quoteToken, rawInputFlag, toFlag } from './utils.ts';
 
 function formatSuggestions(names: string[], prefix = ''): string {
   if (names.length === 0) return '';
@@ -102,6 +111,22 @@ function enrichIssuesWithSuggestions(
   });
 }
 
+/** Options marked `hidden` (field meta or schema meta); a command's own field decides over a global one of the same name. */
+function hiddenOptionNames(command: AnyPadroneCommand): Set<string> {
+  const hidden = new Map<string, boolean>();
+  const collect = (schema: PadroneSchema | undefined, fields: Record<string, PadroneFieldMeta | undefined> | undefined) => {
+    if (!schema) return;
+    try {
+      const properties: Record<string, any> = getJsonSchema(schema).properties ?? {};
+      for (const [name, prop] of Object.entries(properties)) hidden.set(name, !!(fields?.[name]?.hidden ?? prop?.hidden));
+    } catch {}
+  };
+  const globals = getGlobalArgs(command);
+  collect(globals?.schema, globals?.meta?.fields);
+  collect(command.argsSchema, command.meta?.fields);
+  return new Set([...hidden].filter(([, isHidden]) => isHidden).map(([name]) => name));
+}
+
 const MARKER = 'padrone0suggestion0term';
 
 /** The first term of the input that doesn't route to a subcommand. */
@@ -139,14 +164,15 @@ function replaceTerm(
   return typeof input === 'string' ? replaced.map(quoteToken).join(' ') : replaced;
 }
 
-/** People type commands in `cli()` and the REPL; there the runtime must be able to ask. */
+/** People type commands in `cli()` and the REPL; there the runtime must be able to ask, unless `--no-interactive` says not to. */
 function canAsk(ctx: InterceptorParseContext): boolean {
   const { runtime } = ctx;
   return (
     (ctx.caller === 'cli' || ctx.caller === 'repl') &&
     !!runtime.prompt &&
     runtime.interactive !== 'unsupported' &&
-    runtime.interactive !== 'disabled'
+    runtime.interactive !== 'disabled' &&
+    toFlag(rawInputFlag(ctx.input, 'interactive')) !== false
   );
 }
 
@@ -189,9 +215,10 @@ function createSuggestionsInterceptor(options: PadroneSuggestionsOptions) {
       const result = next();
       return thenMaybe(result, (v) => {
         if (!v.argsResult?.issues?.length) return v;
-        // Suggested as help shows them: `--out-dir` for `outDir`, unless kebab-case aliases are turned off
+        // Suggested as help shows them: `--out-dir` for `outDir`, unless kebab-case aliases are turned off; hidden ones aren't
         const optionNames = () => {
-          const names = getKnownOptionNames(ctx.command);
+          const hidden = hiddenOptionNames(ctx.command);
+          const names = getKnownOptionNames(ctx.command).filter((name) => !hidden.has(name));
           return ctx.command.meta?.autoAlias === false ? names : [...new Set(names.map((name) => camelToKebab(name) ?? name))];
         };
         const enriched = enrichIssuesWithSuggestions(v.argsResult.issues, optionNames);

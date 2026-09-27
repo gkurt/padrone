@@ -91,7 +91,7 @@ After required interactive prompts are complete, `optionalInteractive` fields ar
 { optionalInteractive: true }
 ```
 
-When set to `true`, all optional fields (not in `required`) that are still missing will be offered.
+When set to `true`, all optional fields (not in `required`) that are still missing will be offered. An empty answer to an optional field's text prompt leaves it unset (so its default applies).
 
 ### Combined example
 
@@ -133,6 +133,8 @@ Padrone detects the appropriate prompt type from each field's JSON schema:
 | `z.string()` | Text input | `Project name: _` |
 | Any other type | Text input | `Value: _` |
 
+Numbers are coerced from the answer, and arrays of strings or numbers take comma-separated values (`a, b`). Object fields (and arrays of objects) are never prompted, since a text answer can't fill them; validation reports them when missing.
+
 ### Prompt messages
 
 The prompt message is derived from (in order of priority):
@@ -169,7 +171,7 @@ createPadrone('my-cli', {
 });
 ```
 
-`padroneConfirm()` asks before `mutation: true` commands; where it can't ask (CI, piped stdin or stdout, `--no-interactive`) the command fails unless `--yes` is given. For free-form text, `ctx.runtime.editor(template)` opens the user's editor and resolves with what they saved.
+Neither asks with `--no-interactive`. `padroneConfirm()` asks before `mutation: true` commands; where it can't ask (CI, piped stdin or stdout, `--no-interactive`) the command fails unless `--yes` is given. For free-form text, `ctx.runtime.editor(template)` opens the user's editor and resolves with what they saved.
 
 ## Non-Interactive Runtimes
 

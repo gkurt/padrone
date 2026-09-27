@@ -168,3 +168,29 @@ describe('config and alias commands for remote callers', () => {
     expect(fs.existsSync(target)).toBe(true);
   });
 });
+
+describe('config extends', () => {
+  const program = (files: string[]) =>
+    createPadrone('app')
+      .extend(padroneConfig({ files }))
+      .arguments(z.object({ port: z.number().optional() }))
+      .action((args) => args);
+
+  it('does not run a script that a JSON or YAML config extends', async () => {
+    const marker = path.join(tempDir, 'ran');
+    fs.writeFileSync('evil.mjs', `import fs from 'node:fs'; fs.writeFileSync(${JSON.stringify(marker)}, ''); export default { port: 1 };`);
+    fs.writeFileSync('config.json', JSON.stringify({ extends: './evil.mjs' }));
+    const { error } = await program(['config.json']).eval('');
+    expect(fs.existsSync(marker)).toBe(false);
+    expect((error as Error).message).toContain('only a script config can extend a script');
+  });
+
+  it('lets a script config extend a script, and a JSON config extend JSON', async () => {
+    fs.writeFileSync('base.mjs', 'export default { port: 2 };');
+    fs.writeFileSync('app.config.mjs', `export default { extends: './base.mjs' };`);
+    expect((await program(['app.config.mjs']).eval('')).result).toEqual({ port: 2 });
+    fs.writeFileSync('base.json', JSON.stringify({ port: 3 }));
+    fs.writeFileSync('config.json', JSON.stringify({ extends: './base.json' }));
+    expect((await program(['config.json']).eval('')).result).toEqual({ port: 3 });
+  });
+});

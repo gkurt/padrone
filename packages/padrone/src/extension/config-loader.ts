@@ -295,12 +295,14 @@ function loadWithExtends(modules: NodeModules, found: FoundConfig, followExtends
     if (!list.every((base): base is string => typeof base === 'string')) {
       throw new ConfigError(`Invalid config in ${found.file}: "extends" must be a path or a list of paths`);
     }
-    const merged = reduceMaybe(list, {} as ConfigData, (acc, base) =>
-      thenMaybe(
-        loadWithExtends(modules, { file: resolveExtends(modules, base, found.file) }, followExtends, [...chain, found.file]),
-        (data) => deepMerge(acc, data),
-      ),
-    );
+    const merged = reduceMaybe(list, {} as ConfigData, (acc, base) => {
+      const file = resolveExtends(modules, base, found.file);
+      // Data configs never run code: a JSON config in an untrusted directory can't import a script
+      if (isScriptConfigFile(file) && (found.key || !isScriptConfigFile(found.file))) {
+        throw new ConfigError(`Invalid config in ${found.file}: "extends" names ${base}, and only a script config can extend a script`);
+      }
+      return thenMaybe(loadWithExtends(modules, { file }, followExtends, [...chain, found.file]), (data) => deepMerge(acc, data));
+    });
     return thenMaybe(merged, (base) => deepMerge(base, own));
   });
 }

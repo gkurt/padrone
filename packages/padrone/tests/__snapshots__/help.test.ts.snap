@@ -289,6 +289,7 @@ Options:
   -d, --detail  [string]  How much detail to show (choices: minimal, standard, full)
   -f, --format  [string]  Output format (choices: text, ansi, console, markdown, html, json)
       --all               Show all global commands and options
+  -s, --search  [string]  Search commands and help topics
 
 ────────────────────────────────────────────────────────────
 Usage: padrone-test version [options]
@@ -559,6 +560,17 @@ exports[`help with full detail mode should generate full help with all nested co
           "type": "boolean",
           "variadic": false,
           "negatable": true
+        },
+        {
+          "name": "search",
+          "description": "Search commands and help topics",
+          "optional": true,
+          "type": "string",
+          "variadic": false,
+          "negatable": false,
+          "flags": [
+            "s"
+          ]
         }
       ]
     },
@@ -1178,6 +1190,8 @@ Display help for a command
     *(choices: text, ansi, console, markdown, html, json)*
 
       \`--all\`               Show all global commands and options
+
+  \`-s\`, \`--search\`  \`[string]\`  Search commands and help topics
 
 
 

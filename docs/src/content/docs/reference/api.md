@@ -1132,6 +1132,8 @@ for await (const result of program.repl({
   - `greeting`: Welcome message (`false` to suppress)
   - `hint`: Hint text below greeting (`false` to suppress)
   - `history`: Initial history entries
+  - `historyFile`: Keep history between sessions in this file (`true`: `repl_history` in `program.dirs.state`)
+  - `historySize`: Most history entries kept (default: `1000`)
   - `completion`: Enable tab completion (default: `true`)
   - `spacing`: Output separators (before/after command output)
   - `outputPrefix`: Prefix for output lines
@@ -1175,7 +1177,7 @@ const script = program.completion('bash');
 
 **Returns:** Shell completion script string
 
-With the `padroneCompletion()` extension (`padrone/completion`) the scripts are dynamic: they call `<program> __complete2 <words>` for per-command subcommands, options and values with descriptions, including `complete` callbacks and `hint`s on fields (see [Completion Values](/padrone/reference/args-meta/#completion-values)). Without it, they're static lists of every command and option, following `hint`s for option values.
+With the `padroneCompletion()` extension (`padrone/completion`) the scripts are dynamic: they call `<program> __complete2 <words>` for per-command subcommands, options and values with descriptions, including `complete` callbacks and `hint`s on fields (see [Completion Values](/padrone/reference/args-meta/#completion-values)). Without it, they're static lists of every command and option, following `hint`s for option values. The extension's `completion` command also takes `--setup` (installs the script in the shell's config file) and `--instructions` (prints how to install it for the named or detected shell).
 
 ---
 
@@ -1480,7 +1482,7 @@ The following extensions live in their own subpath imports to keep optional depe
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
 | `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing. Pass `api: { context, trace }` from `@opentelemetry/api` to parent child spans to the command's span. The span is named `<caller> <command>` (`cli deploy`, `serve users list`), is a server span for serve and MCP calls (internal otherwise), has `padrone.command` and `padrone.caller` attributes (never args), and failures set its status message to the error's |
 | `padroneCompletion()` | `'padrone/completion'` | Shell completion generation, with dynamic per-command completion (`__complete2`), descriptions, and field `complete` callbacks and `hint`s |
-| `padroneMan()` | `'padrone/man'` | Man page generation |
+| `padroneMan()` | `'padrone/man'` | Man page generation: the version and date (`SOURCE_DATE_EPOCH` when set) in `.TH`, parent and subcommand pages under SEE ALSO |
 
 The following extensions are applied automatically by `createPadrone()` and can be disabled via `builtins`:
 

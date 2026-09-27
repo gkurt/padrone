@@ -50,7 +50,7 @@ exports[`docs generateDocs html snapshot for show command 1`] = `
 `;
 
 exports[`docs generateDocs man snapshot for show command 1`] = `
-".TH "PADRONE\\-TEST\\-SHOW" "1" "" "" ""
+".TH "PADRONE\\-TEST\\-SHOW" "1" "2026\\-01\\-01" "" ""
 .SH NAME
 padrone\\-test\\-show
 .SH SYNOPSIS
@@ -66,5 +66,7 @@ Priority level. Default: medium. Choices: low, medium, high
 .TP
 \\fB\\-\\-verbose\\fR
 Show detailed information
+.SH SEE ALSO
+\\fBpadrone\\-test\\fR(1)
 "
 `;

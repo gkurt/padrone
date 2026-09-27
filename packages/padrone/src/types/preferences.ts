@@ -24,6 +24,13 @@ export type PadroneReplPreferences<TScope extends string = string> = {
   hint?: string | false;
   /** Initial history entries (most recent last). Arrow keys navigate history in the terminal. */
   history?: string[];
+  /**
+   * Keep history between sessions in this file (one entry per line), or with `true` in `repl_history` under the
+   * program's state directory (`program.dirs.state`). Entries are saved as they're entered, and `.history` lists them too.
+   */
+  historyFile?: boolean | string;
+  /** The most history entries kept, in the session and in `historyFile`. Defaults to 1000. */
+  historySize?: number;
   /** Set to `false` to disable tab completion. Defaults to `true`. */
   completion?: boolean;
   /**

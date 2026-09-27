@@ -276,5 +276,8 @@ export const REPL_SIGINT = Symbol('REPL_SIGINT');
  */
 export type ReplSessionConfig = {
   completer?: (line: string) => [string[], string];
+  /** Initial entries, most recent last. */
   history?: string[];
+  /** How many entries to keep. Defaults to 1000. */
+  historySize?: number;
 };

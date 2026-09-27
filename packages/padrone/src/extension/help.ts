@@ -7,6 +7,7 @@ import { formatIssueMessages } from '../core/validate.ts';
 import { pageText, resolvePager } from '../feature/pager.ts';
 import type { HelpDetail, HelpFormat, HelpInfo } from '../output/formatter.ts';
 import { generateHelp, getHelpTopics } from '../output/help.ts';
+import { formatHelpSearch, type HelpSearchResult, searchHelp } from '../output/help-search.ts';
 import type {
   AnyPadroneBuilder,
   AnyPadroneCommand,
@@ -23,13 +24,21 @@ import { findCommandInTree, frameworkFlags, isErrorReported, markErrorReported, 
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-type HelpArgs = { command?: string[]; detail?: HelpDetail; format?: HelpFormat; all?: boolean };
+type HelpArgs = { command?: string[]; detail?: HelpDetail; format?: HelpFormat; all?: boolean; search?: string };
 
 /** A help topic as JSON: `help <topic> --format json`. */
 export type HelpTopicInfo = { topic: string; title?: string; content: string };
 
 /** Help text, or the help as an object when output is JSON (e.g. `--json`). */
-export type HelpCommand = PadroneCommand<'help', '', PadroneSchema<HelpArgs>, string | HelpInfo | HelpTopicInfo, [], ['h', ''], false>;
+export type HelpCommand = PadroneCommand<
+  'help',
+  '',
+  PadroneSchema<HelpArgs>,
+  string | HelpInfo | HelpTopicInfo | HelpSearchResult,
+  [],
+  ['h', ''],
+  false
+>;
 
 export type WithHelp<T> = WithCommand<T, 'help', HelpCommand>;
 
@@ -148,6 +157,18 @@ function renderTopic(
   if (format !== 'json') return content;
   const info: HelpTopicInfo = { topic: name, title: topic.title, content };
   return runtime.format === 'json' ? info : JSON.stringify(info, null, 2);
+}
+
+/** `help --search <term>`: the matches as text, or as `{ commands, topics }` under JSON output (like `renderTopic`). */
+function renderSearch(
+  runtime: ResolvedPadroneRuntime,
+  rootCommand: AnyPadroneCommand,
+  term: string,
+  requested?: HelpFormat,
+): string | HelpSearchResult {
+  const result = searchHelp(rootCommand, term);
+  if ((requested ?? runtime.format) !== 'json') return formatHelpSearch(result, term);
+  return runtime.format === 'json' ? result : JSON.stringify(result, null, 2);
 }
 
 /**
@@ -370,12 +391,14 @@ export function padroneHelp(options: PadroneHelpOptions = {}): <T extends Comman
               detail: { type: 'string', description: 'How much detail to show', enum: ['minimal', 'standard', 'full'] },
               format: { type: 'string', description: 'Output format', enum: ['text', 'ansi', 'console', 'markdown', 'html', 'json'] },
               all: { type: 'boolean', description: 'Show all global commands and options' },
+              search: { type: 'string', description: 'Search commands and help topics' },
             }),
-            { positional: ['...command'], fields: { detail: { flags: 'd' }, format: { flags: 'f' } } },
+            { positional: ['...command'], fields: { detail: { flags: 'd' }, format: { flags: 'f' }, search: { flags: 's' } } },
           )
           .action((args, ctx) => {
             const rootCommand = getRootCommand(ctx.command);
             resolveAllCommands(rootCommand);
+            if (args.search !== undefined) return renderSearch(ctx.runtime, rootCommand, args.search, args.format as HelpFormat);
             const commandName = args.command?.join(' ');
             const targetCommand = commandName ? findCommandInTree(commandName, rootCommand) : rootCommand;
             if (!targetCommand) {

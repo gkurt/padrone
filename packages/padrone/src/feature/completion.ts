@@ -3,24 +3,26 @@ import type { AnyPadroneCommand, PadroneGlobalArgsMeta, PadroneSchema } from '..
 import { detectShell, getRcFile, type ShellType, writeToRcFile } from '../util/shell-utils.ts';
 import {
   bashFallback,
-  builtinLongFlags,
+  bashReadLines,
+  builtinFlags,
   type CompletionDirective,
   fishExtFunction,
   fishValueFlags,
   generateDynamicCompletion,
   hintDirective,
   indentLines,
+  offeredLongNames,
   powershellFallback,
   zshAction,
 } from './complete.ts';
 
 export { detectShell, escapeRegExp, getRcFile, type ShellType, writeToRcFile } from '../util/shell-utils.ts';
 
-/** The built-in `--help` / `--version` flags (as renamed with `flags`), with descriptions; none for a built-in that's off. */
-function builtinFlags(program: AnyPadroneCommand): { flag: string; description: string }[] {
+/** The built-in `--help` / `--version` long flags (as renamed with `flags`), with descriptions; none for a built-in that's off. */
+function builtinFlagSpecs(program: AnyPadroneCommand): { flag: string; description: string }[] {
   return [
-    ...builtinLongFlags(program, 'help').map((flag) => ({ flag, description: 'Show help information' })),
-    ...builtinLongFlags(program, 'version').map((flag) => ({ flag, description: 'Show version number' })),
+    ...builtinFlags(program, 'help').map((flag) => ({ flag, description: 'Show help information' })),
+    ...builtinFlags(program, 'version').map((flag) => ({ flag, description: 'Show version number' })),
   ];
 }
 
@@ -28,14 +30,14 @@ function builtinFlags(program: AnyPadroneCommand): { flag: string; description: 
 const fishQuote = (text: string) => text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
 /**
- * Collects all commands from a program recursively.
+ * Collects all commands from a program recursively, leaving out hidden and deprecated ones.
  */
 function collectAllCommands(cmd: AnyPadroneCommand): AnyPadroneCommand[] {
   const result: AnyPadroneCommand[] = [];
 
   if (cmd.commands) {
     for (const subcmd of cmd.commands) {
-      if (!subcmd.hidden) {
+      if (!subcmd.hidden && !subcmd.deprecated) {
         result.push(subcmd);
         result.push(...collectAllCommands(subcmd));
       }
@@ -47,7 +49,12 @@ function collectAllCommands(cmd: AnyPadroneCommand): AnyPadroneCommand[] {
 
 interface ExtractedArg {
   name: string;
-  alias?: string;
+  /** Every name it's typed as (`--name`, `--alias`, `-n`), to match the word before a value. */
+  patterns: string[];
+  /** The names offered, as help shows them: short flags, then `offeredLongNames`. */
+  offered: string[];
+  /** Hidden and deprecated options aren't offered. */
+  listed: boolean;
   takesValue: boolean;
   enum?: string[];
   description?: string;
@@ -70,13 +77,8 @@ function extractSchemaArguments(schema: PadroneSchema | undefined, meta: Padrone
 
   try {
     const argsMeta = meta?.fields;
-    const { aliases } = extractSchemaMetadata(schema, argsMeta, meta?.autoAlias);
-
-    // Build reverse map: argName → aliasName
-    const argToAlias: Record<string, string> = {};
-    for (const [aliasName, argName] of Object.entries(aliases)) {
-      if (!argToAlias[argName]) argToAlias[argName] = aliasName;
-    }
+    const { flags, aliases } = extractSchemaMetadata(schema, argsMeta, meta?.autoAlias);
+    const namesOf = (map: Record<string, string>, key: string) => Object.keys(map).filter((name) => map[name] === key);
 
     const jsonSchema = getJsonSchema(schema) as Record<string, any>;
 
@@ -85,9 +87,13 @@ function extractSchemaArguments(schema: PadroneSchema | undefined, meta: Padrone
         const enumValues = (prop.enum ?? prop.items?.enum) as string[] | undefined;
         const optMeta = argsMeta?.[key];
         const hint = optMeta?.hint ?? prop.hint;
+        const shortFlags = namesOf(flags, key).map((flag) => `-${flag}`);
+        const optionAliases = namesOf(aliases, key);
         argList.push({
           name: key,
-          alias: argToAlias[key],
+          patterns: [key, ...optionAliases].map((name) => `--${name}`).concat(shortFlags),
+          offered: [...shortFlags, ...offeredLongNames(key, optionAliases).map((name) => `--${name}`)],
+          listed: !(optMeta?.hidden ?? prop.hidden) && !(optMeta?.deprecated ?? prop.deprecated),
           takesValue: getOptionArity(prop) !== 'flag' && !(optMeta?.count ?? prop.count),
           enum: enumValues,
           description: optMeta?.description ?? prop.description,
@@ -129,13 +135,8 @@ export function generateBashCompletion(program: AnyPadroneCommand): string {
   const commandNames = commands.map((c) => c.name).join(' ');
   const uniqueArgs = collectUniqueArgs(program, commands);
 
-  // Collect all option names
-  const allArguments = new Set<string>(builtinFlags(program).map((b) => b.flag));
-
-  for (const arg of uniqueArgs.values()) {
-    allArguments.add(`--${arg.name}`);
-    if (arg.alias) allArguments.add(`--${arg.alias}`);
-  }
+  const allArguments = new Set<string>(builtinFlagSpecs(program).map((b) => b.flag));
+  for (const arg of uniqueArgs.values()) if (arg.listed) for (const name of arg.offered) allArguments.add(name);
 
   const argsList = Array.from(allArguments).join(' ');
 
@@ -144,20 +145,14 @@ export function generateBashCompletion(program: AnyPadroneCommand): string {
   for (const arg of uniqueArgs.values()) {
     if (!arg.enum || arg.enum.length === 0) continue;
     const values = arg.enum.join(' ');
-    const patterns = [`--${arg.name}`];
-    if (arg.alias) patterns.push(`--${arg.alias}`);
-    enumCases.push(`      ${patterns.join('|')}) COMPREPLY=($(compgen -W "${values}" -- "$cur")); return 0 ;;`);
+    enumCases.push(`      ${arg.patterns.join('|')}) ${bashReadLines(`compgen -W "${values}" -- "$cur"`)}; return 0 ;;`);
   }
   const hinted = [...uniqueArgs.values()].filter((arg) => arg.directive && !arg.enum?.length);
-  for (const arg of hinted) {
-    const patterns = [`--${arg.name}`, ...(arg.alias ? [`--${arg.alias}`] : [])];
-    enumCases.push(`      ${patterns.join('|')}) directive=':${arg.directive}' ;;`);
-  }
+  for (const arg of hinted) enumCases.push(`      ${arg.patterns.join('|')}) directive=':${arg.directive}' ;;`);
 
   const hintBlock = hinted.length
     ? `
     if [[ -n "$directive" ]]; then
-      local IFS=$'\\n'
       COMPREPLY=()
 ${indentLines(bashFallback, 3)}
       return 0
@@ -186,7 +181,7 @@ ${hintBlock}
 
 if type complete &>/dev/null; then
   _${programName}_completion() {
-    local cur prev words cword
+    local cur prev words cword line
     if type _get_comp_words_by_ref &>/dev/null; then
       _get_comp_words_by_ref -n = -n @ -n : -w words -i cword
     else
@@ -199,14 +194,15 @@ if type complete &>/dev/null; then
 
     local commands="${commandNames}"
     local args="${argsList}"
-${enumBlock}    # Complete args when current word starts with -
+${enumBlock}    COMPREPLY=()
+    # Complete args when current word starts with -
     if [[ "$cur" == -* ]]; then
-      COMPREPLY=($(compgen -W "$args" -- "$cur"))
+      ${bashReadLines('compgen -W "$args" -- "$cur"')}
       return 0
     fi
 
     # Complete commands
-    COMPREPLY=($(compgen -W "$commands" -- "$cur"))
+    ${bashReadLines('compgen -W "$commands" -- "$cur"')}
   }
   complete -o bashdefault -o default -F _${programName}_completion ${programName}
 elif type compdef &>/dev/null; then
@@ -256,11 +252,12 @@ export function generateZshCompletion(program: AnyPadroneCommand): string {
     .join('\n');
 
   // Collect all args with descriptions and enum values
-  const argumentCompletions = builtinFlags(program).map((b) => `      '${b.flag}[${b.description}]'`);
+  const argumentCompletions = builtinFlagSpecs(program).map((b) => `      '${b.flag}[${b.description}]'`);
 
   const uniqueArgs = collectUniqueArgs(program, commands);
 
   for (const arg of uniqueArgs.values()) {
+    if (!arg.listed) continue;
     const desc = arg.description || '';
     const escapedDesc = desc.replace(/'/g, "'\\''").replace(/\[/g, '\\[').replace(/\]/g, '\\]');
 
@@ -269,11 +266,8 @@ export function generateZshCompletion(program: AnyPadroneCommand): string {
     const action = arg.enum?.length ? `(${arg.enum.join(' ')})` : arg.directive ? zshAction(arg.directive) : arg.takesValue ? '_files' : '';
     const valueAction = action ? `:${label}:${action}` : '';
 
-    if (arg.alias) {
-      argumentCompletions.push(`      {--${arg.alias},--${arg.name}}'[${escapedDesc}]${valueAction}'`);
-    } else {
-      argumentCompletions.push(`      '--${arg.name}[${escapedDesc}]${valueAction}'`);
-    }
+    const spec = `[${escapedDesc}]${valueAction}'`;
+    argumentCompletions.push(arg.offered.length > 1 ? `      {${arg.offered.join(',')}}'${spec}` : `      '${arg.offered[0]}${spec}`);
   }
 
   return `#compdef ${programName}
@@ -341,7 +335,7 @@ export function generateFishCompletion(program: AnyPadroneCommand): string {
 
   lines.push('');
   lines.push('# Global arguments');
-  for (const b of builtinFlags(program)) lines.push(`complete -c ${programName} -l ${b.flag.slice(2)} -d '${b.description}'`);
+  for (const b of builtinFlagSpecs(program)) lines.push(`complete -c ${programName} -l ${b.flag.slice(2)} -d '${b.description}'`);
 
   const uniqueArgs = collectUniqueArgs(program, commands);
 
@@ -349,6 +343,7 @@ export function generateFishCompletion(program: AnyPadroneCommand): string {
   if ([...uniqueArgs.values()].some((arg) => arg.directive?.startsWith('ext:'))) lines.push('', fishExtFunction(extFunction));
 
   for (const arg of uniqueArgs.values()) {
+    if (!arg.listed) continue;
     const escapedDesc = fishQuote(arg.description || '');
     // Fish: -xa 'val1 val2' provides exclusive value completions; -r takes a value (files by default)
     const valueFlag = arg.enum?.length
@@ -359,13 +354,8 @@ export function generateFishCompletion(program: AnyPadroneCommand): string {
           ? ' -r'
           : '';
 
-    if (arg.alias) {
-      // An alias is another long name; \`-s\` is for single-character options
-      const aliasFlag = arg.alias.length === 1 ? `-s ${arg.alias}` : `-l ${arg.alias}`;
-      lines.push(`complete -c ${programName} -l ${arg.name} ${aliasFlag} -d '${escapedDesc}'${valueFlag}`);
-    } else {
-      lines.push(`complete -c ${programName} -l ${arg.name} -d '${escapedDesc}'${valueFlag}`);
-    }
+    const names = arg.offered.map((name) => (name.startsWith('--') ? `-l ${name.slice(2)}` : `-s ${name.slice(1)}`)).join(' ');
+    lines.push(`complete -c ${programName} ${names} -d '${escapedDesc}'${valueFlag}`);
   }
 
   lines.push(`###-end-${programName}-completion-###`);
@@ -383,29 +373,21 @@ export function generatePowerShellCompletion(program: AnyPadroneCommand): string
 
   const commandNames = commands.map((c) => `'${c.name}'`).join(', ');
 
-  // Collect all option names
-  const argNames = builtinFlags(program).map((b) => `'${b.flag}'`);
-  for (const arg of uniqueArgs.values()) {
-    argNames.push(`'--${arg.name}'`);
-    if (arg.alias) argNames.push(`'--${arg.alias}'`);
-  }
+  const argNames = builtinFlagSpecs(program).map((b) => `'${b.flag}'`);
+  for (const arg of uniqueArgs.values()) if (arg.listed) argNames.push(...arg.offered.map((name) => `'${name}'`));
 
   // Build switch cases for option value completion
   const enumCases: string[] = [];
   for (const arg of uniqueArgs.values()) {
     if (!arg.enum || arg.enum.length === 0) continue;
     const values = arg.enum.map((v) => `'${v}'`).join(', ');
-    const patterns = [`'--${arg.name}'`];
-    if (arg.alias) patterns.push(`'--${arg.alias}'`);
-    enumCases.push(`      ${patterns.join(', ')} { @(${values}) | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+    enumCases.push(`      ${arg.patterns.map((name) => `'${name}'`).join(', ')} { @(${values}) | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
         [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
       }; return }`);
   }
   const hinted = [...uniqueArgs.values()].filter((arg) => arg.directive && !arg.enum?.length);
-  for (const arg of hinted) {
-    const patterns = [`'--${arg.name}'`, ...(arg.alias ? [`'--${arg.alias}'`] : [])];
-    enumCases.push(`      ${patterns.join(', ')} { $directive = ':${arg.directive}' }`);
-  }
+  for (const arg of hinted)
+    enumCases.push(`      ${arg.patterns.map((name) => `'${name}'`).join(', ')} { $directive = ':${arg.directive}' }`);
   const hintBlock = hinted.length
     ? `  if ($directive) {
     ${powershellFallback.replace(/\n/g, '\n  ')}
@@ -478,7 +460,7 @@ export function generateCompletion(program: AnyPadroneCommand, shell: ShellType)
 /**
  * Gets the installation instructions for a shell completion script.
  */
-export function getCompletionInstallInstructions(programName: string, shell: ShellType): string {
+export function getCompletionInstallInstructions(programName: string, shell: ShellType | undefined): string {
   switch (shell) {
     case 'bash':
       return `# Add to ~/.bashrc:
@@ -527,7 +509,11 @@ export async function generateCompletionOutput(
   const detectedShell = await detectShellFromEnv(env);
 
   if (detectedShell) {
-    const instructions = getCompletionInstallInstructions(programName, detectedShell);
+    // Commented out, so evaluating the output only loads the script
+    const instructions = getCompletionInstallInstructions(programName, detectedShell)
+      .split('\n')
+      .map((line) => (line.startsWith('#') ? line : `# ${line}`.trimEnd()))
+      .join('\n');
     const script = generateCompletion(program, detectedShell);
 
     return `# Detected shell: ${detectedShell}

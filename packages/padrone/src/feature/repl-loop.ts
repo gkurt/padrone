@@ -1,9 +1,17 @@
-import { buildReplCompleter, findCommandByName, getCommandRuntime } from '../core/commands.ts';
+import {
+  buildReplCompleter,
+  findCommandByName,
+  formatSuggestions,
+  getCommandRuntime,
+  subcommandNames,
+  suggestSimilar,
+} from '../core/commands.ts';
 import { createTerminalReplSession } from '../core/default-runtime.ts';
 import { REPL_SIGINT, type ReplSessionConfig } from '../core/runtime.ts';
 import { formatIssueMessages } from '../core/validate.ts';
 import { shouldUseAnsi } from '../output/styling.ts';
 import type { AnyPadroneCommand, PadroneEvalPreferences, PadroneReplPreferences } from '../types/index.ts';
+import { getProgramDirs } from '../util/dirs.ts';
 import { getVersion } from '../util/utils.ts';
 
 export type ReplDeps = {
@@ -31,8 +39,11 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
   const env = runtime.env();
   const useAnsi = runtime.format === 'ansi' || (runtime.format === 'auto' && shouldUseAnsi(env, runtime.terminal?.isTTY));
 
-  // Track command history for .history built-in
-  const commandHistory: string[] = [];
+  const historySize = options?.historySize ?? 1000;
+  const historyFile =
+    options?.historyFile === true
+      ? `${getProgramDirs(programName, env).state}${globalThis.process?.platform === 'win32' ? '\\' : '/'}repl_history`
+      : options?.historyFile || undefined;
 
   // The commands along a scope path (like 'db' or 'db migrate') from `from`, up to the first unknown name
   const resolveScope = (scope: string, from = existingCommand): AnyPadroneCommand[] => {
@@ -82,6 +93,17 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
     const getScopeCommand = () => (scopeStack.length ? scopeStack[scopeStack.length - 1]! : existingCommand);
     const getScopePath = () => scopeStack.map((c) => c.name).join(' ');
 
+    /** The input with the scope path prepended, so it resolves from the root; `help <command>` gets it after `help`. */
+    const withScope = (input: string) => {
+      const scopePath = getScopePath();
+      if (!scopePath) return input;
+      if (!input) return scopePath;
+      const word = input.split(/\s/, 1)[0]!;
+      const help = findCommandByName(word, existingCommand.commands);
+      const builtinHelp = help?.name === 'help' && help.flagNames !== undefined && !findCommandByName(word, getScopeCommand().commands);
+      return builtinHelp ? input.replace(word, `${word} ${scopePath}`) : `${scopePath} ${input}`;
+    };
+
     const buildPrompt = () => {
       if (options?.prompt) return typeof options.prompt === 'function' ? options.prompt() : options.prompt;
       const scopePath = getScopePath();
@@ -96,8 +118,12 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
       return buildReplCompleter(scopeCmd, { inScope });
     };
 
+    const savedHistory = historyFile ? await openHistoryFile(historyFile, historySize) : undefined;
+    // Track command history for .history built-in
+    const commandHistory = [...(savedHistory?.entries ?? [])];
+
     // Build session config with completer
-    const sessionConfig: ReplSessionConfig = { history: options?.history };
+    const sessionConfig: ReplSessionConfig = { history: [...commandHistory, ...(options?.history ?? [])], historySize };
     if (options?.completion !== false) {
       sessionConfig.completer = buildScopedCompleter();
     }
@@ -143,6 +169,7 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
 
         // Track command history for .history
         commandHistory.push(trimmed);
+        savedHistory?.add(trimmed);
 
         // Dot-prefixed built-in REPL commands
         if (trimmed === '.exit' || trimmed === '.quit') break;
@@ -196,8 +223,10 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
             }
           } else {
             const found = resolveScope(target, getScopeCommand());
-            if (found.length < target.split(/\s+/).length) {
-              runtime.error(`Unknown command: ${target}`);
+            const parts = target.split(/\s+/);
+            if (found.length < parts.length) {
+              const similar = suggestSimilar(parts[found.length]!, subcommandNames(found.at(-1) ?? getScopeCommand()));
+              runtime.error(`Unknown command: ${target}${similar.length ? `\n\n  ${formatSuggestions(similar)}` : ''}`);
             } else if (!found.at(-1)!.commands?.length) {
               runtime.error(`"${target}" has no subcommands to scope into.`);
             } else {
@@ -269,9 +298,7 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
 
         emitSpacing(spacingBefore);
 
-        // Prepend scope path so evalCommand resolves relative to root
-        const scopePath = getScopePath();
-        const scopedInput = scopePath ? (evalInput ? `${scopePath} ${evalInput}` : scopePath) : evalInput;
+        const scopedInput = withScope(evalInput);
 
         try {
           const replEvalPrefs: PadroneEvalPreferences = {
@@ -312,4 +339,25 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
     }
   };
   return iterable as any;
+}
+
+/**
+ * The REPL's history file: one entry per line, oldest first, keeping the last `size`. `add` saves an entry right away,
+ * skipping a repeat of the last one. History is a convenience: files that can't be read or written are ignored.
+ */
+async function openHistoryFile(file: string, size: number): Promise<{ entries: string[]; add: (entry: string) => void }> {
+  const [fs, path] = await Promise.all([import('node:fs'), import('node:path')]).catch(() => []);
+  let entries: string[] = [];
+  try {
+    if (fs?.existsSync(file)) entries = fs.readFileSync(file, 'utf-8').split(/\r?\n/).filter(Boolean).slice(-size);
+  } catch {}
+  const add = (entry: string) => {
+    if (!fs || !path || entry === entries.at(-1)) return;
+    entries = [...entries, entry].slice(-size);
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `${entries.join('\n')}\n`, 'utf-8');
+    } catch {}
+  };
+  return { entries, add };
 }

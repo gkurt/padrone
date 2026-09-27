@@ -176,7 +176,7 @@ describe('Dynamic completion (__complete)', () => {
   });
 
   it('completes the command’s own option names, plus inherited globals', async () => {
-    expect((await complete('checkout', '--')).candidates).toEqual(['--branch', '--force', '--dryRun', '--dry-run', '--profile', '--help']);
+    expect((await complete('checkout', '--')).candidates).toEqual(['--branch', '--force', '--dry-run', '--profile', '--help']);
     expect((await complete('remote', 'add', '--k')).candidates).toEqual(['--kind']);
   });
 

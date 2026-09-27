@@ -176,6 +176,9 @@ function getTerminalInfo(): PadroneRuntime['terminal'] {
     get columns() {
       return process.stdout?.columns;
     },
+    get rows() {
+      return process.stdout?.rows;
+    },
     get isTTY() {
       return process.stdout?.isTTY === true;
     },

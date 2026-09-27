@@ -633,7 +633,7 @@ const program = createPadrone('myapp', {
 });
 ```
 
-`help` also accepts options instead of `false`: `builtins: { help: { showHelpOnError: true } }` prints the full help after a routing or validation error, instead of the default one-line `--help` hint.
+`help` also accepts options instead of `false`: `builtins: { help: { showHelpOnError: true } }` prints the full help after a routing or validation error, instead of the default one-line `--help` hint. `builtins: { help: { pager: true } }` shows help taller than the terminal through a pager, like git (`$PAGER`, or `less -FRX`; only in `cli()` on a terminal; `--no-pager` prints it directly).
 
 ### Overriding via Deduplication
 

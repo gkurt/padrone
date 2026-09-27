@@ -414,6 +414,8 @@ createPadrone('app', {
 });
 ```
 
+Long help can go through a pager, like `git help`: with `help: { pager: true }`, help that's taller than the terminal opens in `$PAGER`, or `less -FRX` when it isn't set (it quits right away if the help fits and keeps colors; there's no default pager on Windows). It only applies to `cli()` when stdout is a terminal. `PAGER=cat` turns it off, `--no-pager` prints the help directly for one run, and `--pager` pages it even when it fits. Pass a string (`pager: 'less -R'`) to choose the pager used when `$PAGER` isn't set.
+
 ## Command Override
 
 Re-registering a command with the same name merges the new definition with the existing one. The new handler receives the previous handler as a `base` parameter:

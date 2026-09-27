@@ -4,6 +4,7 @@ import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import { formatIssueMessages } from '../core/validate.ts';
+import { pageText, resolvePager } from '../feature/pager.ts';
 import type { HelpDetail, HelpFormat, HelpInfo } from '../output/formatter.ts';
 import { generateHelp } from '../output/help.ts';
 import type {
@@ -42,6 +43,13 @@ export type PadroneHelpOptions = {
    * Defaults to `['help', 'h']`. Pass `[]` to keep only the `help` command.
    */
   flags?: readonly string[];
+  /**
+   * Show help that's taller than the terminal through a pager, like git: `$PAGER`, or else `less -FRX`
+   * (quits right away when the help fits, keeps colors; no default on Windows). A string sets the pager used when
+   * `$PAGER` isn't set; `PAGER=cat` or an empty `PAGER` turns paging off. Only in `cli()` with stdout on a terminal.
+   * `--no-pager` prints the help directly, and `--pager` pages it even when it fits. Defaults to `false`.
+   */
+  pager?: boolean | string;
 };
 
 const DEFAULT_HELP_FLAGS = ['help', 'h'] as const;
@@ -91,6 +99,31 @@ function renderHelp(runtime: ResolvedPadroneRuntime, command: AnyPadroneCommand,
   }
 }
 
+/**
+ * Pages help text when paging is on and it doesn't fit the terminal (or `--pager` forces it).
+ * Resolves `true` once the pager exits; `false` means the help should be printed as usual.
+ */
+function pageHelp(
+  runtime: ResolvedPadroneRuntime,
+  caller: string,
+  help: unknown,
+  pager: boolean | string | undefined,
+  flag: boolean | undefined,
+): false | Promise<boolean> {
+  if (typeof help !== 'string' || flag === false || (!pager && flag !== true)) return false;
+  if (caller !== 'cli' || runtime.terminal?.isTTY !== true) return false;
+  const rows = runtime.terminal.rows;
+  if (flag !== true && (!rows || help.split('\n').length < rows)) return false;
+  const env = runtime.env();
+  const command = resolvePager(env, typeof pager === 'string' ? pager : undefined);
+  if (!command) return false;
+  return pageText(help, command, env);
+}
+
+/** The `help` command added by this extension (a user's own `help` command has no `flagNames`). */
+const isHelpCommand = (command: AnyPadroneCommand) =>
+  command.name === 'help' && command.flagNames !== undefined && !!command.parent && !command.parent.parent;
+
 const createHelpInterceptor = (options: PadroneHelpOptions) => {
   const helpFlags = options.flags ?? DEFAULT_HELP_FLAGS;
   return defineInterceptor(
@@ -105,16 +138,29 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
         d: 'value',
         format: 'value',
         f: 'value',
+        ...(options.pager && { pager: 'flag' as const }),
       },
     },
     () => {
       let helpRequest: HelpRequest | undefined;
       let showDefaultHelp = false;
+      let pagerFlag: boolean | undefined;
+
+      /** Shows `result` through the pager when it applies; a paged result isn't printed again. */
+      const withPager = (ctx: { runtime: ResolvedPadroneRuntime; caller: string }, result: unknown) => {
+        const paged = pageHelp(ctx.runtime, ctx.caller, result, options.pager, pagerFlag);
+        if (paged === false) return { result };
+        return paged.then((done) => ({ result: done ? undefined : result }));
+      };
 
       return {
         parse(ctx, next) {
           const handle = (res: InterceptorParseResult, reverseHelp = false) => {
             const flags = frameworkFlags(res.rawArgs, res.command);
+            if (options.pager && flags.has('pager')) {
+              pagerFlag = flags.get('pager') !== false;
+              flags.delete('pager');
+            }
             const hasHelpFlag = helpFlags.some((flag) => flags.get(flag));
 
             if (hasHelpFlag || reverseHelp) {
@@ -161,8 +207,9 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
           return next();
         },
         execute(ctx, next) {
-          if (helpRequest !== undefined || showDefaultHelp) return { result: renderHelp(ctx.runtime, ctx.command, helpRequest) };
-          return next();
+          if (helpRequest !== undefined || showDefaultHelp) return withPager(ctx, renderHelp(ctx.runtime, ctx.command, helpRequest));
+          if (!options.pager || !isHelpCommand(ctx.command)) return next();
+          return thenMaybe(next(), (res) => thenMaybe(res.result, (result) => withPager(ctx, result)));
         },
         error(ctx, next) {
           return thenMaybe(next(), (er) => {
@@ -217,6 +264,7 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
  * - `<cmd> help` reverse syntax
  * - Default help display when a command has no action
  * - A `--help` hint after routing and validation errors (or the full help, with `showHelpOnError`)
+ * - Long help through a pager, with `pager: true`
  *
  * Usage:
  * ```ts

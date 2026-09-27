@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'bun:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createPadrone, type HelpInfo } from 'padrone';
 import * as z from 'zod/v4';
 import { shouldUseAnsi } from '../src/output/styling.ts';
@@ -199,5 +202,63 @@ describe('color flags when parsing fails', () => {
     });
     expect(errors.join('\n')).toContain('Unknown command: nope');
     expect(errors.join('\n')).not.toContain('\x1b[');
+  });
+});
+
+describe('help pager', () => {
+  const makeProgram = (pager: boolean | string = true) =>
+    createPadrone('app', { builtins: { help: { pager } } })
+      .command('greet', (c) => c.configure({ description: 'Say hello' }).action(() => 'hi'))
+      .command('build', (c) => c.configure({ description: 'Build it' }).action(() => 'built'));
+
+  const run = async (
+    argv: string[],
+    { rows = 3, isTTY = true, pager = true as boolean | string, env = {} as Record<string, string> } = {},
+  ) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'padrone-pager-'));
+    const file = path.join(dir, 'paged.txt');
+    const output: unknown[] = [];
+    await makeProgram(pager).cli({
+      runtime: {
+        argv: () => argv,
+        terminal: { isTTY, rows, columns: 80 },
+        format: 'text',
+        env: () => ({ PAGER: `cat > '${file}'`, ...env }),
+        output: (...args) => output.push(...args),
+        error: () => {},
+        setExitCode: () => {},
+      },
+    });
+    const paged = fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : undefined;
+    fs.rmSync(dir, { recursive: true, force: true });
+    return { output, paged };
+  };
+
+  it('pages help taller than the terminal instead of printing it', async () => {
+    const { output, paged } = await run(['--help']);
+    expect(output).toEqual([]);
+    expect(paged).toContain('Usage: app');
+    expect((await run(['help', 'greet'], { rows: 2 })).paged).toContain('Say hello');
+  });
+
+  it('prints help that fits, and without a terminal', async () => {
+    const fits = await run(['--help'], { rows: 100 });
+    expect(fits.paged).toBeUndefined();
+    expect(String(fits.output[0])).toContain('Usage: app');
+    expect((await run(['--help'], { isTTY: false })).paged).toBeUndefined();
+  });
+
+  it('takes --no-pager and --pager', async () => {
+    expect((await run(['--help', '--no-pager'])).paged).toBeUndefined();
+    expect((await run(['--help', '--pager'], { rows: 100 })).paged).toContain('Usage: app');
+    // --no-pager is accepted on other commands too
+    expect((await run(['greet', '--no-pager'])).output).toEqual(['hi']);
+  });
+
+  it('prints the help when the pager is off or cannot start', async () => {
+    expect((await run(['--help'], { pager: false })).output).toHaveLength(1);
+    expect((await run(['--help'], { env: { PAGER: 'cat' } })).output).toHaveLength(1);
+    const missing = await run(['--help'], { env: { PAGER: 'padrone-no-such-pager-xyz 2>/dev/null' } });
+    expect(String(missing.output[0])).toContain('Usage: app');
   });
 });

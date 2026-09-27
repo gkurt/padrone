@@ -220,6 +220,8 @@ export type PadroneRuntime = {
   terminal?: {
     /** Number of columns in the terminal. Used for text wrapping. */
     columns?: number;
+    /** Number of rows in the terminal. Used to decide whether long help goes through a pager. */
+    rows?: number;
     /** Whether stdout is a TTY. Affects ANSI color output and interactive features. */
     isTTY?: boolean;
   };

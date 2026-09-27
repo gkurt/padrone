@@ -427,6 +427,9 @@ function escapeMan(text: string): string {
   );
 }
 
+/** Joins escaped parts into a sentence line; a part ending in a newline would start the next line with the `.` separator. */
+const manJoin = (parts: string[]) => parts.join('. ').replace(/\n\./g, '\n\\&.');
+
 /** The command a man page documents, with the program name (`myapp deploy`), so pages don't shadow system ones (`ls.1`). */
 function manCommandName(info: HelpInfo, programName: string): string {
   if (info.name === '<root>' || !info.name || info.name === programName) return programName;
@@ -534,7 +537,7 @@ function generateManPage(info: HelpInfo, context: ManPageContext): string {
       if (arg.description) parts.push(escapeMan(arg.description));
       if (arg.optional) parts.push('(optional)');
       if (hasDefaultValue(arg.default)) parts.push(`Default: ${escapeMan(String(arg.default))}`);
-      if (parts.length > 0) lines.push(parts.join('. '));
+      if (parts.length > 0) lines.push(manJoin(parts));
     }
   }
 
@@ -552,7 +555,7 @@ function generateManPage(info: HelpInfo, context: ManPageContext): string {
       if (arg.description) parts.push(escapeMan(arg.description));
       if (hasDefaultValue(arg.default)) parts.push(`Default: ${escapeMan(String(arg.default))}`);
       if (arg.enum) parts.push(`Choices: ${arg.enum.map((v) => escapeMan(v)).join(', ')}`);
-      if (parts.length > 0) lines.push(parts.join('. '));
+      if (parts.length > 0) lines.push(manJoin(parts));
 
       if (arg.env) {
         const envVars = typeof arg.env === 'string' ? [arg.env] : arg.env;

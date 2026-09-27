@@ -6,6 +6,7 @@ import {
   fetchLatestVersion,
   formatUpdateMessage,
   isNewerVersion,
+  isVersion,
   type UpdateCheckConfig,
 } from '../feature/update-check.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
@@ -39,7 +40,8 @@ export async function checkForUpdate(
   current: string,
 ): Promise<{ latest?: string; updateAvailable: boolean; message?: string }> {
   const settings = updateSettings(root);
-  const latest = await fetchLatestVersion(settings.packageName, settings.registry);
+  const found = await fetchLatestVersion(settings.packageName, settings.registry);
+  const latest = isVersion(found) ? found : undefined;
   if (!latest || !isNewerVersion(current, latest)) return { latest, updateAvailable: false };
   return {
     latest,

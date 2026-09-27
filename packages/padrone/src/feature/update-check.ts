@@ -44,6 +44,9 @@ type CacheData = {
   latestVersion: string;
 };
 
+/** Whether a version from the registry or the cache looks like one, so it's safe to print and compare. */
+export const isVersion = (value: unknown): value is string => typeof value === 'string' && /^v?\d[\w.+-]*$/.test(value);
+
 /**
  * Parses an interval string like '1d', '12h', '30m', '1w' into milliseconds.
  */
@@ -126,7 +129,8 @@ async function readCache(cachePath: string): Promise<CacheData | undefined> {
     const { existsSync, readFileSync } = await import('node:fs');
     if (!existsSync(cachePath)) return undefined;
     const data = JSON.parse(readFileSync(cachePath, 'utf-8'));
-    if (typeof data.lastCheck === 'number' && typeof data.latestVersion === 'string') {
+    // An empty version records a check that found none
+    if (typeof data.lastCheck === 'number' && (data.latestVersion === '' || isVersion(data.latestVersion))) {
       return data as CacheData;
     }
   } catch {
@@ -208,12 +212,10 @@ export async function fetchLatestVersion(packageName: string, registry: string, 
     if (!response.ok) return undefined;
     const data = (await response.json()) as Record<string, unknown>;
 
-    // Custom endpoint may return { "dist-tags": { latest: "x.y.z", next: "..." } }
-    const distTags = data['dist-tags'] as Record<string, string> | undefined;
-    if (distTags?.[tag]) return distTags[tag];
-
-    // npm registry returns { version: "x.y.z" }
-    if (typeof data.version === 'string') return data.version;
+    // A custom endpoint may return { "dist-tags": { latest: "x.y.z", next: "..." } }, the npm registry { version: "x.y.z" }
+    const distTags = data['dist-tags'] as Record<string, unknown> | undefined;
+    const version = distTags?.[tag] ?? data.version;
+    if (typeof version === 'string') return version;
   } catch {
     // Network errors are expected (offline, firewall, etc.)
   }
@@ -310,7 +312,8 @@ export async function createUpdateChecker(
     latest && isNewerVersion(currentVersion, latest)
       ? () => runtime.error(formatUpdateMessage(currentVersion, latest, packageName, config.updateCommand))
       : noop;
-  if (cached && Date.now() - cached.lastCheck < intervalMs) return { notify, refresh: skipped.refresh };
+  const age = cached ? Date.now() - cached.lastCheck : -1;
+  if (age >= 0 && age < intervalMs) return { notify, refresh: skipped.refresh };
 
   // Recorded before checking, so runs in the meantime don't check too; a failed check waits for the next interval
   await writeCache(cachePath, { lastCheck: Date.now(), latestVersion: latest ?? '' });

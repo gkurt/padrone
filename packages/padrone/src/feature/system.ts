@@ -1,3 +1,5 @@
+import { shellQuote } from '#src/util/shell-utils.ts';
+
 /** Options for `runtime.editor()`. */
 export type PadroneEditorOptions = {
   /** File extension for the temporary file, so the editor picks the right mode (e.g. `'.md'`). Defaults to `'.txt'`. */
@@ -27,8 +29,9 @@ export async function openInEditor(
   try {
     fs.writeFileSync(file, text, 'utf-8');
     // Through the shell, so an editor with arguments (`code --wait`) works
+    const quoted = windows ? `"${file}"` : shellQuote(file);
     const code = await new Promise<number | null>((resolve, reject) => {
-      const child = spawn(`${editor} "${file}"`, { shell: true, stdio: 'inherit', env: env as NodeJS.ProcessEnv });
+      const child = spawn(`${editor} ${quoted}`, { shell: true, stdio: 'inherit', env: env as NodeJS.ProcessEnv });
       child.on('error', reject);
       child.on('close', resolve);
     });

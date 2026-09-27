@@ -1,6 +1,6 @@
 import { extractSchemaMetadata, getJsonSchema, getOptionArity } from '../core/args.ts';
 import type { AnyPadroneCommand, PadroneGlobalArgsMeta, PadroneSchema } from '../types/index.ts';
-import { detectShell, getRcFile, type ShellType, writeToRcFile } from '../util/shell-utils.ts';
+import { detectShell, getRcFile, type ShellType, shellQuote, writeToRcFile } from '../util/shell-utils.ts';
 import {
   bashFallback,
   bashReadLines,
@@ -28,6 +28,15 @@ function builtinFlagSpecs(program: AnyPadroneCommand): { flag: string; descripti
 
 /** Escapes text for a single-quoted Fish string. */
 const fishQuote = (text: string) => text.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+/** Enum values the shells take as a word as is; others are quoted, as the scripts' value lists are evaluated. */
+const plainWord = (value: string) => /^[\w.,:+/@=-]+$/.test(value);
+const bashWord = (value: string) => (plainWord(value) ? value : shellQuote(value));
+const fishWord = (value: string) => (plainWord(value) ? value : `'${fishQuote(value)}'`);
+/** Zsh evals the `(a b)` action of an `_arguments` spec, which is single-quoted in the script. */
+const zshWord = (value: string) => value.replace(/[^\w.,+/@-]/g, '\\$&').replace(/'/g, "'\\''");
+/** PowerShell also takes typographic quotes as single quotes. */
+const psQuote = (text: string) => `'${text.replace(/['\u2018\u2019\u201a\u201b]/g, '$&$&')}'`;
 
 /**
  * Collects all commands from a program recursively, leaving out hidden and deprecated ones.
@@ -144,8 +153,10 @@ export function generateBashCompletion(program: AnyPadroneCommand): string {
   const enumCases: string[] = [];
   for (const arg of uniqueArgs.values()) {
     if (!arg.enum || arg.enum.length === 0) continue;
-    const values = arg.enum.join(' ');
-    enumCases.push(`      ${arg.patterns.join('|')}) ${bashReadLines(`compgen -W "${values}" -- "$cur"`)}; return 0 ;;`);
+    const values = arg.enum.map(bashWord).join(' ');
+    enumCases.push(
+      `      ${arg.patterns.join('|')}) for line in ${values}; do [[ "$line" == "$cur"* ]] && COMPREPLY+=("$line"); done; return 0 ;;`,
+    );
   }
   const hinted = [...uniqueArgs.values()].filter((arg) => arg.directive && !arg.enum?.length);
   for (const arg of hinted) enumCases.push(`      ${arg.patterns.join('|')}) directive=':${arg.directive}' ;;`);
@@ -263,7 +274,13 @@ export function generateZshCompletion(program: AnyPadroneCommand): string {
 
     // Zsh value spec: `:label:action`, with enum values as `(val1 val2)`
     const label = arg.valueName?.replace(/[:'[\]]/g, '') || ' ';
-    const action = arg.enum?.length ? `(${arg.enum.join(' ')})` : arg.directive ? zshAction(arg.directive) : arg.takesValue ? '_files' : '';
+    const action = arg.enum?.length
+      ? `(${arg.enum.map(zshWord).join(' ')})`
+      : arg.directive
+        ? zshAction(arg.directive)
+        : arg.takesValue
+          ? '_files'
+          : '';
     const valueAction = action ? `:${label}:${action}` : '';
 
     const spec = `[${escapedDesc}]${valueAction}'`;
@@ -347,7 +364,7 @@ export function generateFishCompletion(program: AnyPadroneCommand): string {
     const escapedDesc = fishQuote(arg.description || '');
     // Fish: -xa 'val1 val2' provides exclusive value completions; -r takes a value (files by default)
     const valueFlag = arg.enum?.length
-      ? ` -xa '${arg.enum.join(' ')}'`
+      ? ` -xa '${fishQuote(arg.enum.map(fishWord).join(' '))}'`
       : arg.directive
         ? ` ${fishValueFlags(arg.directive, extFunction)}`
         : arg.takesValue
@@ -371,23 +388,22 @@ export function generatePowerShellCompletion(program: AnyPadroneCommand): string
   const commands = collectAllCommands(program);
   const uniqueArgs = collectUniqueArgs(program, commands);
 
-  const commandNames = commands.map((c) => `'${c.name}'`).join(', ');
+  const commandNames = commands.map((c) => psQuote(c.name)).join(', ');
 
-  const argNames = builtinFlagSpecs(program).map((b) => `'${b.flag}'`);
-  for (const arg of uniqueArgs.values()) if (arg.listed) argNames.push(...arg.offered.map((name) => `'${name}'`));
+  const argNames = builtinFlagSpecs(program).map((b) => psQuote(b.flag));
+  for (const arg of uniqueArgs.values()) if (arg.listed) argNames.push(...arg.offered.map(psQuote));
 
   // Build switch cases for option value completion
   const enumCases: string[] = [];
   for (const arg of uniqueArgs.values()) {
     if (!arg.enum || arg.enum.length === 0) continue;
-    const values = arg.enum.map((v) => `'${v}'`).join(', ');
-    enumCases.push(`      ${arg.patterns.map((name) => `'${name}'`).join(', ')} { @(${values}) | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
+    const values = arg.enum.map(psQuote).join(', ');
+    enumCases.push(`      ${arg.patterns.map(psQuote).join(', ')} { @(${values}) | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
         [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
       }; return }`);
   }
   const hinted = [...uniqueArgs.values()].filter((arg) => arg.directive && !arg.enum?.length);
-  for (const arg of hinted)
-    enumCases.push(`      ${arg.patterns.map((name) => `'${name}'`).join(', ')} { $directive = ':${arg.directive}' }`);
+  for (const arg of hinted) enumCases.push(`      ${arg.patterns.map(psQuote).join(', ')} { $directive = ':${arg.directive}' }`);
   const hintBlock = hinted.length
     ? `  if ($directive) {
     ${powershellFallback.replace(/\n/g, '\n  ')}

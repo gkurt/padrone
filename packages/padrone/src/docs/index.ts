@@ -1,7 +1,14 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { getCommand, getCommandRuntime } from '../core/commands.ts';
-import type { HelpArgumentInfo, HelpInfo, HelpPositionalInfo, HelpSubcommandInfo } from '../output/formatter.ts';
+import {
+  type HelpArgumentInfo,
+  type HelpInfo,
+  type HelpPositionalInfo,
+  type HelpSubcommandInfo,
+  optionPlaceholder,
+  positionalLabel,
+} from '../output/formatter.ts';
 import { getHelpInfo, getHelpTopics } from '../output/help.ts';
 import type { AnyPadroneCommand } from '../types/index.ts';
 
@@ -88,7 +95,7 @@ function generateFrontmatter(data: Record<string, unknown>): string {
 
 function formatMarkdownPositional(arg: HelpPositionalInfo): string {
   const parts: string[] = [];
-  parts.push(`- \`${arg.name}\``);
+  parts.push(`- \`${positionalLabel(arg)}\``);
   if (arg.type) parts.push(`*(${arg.type})*`);
   if (arg.optional) parts.push('*(optional)*');
   if (arg.default !== undefined) parts.push(`— default: \`${String(arg.default)}\``);
@@ -102,7 +109,7 @@ function formatMarkdownArgument(arg: HelpArgumentInfo): string[] {
   const flagName = `--${arg.name}`;
   const flagStr = arg.flags?.length ? `${arg.flags.map((f) => `-${f}`).join(', ')}, ` : '';
   const aliasStr = arg.aliases?.length ? `${arg.aliases.map((a) => `--${a}`).join(', ')}, ` : '';
-  const header = `#### \`${flagStr}${aliasStr}${flagName}\``;
+  const header = `#### \`${flagStr}${aliasStr}${flagName}${arg.valueName && optionPlaceholder(arg) ? ` <${arg.valueName}>` : ''}\``;
   lines.push(header);
   lines.push('');
 
@@ -208,7 +215,7 @@ function generateMarkdownPage(info: HelpInfo, depth: number, frontmatterFn?: Doc
   if (info.usage.hasSubcommands) usageParts.push('[command]');
   if (info.positionals?.length) {
     for (const arg of info.positionals) {
-      usageParts.push(arg.optional ? `[${arg.name}]` : `<${arg.name}>`);
+      usageParts.push(arg.optional ? `[${positionalLabel(arg)}]` : `<${positionalLabel(arg)}>`);
     }
   }
   if (info.usage.hasArguments) usageParts.push('[options]');
@@ -313,7 +320,7 @@ function generateHtmlPage(info: HelpInfo, depth: number): string {
   if (info.usage.hasSubcommands) usageParts.push('[command]');
   if (info.positionals?.length) {
     for (const arg of info.positionals) {
-      usageParts.push(arg.optional ? `[${arg.name}]` : `<${arg.name}>`);
+      usageParts.push(arg.optional ? `[${positionalLabel(arg)}]` : `<${positionalLabel(arg)}>`);
     }
   }
   if (info.usage.hasArguments) usageParts.push('[options]');
@@ -354,7 +361,7 @@ function generateHtmlPage(info: HelpInfo, depth: number): string {
     sections.push('  <dl>');
     for (const arg of info.positionals) {
       sections.push(
-        `    <dt><code>${escapeHtml(arg.name)}</code>${arg.type ? ` <span class="type">${escapeHtml(arg.type)}</span>` : ''}${arg.optional ? ' <em>(optional)</em>' : ''}</dt>`,
+        `    <dt><code>${escapeHtml(positionalLabel(arg))}</code>${arg.type ? ` <span class="type">${escapeHtml(arg.type)}</span>` : ''}${arg.optional ? ' <em>(optional)</em>' : ''}</dt>`,
       );
       if (arg.description) sections.push(`    <dd>${escapeHtml(arg.description)}</dd>`);
       if (arg.default !== undefined) sections.push(`    <dd>Default: <code>${escapeHtml(String(arg.default))}</code></dd>`);
@@ -370,7 +377,8 @@ function generateHtmlPage(info: HelpInfo, depth: number): string {
       const flagName = `--${arg.name}`;
       const flagStr = arg.flags?.length ? `${arg.flags.map((f) => `-${f}`).join(', ')}, ` : '';
       const aliasStr = arg.aliases?.length ? `${arg.aliases.map((a) => `--${a}`).join(', ')}, ` : '';
-      const typeSpan = arg.type && arg.type !== 'boolean' ? ` <span class="type">${escapeHtml(arg.type)}</span>` : '';
+      const placeholder = optionPlaceholder(arg);
+      const typeSpan = placeholder ? ` <span class="type">${escapeHtml(placeholder)}</span>` : '';
       sections.push(`    <dt><code>${escapeHtml(flagStr + aliasStr + flagName)}</code>${typeSpan}</dt>`);
       if (arg.description) sections.push(`    <dd>${escapeHtml(arg.description)}</dd>`);
 
@@ -439,7 +447,7 @@ function generateManPage(info: HelpInfo, _depth: number, programName: string): s
   if (info.usage.hasSubcommands) usageParts.push('[\\fIcommand\\fR]');
   if (info.positionals?.length) {
     for (const arg of info.positionals) {
-      usageParts.push(arg.optional ? `[\\fI${escapeMan(arg.name)}\\fR]` : `\\fI${escapeMan(arg.name)}\\fR`);
+      usageParts.push(arg.optional ? `[\\fI${escapeMan(positionalLabel(arg))}\\fR]` : `\\fI${escapeMan(positionalLabel(arg))}\\fR`);
     }
   }
   if (info.usage.hasArguments) usageParts.push('[\\fIoptions\\fR]');
@@ -480,7 +488,7 @@ function generateManPage(info: HelpInfo, _depth: number, programName: string): s
     lines.push('.SH ARGUMENTS');
     for (const arg of info.positionals) {
       lines.push('.TP');
-      lines.push(`\\fI${escapeMan(arg.name)}\\fR`);
+      lines.push(`\\fI${escapeMan(positionalLabel(arg))}\\fR`);
       const parts: string[] = [];
       if (arg.description) parts.push(escapeMan(arg.description));
       if (arg.optional) parts.push('(optional)');
@@ -497,7 +505,7 @@ function generateManPage(info: HelpInfo, _depth: number, programName: string): s
       const flagStr = arg.flags?.length ? `${arg.flags.map((f) => `\\-${escapeMan(f)}`).join(', ')}, ` : '';
       const aliasStr = arg.aliases?.length ? `${arg.aliases.map((a) => `\\-\\-${escapeMan(a)}`).join(', ')}, ` : '';
       lines.push('.TP');
-      lines.push(`\\fB${flagStr}${aliasStr}${flagName}\\fR${arg.type ? ` \\fI${escapeMan(arg.type)}\\fR` : ''}`);
+      lines.push(`\\fB${flagStr}${aliasStr}${flagName}\\fR${arg.type ? ` \\fI${escapeMan(arg.valueName ?? arg.type)}\\fR` : ''}`);
       const parts: string[] = [];
       if (arg.description) parts.push(escapeMan(arg.description));
       if (arg.default !== undefined) parts.push(`Default: ${escapeMan(String(arg.default))}`);

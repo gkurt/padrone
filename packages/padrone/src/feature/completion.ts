@@ -1,7 +1,18 @@
-import { extractSchemaMetadata, getJsonSchema } from '../core/args.ts';
+import { extractSchemaMetadata, getJsonSchema, getOptionArity } from '../core/args.ts';
 import type { AnyPadroneCommand, PadroneGlobalArgsMeta, PadroneSchema } from '../types/index.ts';
 import { detectShell, getRcFile, type ShellType, writeToRcFile } from '../util/shell-utils.ts';
-import { builtinLongFlags, generateDynamicCompletion } from './complete.ts';
+import {
+  bashFallback,
+  builtinLongFlags,
+  type CompletionDirective,
+  fishExtFunction,
+  fishValueFlags,
+  generateDynamicCompletion,
+  hintDirective,
+  indentLines,
+  powershellFallback,
+  zshAction,
+} from './complete.ts';
 
 export { detectShell, escapeRegExp, getRcFile, type ShellType, writeToRcFile } from '../util/shell-utils.ts';
 
@@ -37,9 +48,12 @@ function collectAllCommands(cmd: AnyPadroneCommand): AnyPadroneCommand[] {
 interface ExtractedArg {
   name: string;
   alias?: string;
-  isBoolean: boolean;
+  takesValue: boolean;
   enum?: string[];
   description?: string;
+  /** What to complete for the value, set only by a `hint`. */
+  directive?: CompletionDirective;
+  valueName?: string;
 }
 
 /**
@@ -70,12 +84,15 @@ function extractSchemaArguments(schema: PadroneSchema | undefined, meta: Padrone
       for (const [key, prop] of Object.entries(jsonSchema.properties as Record<string, any>)) {
         const enumValues = (prop.enum ?? prop.items?.enum) as string[] | undefined;
         const optMeta = argsMeta?.[key];
+        const hint = optMeta?.hint ?? prop.hint;
         argList.push({
           name: key,
           alias: argToAlias[key],
-          isBoolean: prop?.type === 'boolean',
+          takesValue: getOptionArity(prop) !== 'flag' && !(optMeta?.count ?? prop.count),
           enum: enumValues,
           description: optMeta?.description ?? prop.description,
+          directive: hint ? hintDirective(hint) : undefined,
+          valueName: optMeta?.valueName ?? prop.valueName,
         });
       }
     }
@@ -131,15 +148,31 @@ export function generateBashCompletion(program: AnyPadroneCommand): string {
     if (arg.alias) patterns.push(`--${arg.alias}`);
     enumCases.push(`      ${patterns.join('|')}) COMPREPLY=($(compgen -W "${values}" -- "$cur")); return 0 ;;`);
   }
+  const hinted = [...uniqueArgs.values()].filter((arg) => arg.directive && !arg.enum?.length);
+  for (const arg of hinted) {
+    const patterns = [`--${arg.name}`, ...(arg.alias ? [`--${arg.alias}`] : [])];
+    enumCases.push(`      ${patterns.join('|')}) directive=':${arg.directive}' ;;`);
+  }
 
+  const hintBlock = hinted.length
+    ? `
+    if [[ -n "$directive" ]]; then
+      local IFS=$'\\n'
+      COMPREPLY=()
+${indentLines(bashFallback, 3)}
+      return 0
+    fi
+`
+    : '';
   const enumBlock =
     enumCases.length > 0
       ? `
     # Complete option values
+    local directive=""
     case "$prev" in
 ${enumCases.join('\n')}
     esac
-
+${hintBlock}
 `
       : '\n';
 
@@ -231,8 +264,10 @@ export function generateZshCompletion(program: AnyPadroneCommand): string {
     const desc = arg.description || '';
     const escapedDesc = desc.replace(/'/g, "'\\''").replace(/\[/g, '\\[').replace(/\]/g, '\\]');
 
-    // Zsh action spec for enum values: :label:(val1 val2 val3)
-    const valueAction = arg.enum?.length ? `: :(${arg.enum.join(' ')})` : '';
+    // Zsh value spec: `:label:action`, with enum values as `(val1 val2)`
+    const label = arg.valueName?.replace(/[:'[\]]/g, '') || ' ';
+    const action = arg.enum?.length ? `(${arg.enum.join(' ')})` : arg.directive ? zshAction(arg.directive) : arg.takesValue ? '_files' : '';
+    const valueAction = action ? `:${label}:${action}` : '';
 
     if (arg.alias) {
       argumentCompletions.push(`      {--${arg.alias},--${arg.name}}'[${escapedDesc}]${valueAction}'`);
@@ -310,10 +345,19 @@ export function generateFishCompletion(program: AnyPadroneCommand): string {
 
   const uniqueArgs = collectUniqueArgs(program, commands);
 
+  const extFunction = `__${programName.replace(/[^A-Za-z0-9_]/g, '_')}_complete_ext`;
+  if ([...uniqueArgs.values()].some((arg) => arg.directive?.startsWith('ext:'))) lines.push('', fishExtFunction(extFunction));
+
   for (const arg of uniqueArgs.values()) {
     const escapedDesc = fishQuote(arg.description || '');
-    // Fish: -xa 'val1 val2' provides exclusive value completions
-    const valueFlag = arg.enum?.length ? ` -xa '${arg.enum.join(' ')}'` : '';
+    // Fish: -xa 'val1 val2' provides exclusive value completions; -r takes a value (files by default)
+    const valueFlag = arg.enum?.length
+      ? ` -xa '${arg.enum.join(' ')}'`
+      : arg.directive
+        ? ` ${fishValueFlags(arg.directive, extFunction)}`
+        : arg.takesValue
+          ? ' -r'
+          : '';
 
     if (arg.alias) {
       // An alias is another long name; \`-s\` is for single-character options
@@ -357,6 +401,18 @@ export function generatePowerShellCompletion(program: AnyPadroneCommand): string
         [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
       }; return }`);
   }
+  const hinted = [...uniqueArgs.values()].filter((arg) => arg.directive && !arg.enum?.length);
+  for (const arg of hinted) {
+    const patterns = [`'--${arg.name}'`, ...(arg.alias ? [`'--${arg.alias}'`] : [])];
+    enumCases.push(`      ${patterns.join(', ')} { $directive = ':${arg.directive}' }`);
+  }
+  const hintBlock = hinted.length
+    ? `  if ($directive) {
+    ${powershellFallback.replace(/\n/g, '\n  ')}
+    return
+  }
+`
+    : '';
 
   const enumBlock =
     enumCases.length > 0
@@ -365,10 +421,11 @@ export function generatePowerShellCompletion(program: AnyPadroneCommand): string
   # The word before the one being completed (the last element when starting a new word)
   $elements = @($commandAst.CommandElements | Where-Object { $_.Extent.EndOffset -le $cursorPosition })
   $prevWord = if ($wordToComplete -eq '') { "$($elements[-1])" } else { "$($elements[-2])" }
+  $directive = ''
   switch ($prevWord) {
 ${enumCases.join('\n')}
   }
-
+${hintBlock}
 `
       : '\n';
 

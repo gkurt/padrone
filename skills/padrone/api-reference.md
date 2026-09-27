@@ -146,6 +146,9 @@ type ArgsMeta = {
     requiredIf?: Record<string, unknown> | Record<string, unknown>[]; // required when others have these values
     requiredUnless?: string | string[]; // required unless one of these is provided
     sensitive?: boolean;              // secret: masked prompt, hidden help default, writeOnly in tool schemas
+    complete?: (ctx) => (string | { value: string; description?: string })[]; // shell completion values (padroneCompletion)
+    hint?: 'file' | 'dir' | 'url' | 'command' | 'none' | { ext: string[] }; // what completion falls back to
+    valueName?: string;               // help placeholder: --out <DIR>
   }>;
 };
 ```

@@ -183,6 +183,8 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `requiredIf` | `{ format: 'file' }` | Required when other options have these values |
 | `requiredUnless` | `['user', 'key']` | Required unless one of these options is provided |
 | `sensitive` | `true` | Secret value: masked prompt, no default in help or tool schemas |
+| `hint` | `'dir'` | What shell completion offers for the value (`'file'`, `'dir'`, `{ ext: ['json'] }`, `'command'`, `'url'`, `'none'`) |
+| `valueName` | `'PATH'` | Value placeholder in help (`--out <PATH>`) |
 
 ### Arguments meta (second param of `.arguments()`)
 

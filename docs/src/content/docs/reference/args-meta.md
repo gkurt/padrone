@@ -41,7 +41,9 @@ z.object({
 | `requiredIf` | `Record<string, unknown> \| Record<string, unknown>[]` | Required when other options have these values (any object of an array) |
 | `requiredUnless` | `string \| string[]` | Required unless one of these options is provided |
 | `sensitive` | `boolean` | Secret value: prompted without echo, default and examples hidden from help and tool schemas |
-| `complete` | `(ctx) => string[] \| Promise<string[]>` | Values shell completion offers for this option or positional (`fields` config only; needs `padroneCompletion()`) |
+| `complete` | `(ctx) => (string \| { value, description? })[]` (or a Promise) | Values shell completion offers for this option or positional (`fields` config only; needs `padroneCompletion()`) |
+| `hint` | `'file' \| 'dir' \| 'url' \| 'command' \| 'none' \| { ext: string[] }` | What shell completion falls back to for the value (see [Value hints](#value-hints)) |
+| `valueName` | `string` | Placeholder for the value in help and docs (`--out <DIR>`, `<FILE>` for a positional) |
 
 :::note
 Single-character short flags use `flags`, not `alias`. The `alias` field is for multi-character long alternatives like `--dry-run` for `--dryRun`.
@@ -109,7 +111,7 @@ Per-argument configuration that supplements or overrides `.meta()`:
 }
 ```
 
-This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `variadic`, `fromFile`, `conflicts`, `implies`, `requires`, `requiredIf`, `requiredUnless`, `sensitive` — plus `complete`, which only works here since functions don't survive `.meta()`.
+This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `variadic`, `fromFile`, `conflicts`, `implies`, `requires`, `requiredIf`, `requiredUnless`, `sensitive`, `hint`, `valueName` — plus `complete`, which only works here since functions don't survive `.meta()`.
 
 ### autoAlias
 
@@ -649,5 +651,42 @@ createPadrone('git')
   );
 ```
 
-The callback receives the word typed so far (`prefix`), the options typed before it (`args`, parsed but not validated) and the command path. Return candidates unfiltered or filtered, it's up to you: only those starting with the prefix are shown. Errors are swallowed so a failing lookup never breaks the shell. Scripts are generated with `git completion <shell>`; they call `git __complete <words>`, which you can run by hand to debug.
+The callback receives the word typed so far (`prefix`), the options typed before it (`args`, parsed but not validated) and the command path. Return candidates unfiltered or filtered, it's up to you: only those starting with the prefix are shown. Errors are swallowed so a failing lookup never breaks the shell.
+
+Candidates can carry a description, which zsh, fish and PowerShell show next to the value (bash shows values only). Subcommands and options are described with their descriptions, and literal unions (`z.union([z.literal('eu').describe('Europe'), ...])`) with each literal's:
+
+```typescript
+complete: () => [{ value: 'main', description: 'Default branch' }, 'develop'],
+```
+
+### Value hints
+
+When no candidate matches, the shell falls back to file names for a value without enum values or `complete` (a value with candidates gets no fallback). `hint` says what to complete instead:
+
+```typescript
+z.object({
+  config: z.string().meta({ hint: { ext: ['json', 'yaml'] } }), // *.json, *.yaml and directories
+  out: z.string().meta({ hint: 'dir', valueName: 'DIR' }), // directories
+  editor: z.string().meta({ hint: 'command' }), // program names
+  url: z.string().meta({ hint: 'url' }), // nothing ('none' too)
+  input: z.string().meta({ hint: 'file' }), // files, even with enum values or complete
+});
+```
+
+Boolean flags never complete a value. The static scripts (without `padroneCompletion()`) follow `hint` for options too.
+
+`valueName` is the value placeholder in help: `--out <DIR>` instead of `--out <string>`, and `<DIR>` instead of the field name for a positional. Markdown, HTML and JSON help, generated docs and man pages use it too.
+
+### The `__complete2` protocol
+
+Scripts are generated with `git completion <shell>`. On each tab press they call `git __complete2 <words>` (the words after the program name, the last being the word under the cursor), which you can run by hand to debug. It prints one candidate per line, `value<TAB>description` or just `value`, then a directive for when nothing matches: `:files`, `:dirs`, `:ext:json,yaml`, `:commands` or `:nofiles`.
+
+```
+$ git __complete2 checkout ''
+main	Default branch
+develop
+:nofiles
+```
+
+`git __complete <words>` prints values only, one per line, as scripts generated by earlier versions expect. Regenerate those scripts to get descriptions and hints; the `eval "$(git completion bash)"` line that `completion --setup` installs does so on each shell start.
 

@@ -1,9 +1,11 @@
 export type {
   PadroneArgsSchemaMeta,
   PadroneCompleteContext,
+  PadroneCompletionItem,
   PadroneFieldGroups,
   PadroneFieldMeta,
   PadroneGlobalArgsMeta,
+  PadroneValueHint,
   SingleChar,
   StdinConfig,
 } from './args-meta.ts';

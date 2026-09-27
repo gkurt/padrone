@@ -113,6 +113,10 @@ describe('help topics', () => {
       (await program.eval(['__complete', ...words], { runtime: { output: () => {} } })).result as unknown as string[];
     expect(await complete('help', '')).toEqual(['deploy', 'status', 'environment', 'formatting']);
     expect(await complete('help', 'e')).toEqual(['environment']);
+    const result = (await program.eval(['__complete2', 'help', ''], { runtime: { output: () => {} } })).result as unknown as {
+      directive: string;
+    };
+    expect(result.directive).toBe('nofiles');
   });
 
   it('generates a Markdown page per topic, linked from the index', () => {

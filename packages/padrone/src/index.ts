@@ -144,6 +144,7 @@ export type {
   PadroneCommand,
   PadroneCommandResult,
   PadroneCompleteContext,
+  PadroneCompletionItem,
   PadroneContextInterceptor,
   PadroneDrainResult,
   PadroneEmit,
@@ -160,6 +161,7 @@ export type {
   PadroneProgram,
   PadroneProgramMeta,
   PadroneSchema,
+  PadroneValueHint,
   RegisteredInterceptor,
 } from './types/index.ts';
 export type { PadroneDirs } from './util/dirs.ts';

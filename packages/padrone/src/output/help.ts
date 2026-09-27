@@ -76,6 +76,7 @@ function extractPositionalArgsInfo(
           default: isSensitiveField(optMeta, prop) ? undefined : prop.default,
           type: variadic ? `array<${prop.items?.type || 'string'}>` : prop.type,
           enum: (prop.enum ?? prop.items?.enum) as string[] | undefined,
+          valueName: optMeta?.valueName ?? prop.valueName,
         });
       }
     }
@@ -185,6 +186,7 @@ function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSc
           default: sensitive ? undefined : prop.default,
           type: isCount ? undefined : propType === 'array' ? `${prop.items?.type || 'string'}[]` : propType,
           enum: enumValues,
+          valueName: optMeta?.valueName ?? prop?.valueName,
           deprecated: optMeta?.deprecated ?? prop?.deprecated,
           hidden: optMeta?.hidden ?? prop?.hidden,
           examples: sensitive ? undefined : (optMeta?.examples ?? prop?.examples),

@@ -37,6 +37,26 @@ export type UpdateCheckConfig = {
    * Pass a function to build it from the package name and the latest version.
    */
   updateCommand?: string | ((packageName: string, latestVersion: string) => string);
+  /**
+   * Whether to show the notice, called when a newer version is known (after the built-in rules: CI, non-TTY output,
+   * `NO_UPDATE_NOTIFIER` and `disableEnvVar` skip the check altogether). Return `false` to suppress it,
+   * e.g. inside npm scripts: `({ runtime }) => !runtime.env().npm_lifecycle_event`.
+   */
+  shouldNotify?: (info: UpdateInfo) => boolean;
+  /** The notice text (printed to stderr, and by `version --check`). Defaults to `Update available: 1.0.0 → 2.0.0` and the command to run. */
+  format?: (info: UpdateInfo) => string;
+};
+
+/** A newer version, as passed to `padroneUpdateCheck({ shouldNotify, format })`. */
+export type UpdateInfo = {
+  packageName: string;
+  /** The running version. */
+  current: string;
+  /** The newer version found. */
+  latest: string;
+  /** The command the notice suggests (see `updateCommand`). */
+  updateCommand: string;
+  runtime: ResolvedPadroneRuntime;
 };
 
 type CacheData = {
@@ -231,8 +251,26 @@ export function formatUpdateMessage(
   packageName: string,
   command?: UpdateCheckConfig['updateCommand'],
 ): string {
-  const updateCommand = typeof command === 'function' ? command(packageName, latestVersion) : (command ?? `npm update -g ${packageName}`);
-  return `\n  Update available: ${currentVersion} \u2192 ${latestVersion}\n  Run "${updateCommand}" to update\n`;
+  return `\n  Update available: ${currentVersion} \u2192 ${latestVersion}\n  Run "${updateCommandFor(packageName, latestVersion, command)}" to update\n`;
+}
+
+const updateCommandFor = (packageName: string, latest: string, command: UpdateCheckConfig['updateCommand']) =>
+  typeof command === 'function' ? command(packageName, latest) : (command ?? `npm update -g ${packageName}`);
+
+/** The info about a newer version the `shouldNotify` and `format` callbacks get. */
+export function updateInfo(
+  packageName: string,
+  current: string,
+  latest: string,
+  config: UpdateCheckConfig,
+  runtime: ResolvedPadroneRuntime,
+): UpdateInfo {
+  return { packageName, current, latest, updateCommand: updateCommandFor(packageName, latest, config.updateCommand), runtime };
+}
+
+/** The notice for a newer version: `format`'s text, or the default message. */
+export function formatUpdateNotice(info: UpdateInfo, config: UpdateCheckConfig): string {
+  return config.format ? config.format(info) : formatUpdateMessage(info.current, info.latest, info.packageName, info.updateCommand);
 }
 
 /**
@@ -308,10 +346,9 @@ export async function createUpdateChecker(
   const cachePath = defaults?.cache ?? (await resolveCachePath(config.cache!));
   const cached = (await readCache(cachePath)) ?? (defaults && (await migrateLegacyCache(defaults.legacy, cachePath)));
   const latest = cached?.latestVersion;
-  const notify =
-    latest && isNewerVersion(currentVersion, latest)
-      ? () => runtime.error(formatUpdateMessage(currentVersion, latest, packageName, config.updateCommand))
-      : noop;
+  const info =
+    latest && isNewerVersion(currentVersion, latest) ? updateInfo(packageName, currentVersion, latest, config, runtime) : undefined;
+  const notify = info && config.shouldNotify?.(info) !== false ? () => runtime.error(formatUpdateNotice(info, config)) : noop;
   const age = cached ? Date.now() - cached.lastCheck : -1;
   if (age >= 0 && age < intervalMs) return { notify, refresh: skipped.refresh };
 

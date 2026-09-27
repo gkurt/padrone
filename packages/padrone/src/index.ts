@@ -106,10 +106,11 @@ export {
   padroneUpgrade,
   padroneVersion,
   redactArgs,
+  verifySha256,
 } from './extension/index.ts';
 export type { PadronePageOptions } from './feature/pager.ts';
 export type { PadroneEditorOptions } from './feature/system.ts';
-export type { UpdateCheckConfig } from './feature/update-check.ts';
+export type { UpdateCheckConfig, UpdateInfo } from './feature/update-check.ts';
 export type { WrapConfig, WrapResult } from './feature/wrap.ts';
 export type { AnsiStyle, ColorConfig, ColorTheme } from './output/colorizer.ts';
 export { colorThemes } from './output/colorizer.ts';
@@ -150,9 +151,12 @@ export type {
   PadroneBuilder,
   PadroneCaller,
   PadroneCommand,
+  PadroneCommandComplete,
   PadroneCommandResult,
   PadroneCompleteContext,
+  PadroneCompletionDirective,
   PadroneCompletionItem,
+  PadroneCompletionResult,
   PadroneContextInterceptor,
   PadroneDrainResult,
   PadroneEmit,

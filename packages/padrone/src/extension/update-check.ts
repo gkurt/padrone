@@ -1,13 +1,15 @@
+import { getCommandRuntime } from '#src/core/commands.ts';
 import { thenMaybe } from '#src/core/results.ts';
 import type { ResolvedPadroneRuntime } from '#src/core/runtime.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import {
   createUpdateChecker,
   fetchLatestVersion,
-  formatUpdateMessage,
+  formatUpdateNotice,
   isNewerVersion,
   isVersion,
   type UpdateCheckConfig,
+  updateInfo,
 } from '../feature/update-check.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
 import { getRootCommand, readScriptVersion } from '../util/utils.ts';
@@ -46,7 +48,7 @@ export async function checkForUpdate(
   return {
     latest,
     updateAvailable: true,
-    message: formatUpdateMessage(current, latest, settings.packageName, settings.updateCommand).trimEnd(),
+    message: formatUpdateNotice(updateInfo(settings.packageName, current, latest, settings, getCommandRuntime(root)), settings).trimEnd(),
   };
 }
 
@@ -112,7 +114,8 @@ function createUpdateCheckInterceptor(config: UpdateCheckConfig) {
  * Extension that adds background update checking, like update-notifier:
  * - Shows an update notice after the command, from the latest version cached by an earlier run
  * - Refreshes a stale cache (`interval`) in a detached process, so a slow registry never delays the exit
- * - Respects `--no-update-check`, `NO_UPDATE_NOTIFIER`, CI and non-TTY output
+ * - Respects `--no-update-check`, `NO_UPDATE_NOTIFIER`, CI and non-TTY output; `shouldNotify` can suppress it further
+ * - `format` rewords the notice
  * - Uses the program's `version`, or that of the package its script belongs to; without one nothing is checked
  * - Suggests `<program> upgrade` when `padroneUpgrade()` is registered
  *

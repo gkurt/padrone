@@ -249,7 +249,7 @@ fi
 /**
  * Generates a Zsh completion script for the program.
  */
-export function generateZshCompletion(program: AnyPadroneCommand): string {
+export function generateZshCompletion(program: AnyPadroneCommand, descriptions = true): string {
   const programName = program.name;
   const commands = collectAllCommands(program);
 
@@ -258,12 +258,12 @@ export function generateZshCompletion(program: AnyPadroneCommand): string {
     .map((cmd) => {
       const desc = cmd.description || cmd.title || '';
       const escapedDesc = desc.replace(/'/g, "'\\''").replace(/:/g, '\\:');
-      return `      '${cmd.name}:${escapedDesc}'`;
+      return descriptions ? `      '${cmd.name}:${escapedDesc}'` : `      '${cmd.name}'`;
     })
     .join('\n');
 
   // Collect all args with descriptions and enum values
-  const argumentCompletions = builtinFlagSpecs(program).map((b) => `      '${b.flag}[${b.description}]'`);
+  const argumentCompletions = builtinFlagSpecs(program).map((b) => `      '${b.flag}${descriptions ? `[${b.description}]` : ''}'`);
 
   const uniqueArgs = collectUniqueArgs(program, commands);
 
@@ -283,7 +283,7 @@ export function generateZshCompletion(program: AnyPadroneCommand): string {
           : '';
     const valueAction = action ? `:${label}:${action}` : '';
 
-    const spec = `[${escapedDesc}]${valueAction}'`;
+    const spec = `${descriptions ? `[${escapedDesc}]` : ''}${valueAction}'`;
     argumentCompletions.push(arg.offered.length > 1 ? `      {${arg.offered.join(',')}}'${spec}` : `      '${arg.offered[0]}${spec}`);
   }
 
@@ -327,7 +327,7 @@ _${programName}
 /**
  * Generates a Fish completion script for the program.
  */
-export function generateFishCompletion(program: AnyPadroneCommand): string {
+export function generateFishCompletion(program: AnyPadroneCommand, descriptions = true): string {
   const programName = program.name;
   const commands = collectAllCommands(program);
 
@@ -345,14 +345,14 @@ export function generateFishCompletion(program: AnyPadroneCommand): string {
     '# Commands',
   ];
 
+  const describe = (text: string | undefined) => (descriptions ? ` -d '${fishQuote(text ?? '')}'` : '');
   for (const cmd of commands) {
-    const desc = cmd.description || cmd.title || '';
-    lines.push(`complete -c ${programName} -n "__fish_use_subcommand" -a "${cmd.name}" -d '${fishQuote(desc)}'`);
+    lines.push(`complete -c ${programName} -n "__fish_use_subcommand" -a "${cmd.name}"${describe(cmd.description || cmd.title)}`);
   }
 
   lines.push('');
   lines.push('# Global arguments');
-  for (const b of builtinFlagSpecs(program)) lines.push(`complete -c ${programName} -l ${b.flag.slice(2)} -d '${b.description}'`);
+  for (const b of builtinFlagSpecs(program)) lines.push(`complete -c ${programName} -l ${b.flag.slice(2)}${describe(b.description)}`);
 
   const uniqueArgs = collectUniqueArgs(program, commands);
 
@@ -361,7 +361,6 @@ export function generateFishCompletion(program: AnyPadroneCommand): string {
 
   for (const arg of uniqueArgs.values()) {
     if (!arg.listed) continue;
-    const escapedDesc = fishQuote(arg.description || '');
     // Fish: -xa 'val1 val2' provides exclusive value completions; -r takes a value (files by default)
     const valueFlag = arg.enum?.length
       ? ` -xa '${fishQuote(arg.enum.map(fishWord).join(' '))}'`
@@ -372,7 +371,7 @@ export function generateFishCompletion(program: AnyPadroneCommand): string {
           : '';
 
     const names = arg.offered.map((name) => (name.startsWith('--') ? `-l ${name.slice(2)}` : `-s ${name.slice(1)}`)).join(' ');
-    lines.push(`complete -c ${programName} ${names} -d '${escapedDesc}'${valueFlag}`);
+    lines.push(`complete -c ${programName} ${names}${describe(arg.description)}${valueFlag}`);
   }
 
   lines.push(`###-end-${programName}-completion-###`);
@@ -452,20 +451,32 @@ ${enumBlock}  if ($wordToComplete -like '-*') {
 ###-end-${programName}-completion-###`;
 }
 
+/** Which completion script to generate. */
+export type CompletionScriptOptions = {
+  /**
+   * `'dynamic'` scripts ask the program for candidates on each tab press (`__complete2`); `'static'` ones list them up front.
+   * Defaults to dynamic when `padroneCompletion()` is registered (it answers `__complete2`), else static.
+   */
+  mode?: 'dynamic' | 'static';
+  /** Show candidates' descriptions where the shell supports it. Defaults to `true`. */
+  descriptions?: boolean;
+};
+
 /**
  * Generates a completion script for the specified shell.
  */
-export function generateCompletion(program: AnyPadroneCommand, shell: ShellType): string {
+export function generateCompletion(program: AnyPadroneCommand, shell: ShellType, options: CompletionScriptOptions = {}): string {
+  const descriptions = options.descriptions ?? true;
   // With `padroneCompletion()` the program answers `__complete` itself, so the script can ask it (per-command, dynamic values)
-  const dynamic = program.interceptors?.some((i) => i.meta.id === 'padrone:completion' && !i.meta.disabled);
-  if (dynamic) return generateDynamicCompletion(program.name, shell);
+  const answers = program.interceptors?.some((i) => i.meta.id === 'padrone:completion' && !i.meta.disabled);
+  if (answers && options.mode !== 'static') return generateDynamicCompletion(program.name, shell, descriptions);
   switch (shell) {
     case 'bash':
       return generateBashCompletion(program);
     case 'zsh':
-      return generateZshCompletion(program);
+      return generateZshCompletion(program, descriptions);
     case 'fish':
-      return generateFishCompletion(program);
+      return generateFishCompletion(program, descriptions);
     case 'powershell':
       return generatePowerShellCompletion(program);
     default:
@@ -514,11 +525,12 @@ export async function generateCompletionOutput(
   program: AnyPadroneCommand,
   shell?: ShellType,
   env?: Record<string, string | undefined>,
+  options?: CompletionScriptOptions,
 ): Promise<string> {
   const programName = program.name;
 
   if (shell) {
-    return generateCompletion(program, shell);
+    return generateCompletion(program, shell, options);
   }
 
   // Auto-detect shell and provide instructions
@@ -530,7 +542,7 @@ export async function generateCompletionOutput(
       .split('\n')
       .map((line) => (line.startsWith('#') ? line : `# ${line}`.trimEnd()))
       .join('\n');
-    const script = generateCompletion(program, detectedShell);
+    const script = generateCompletion(program, detectedShell, options);
 
     return `# Detected shell: ${detectedShell}
 #
@@ -580,21 +592,35 @@ export interface SetupCompletionsResult {
   updated: boolean;
 }
 
+export type SetupCompletionsOptions = {
+  /** The environment whose `HOME` (or `USERPROFILE`) and PowerShell `PROFILE` locate the config file. Defaults to the process's. */
+  env?: Record<string, string | undefined>;
+  /** Flags the snippet passes to `completion <shell>` (e.g. `['--static']`). */
+  flags?: readonly string[];
+};
+
 /**
  * Sets up shell completions by writing an eval snippet to the appropriate shell config file.
  * Uses marker comments for idempotency — re-running replaces the existing block.
  */
-export async function setupCompletions(programName: string, shell: ShellType): Promise<SetupCompletionsResult> {
+export async function setupCompletions(
+  programName: string,
+  shell: ShellType,
+  options: SetupCompletionsOptions = {},
+): Promise<SetupCompletionsResult> {
   const { existsSync, mkdirSync, writeFileSync } = await import('node:fs');
   const { join } = await import('node:path');
   const { homedir } = await import('node:os');
+  const env = options.env ?? globalThis.process?.env ?? {};
+  const home = env.HOME || env.USERPROFILE || homedir();
 
   const beginMarker = `###-begin-${programName}-completion-###`;
   const endMarker = `###-end-${programName}-completion-###`;
-  const snippet = buildSetupSnippet(programName, shell, beginMarker, endMarker);
+  const evalCmd = [programName, 'completion', shell, ...(options.flags ?? [])].join(' ');
+  const snippet = buildSetupSnippet(evalCmd, shell, beginMarker, endMarker);
 
   if (shell === 'fish') {
-    const completionsDir = join(homedir(), '.config', 'fish', 'completions');
+    const completionsDir = join(home, '.config', 'fish', 'completions');
     const filePath = join(completionsDir, `${programName}.fish`);
     mkdirSync(completionsDir, { recursive: true });
     const existed = existsSync(filePath);
@@ -602,7 +628,7 @@ export async function setupCompletions(programName: string, shell: ShellType): P
     return { file: filePath, updated: existed };
   }
 
-  const rcFile = await getRcFile(shell);
+  const rcFile = await getRcFile(shell, home, env);
   if (!rcFile) {
     throw new Error(`Could not determine config file for ${shell}.`);
   }
@@ -610,9 +636,7 @@ export async function setupCompletions(programName: string, shell: ShellType): P
   return writeToRcFile(rcFile, snippet, beginMarker, endMarker);
 }
 
-function buildSetupSnippet(programName: string, shell: ShellType, beginMarker: string, endMarker: string): string {
-  const evalCmd = `${programName} completion ${shell}`;
-
+function buildSetupSnippet(evalCmd: string, shell: ShellType, beginMarker: string, endMarker: string): string {
   switch (shell) {
     case 'bash':
     case 'zsh':

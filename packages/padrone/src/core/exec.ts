@@ -16,7 +16,7 @@ import type {
   RegisteredInterceptor,
   ResolvedInterceptor,
 } from '../types/index.ts';
-import { getCommandRuntime } from './commands.ts';
+import { getCommandRuntime, resolveContext } from './commands.ts';
 import { RoutingError, SignalError, ValidationError } from './errors.ts';
 import { withEmit } from './events.ts';
 import { readFileValues } from './from-file.ts';
@@ -75,21 +75,6 @@ export function errorResultWithSignal(err: unknown) {
     (result as any).exitCode = err.exitCode;
   }
   return result;
-}
-
-/** Resolve context by walking the command parent chain and applying transforms from root to target. */
-function resolveContext(command: AnyPadroneCommand, initialContext: unknown): unknown {
-  const chain: AnyPadroneCommand[] = [];
-  let current: AnyPadroneCommand | undefined = command;
-  while (current) {
-    chain.unshift(current);
-    current = current.parent;
-  }
-  let resolved = initialContext;
-  for (const cmd of chain) {
-    if (cmd.contextTransform) resolved = cmd.contextTransform(resolved);
-  }
-  return resolved;
 }
 
 /** Validate parse result — reject unmatched terms when the command doesn't accept positional args. */

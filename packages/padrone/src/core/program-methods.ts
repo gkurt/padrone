@@ -13,7 +13,7 @@ import type {
 } from '../types/index.ts';
 import { outputValueToText } from '../util/json.ts';
 import { parsePositionalConfig } from './args.ts';
-import { findCommandByName, getCommandRuntime, resolveAllCommands, serializeArgsToFlags } from './commands.ts';
+import { findCommandByName, getCommandRuntime, resolveAllCommands, resolveContext, serializeArgsToFlags } from './commands.ts';
 import { RoutingError } from './errors.ts';
 import { withEmit } from './events.ts';
 import type { ExecContext } from './exec.ts';
@@ -89,20 +89,6 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
     }
 
     return parts.join(' ');
-  };
-
-  const resolveContext = (command: AnyPadroneCommand, initialContext: unknown): unknown => {
-    const chain: AnyPadroneCommand[] = [];
-    let current: AnyPadroneCommand | undefined = command;
-    while (current) {
-      chain.unshift(current);
-      current = current.parent;
-    }
-    let resolved = initialContext;
-    for (const cmd of chain) {
-      if (cmd.contextTransform) resolved = cmd.contextTransform(resolved);
-    }
-    return resolved;
   };
 
   const run: AnyPadroneProgram['run'] = (command, args, prefs?: { context?: unknown; signal?: AbortSignal }) => {
@@ -308,10 +294,10 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
     return buildApi(rootCommand);
   };
 
-  const completion: AnyPadroneProgram['completion'] = async (shell) => {
+  const completion: AnyPadroneProgram['completion'] = async (shell, options) => {
     resolveAllCommands(rootCommand);
     const { generateCompletionOutput } = await import('../feature/completion.ts');
-    return generateCompletionOutput(rootCommand, shell as ShellType | undefined, getCommandRuntime(rootCommand).env());
+    return generateCompletionOutput(rootCommand, shell as ShellType | undefined, getCommandRuntime(rootCommand).env(), options);
   };
 
   const mcp: AnyPadroneProgram['mcp'] = async (prefs) => {

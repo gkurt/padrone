@@ -4,6 +4,7 @@ import type { PadroneRuntime } from '../core/runtime.ts';
 import type { PadroneLogger } from '../extension/logger.ts';
 import type { PadroneProgressContext } from '../extension/progress.ts';
 import type { PadroneTracer } from '../extension/tracing.ts';
+import type { CompletionScriptOptions } from '../feature/completion.ts';
 import type { PadroneMcpPreferences } from '../feature/mcp.ts';
 import type { PadroneServePreferences } from '../feature/serve.ts';
 import type { WrapConfig, WrapResult } from '../feature/wrap.ts';
@@ -1001,8 +1002,8 @@ export type PadroneProgram<
     prefs?: HelpPreferences,
   ) => string;
 
-  /** Generate shell completion script. @category Utility */
-  completion: (shell?: 'bash' | 'zsh' | 'fish' | 'powershell') => Promise<string>;
+  /** Generate a shell completion script: `options.mode` picks a static or dynamic one, `options.descriptions: false` leaves descriptions out. @category Utility */
+  completion: (shell?: 'bash' | 'zsh' | 'fish' | 'powershell', options?: CompletionScriptOptions) => Promise<string>;
 
   /** Start a Model Context Protocol server. @category Server */
   mcp: (prefs?: PadroneMcpPreferences) => Promise<void>;

@@ -1,8 +1,18 @@
 import { extractSchemaMetadata, getJsonSchema, getOptionArity, parsePositionalConfig } from '../core/args.ts';
-import { findCommandByName, getGlobalArgs, resolveCommand } from '../core/commands.ts';
+import { findCommandByName, getCommandRuntime, getGlobalArgs, resolveCommand, resolveContext } from '../core/commands.ts';
+import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import { getDryRunFlagKeys, getInterceptorOptions, parseCommand } from '../core/validate.ts';
 import { getHelpTopics } from '../output/help.ts';
-import type { AnyPadroneCommand, PadroneCompletionItem, PadroneFieldMeta, PadroneSchema, PadroneValueHint } from '../types/index.ts';
+import type {
+  AnyPadroneCommand,
+  PadroneCompleteContext,
+  PadroneCompletionDirective,
+  PadroneCompletionItem,
+  PadroneCompletionResult,
+  PadroneFieldMeta,
+  PadroneSchema,
+  PadroneValueHint,
+} from '../types/index.ts';
 import { offeredLongNames, type ShellType } from '../util/shell-utils.ts';
 
 export { offeredLongNames };
@@ -16,13 +26,13 @@ export const COMPLETE_COMMAND = '__complete';
  */
 export const COMPLETE_DESCRIBED_COMMAND = '__complete2';
 
-/**
- * What the shell completes when no candidate matches: file names, directories, files with the given extensions
- * (`ext:json,yaml`), command names, or nothing. Printed as the last line of `__complete2`, after a `:`.
- */
-export type CompletionDirective = 'files' | 'dirs' | 'commands' | 'nofiles' | `ext:${string}`;
+/** What the shell completes when no candidate matches. Printed as the last line of `__complete2`, after a `:`. */
+export type CompletionDirective = PadroneCompletionDirective;
 
 export type CompletionResult = { items: PadroneCompletionItem[]; directive: CompletionDirective };
+
+/** Where completion runs: the runtime and the (untransformed) context `complete` callbacks get. */
+export type CompletionEnvironment = { runtime?: ResolvedPadroneRuntime; context?: unknown };
 
 type CompletionField = {
   name: string;
@@ -118,22 +128,34 @@ function findOption(fields: CompletionField[], token: string): CompletionField |
   return flag ? fields.find((f) => f.shortFlags.includes(flag)) : undefined;
 }
 
-async function fieldValues(
-  field: CompletionField | undefined,
-  prefix: string,
-  args: Record<string, unknown>,
-  command: AnyPadroneCommand,
-): Promise<PadroneCompletionItem[]> {
-  if (!field) return [];
-  if (field.meta?.complete) {
-    try {
-      const items = await field.meta.complete({ prefix, args, command: command.path });
-      return items.map((item) => (typeof item === 'string' ? { value: item } : item));
-    } catch {
-      return [];
-    }
+type Values = { items: PadroneCompletionItem[]; directive?: CompletionDirective };
+
+/** Keeps extensions a shell can take in a glob; anything else falls back to files. */
+function normalizeDirective(directive: string | undefined): CompletionDirective | undefined {
+  if (!directive) return undefined;
+  if (directive.startsWith('ext:')) return hintDirective({ ext: directive.slice(4).split(',') });
+  return (['files', 'dirs', 'commands', 'nofiles'] as const).find((d) => d === directive) ?? 'files';
+}
+
+/** Calls a `complete` callback; a failing one offers nothing. */
+async function runComplete(
+  complete: (ctx: PadroneCompleteContext) => PadroneCompletionResult | Promise<PadroneCompletionResult>,
+  ctx: PadroneCompleteContext,
+): Promise<Values> {
+  try {
+    const result = await complete(ctx);
+    const values = Array.isArray(result) ? result : ((result as { values?: unknown[] })?.values ?? []);
+    const items = values.map((item) => (typeof item === 'string' ? { value: item } : item) as PadroneCompletionItem);
+    return { items, directive: Array.isArray(result) ? undefined : normalizeDirective((result as { directive?: string })?.directive) };
+  } catch {
+    return { items: [] };
   }
-  return field.values ?? [];
+}
+
+async function fieldValues(field: CompletionField | undefined, ctx: () => PadroneCompleteContext): Promise<Values> {
+  if (!field) return { items: [] };
+  if (field.meta?.complete) return runComplete(field.meta.complete, { ...ctx(), field: field.name });
+  return { items: field.values ?? [] };
 }
 
 /**
@@ -149,7 +171,8 @@ export function hintDirective(hint: PadroneValueHint | undefined, hasValues = fa
   return ({ file: 'files', dir: 'dirs', command: 'commands', url: 'nofiles', none: 'nofiles' } as const)[hint] ?? 'files';
 }
 
-const fieldDirective = (field: CompletionField | undefined) => hintDirective(field?.hint, !!(field?.values || field?.meta?.complete));
+const fieldDirective = (field: CompletionField | undefined, values?: Values) =>
+  values?.directive ?? hintDirective(field?.hint, !!(field?.values || field?.meta?.complete));
 
 /** Flags of a built-in `help` / `version` command as typed (`--help`, `-h`, or the names given with `flags`); none when it's turned off. */
 export function builtinFlags(rootCommand: AnyPadroneCommand, name: 'help' | 'version', short = false): string[] {
@@ -175,9 +198,13 @@ function joinSplitValues(words: readonly string[]): string[] {
  * Completion candidates for the word being typed, with descriptions, and what the shell falls back to when none match.
  * `words` are the words after the program name; the last one is the word under the cursor (`''` when starting a new word).
  * Covers subcommands, option names, option values and positional values, per command:
- * enum values, a field's `complete` callback, and its `hint`.
+ * enum values, a field's `complete` callback, the command's `complete` hook, and the field's `hint`.
  */
-export async function getCompletionResult(rootCommand: AnyPadroneCommand, words: readonly string[]): Promise<CompletionResult> {
+export async function getCompletionResult(
+  rootCommand: AnyPadroneCommand,
+  words: readonly string[],
+  environment: CompletionEnvironment = {},
+): Promise<CompletionResult> {
   const current = unquoteEmpty(words.at(-1) ?? '');
   const typed = joinSplitValues(words.slice(0, -1));
 
@@ -233,6 +260,16 @@ export async function getCompletionResult(rootCommand: AnyPadroneCommand, words:
   } catch {
     // Completion works on partial input: keep going without the typed args
   }
+  const completeContext = (prefix = current): PadroneCompleteContext => {
+    let context = environment.context;
+    try {
+      context = resolveContext(command, environment.context);
+    } catch {
+      // A failing transform leaves the context as passed
+    }
+    return { prefix, args: rawArgs, command: command.path, runtime: environment.runtime ?? getCommandRuntime(command), context };
+  };
+  const valuesOf = (field: CompletionField | undefined, prefix = current) => fieldValues(field, () => completeContext(prefix));
   const filter = (items: Candidate[], prefix = current): PadroneCompletionItem[] => {
     const seen = new Set<string>();
     const matches = items.filter(
@@ -245,21 +282,24 @@ export async function getCompletionResult(rootCommand: AnyPadroneCommand, words:
 
   if (splitOption?.startsWith('-') && !afterDoubleDash) {
     const option = findOption(fields, splitOption);
-    return { items: filter(await fieldValues(option, valuePrefix, rawArgs, command), valuePrefix), directive: fieldDirective(option) };
+    const values = await valuesOf(option, valuePrefix);
+    return { items: filter(values.items, valuePrefix), directive: fieldDirective(option, values) };
   }
-  if (pending) return { items: filter(await fieldValues(pending, current, rawArgs, command)), directive: fieldDirective(pending) };
+  const optionValues = async (option: CompletionField): Promise<CompletionResult> => {
+    const values = await valuesOf(option);
+    return { items: filter(values.items), directive: fieldDirective(option, values) };
+  };
+  if (pending) return optionValues(pending);
   if (extensionValue) return { items: [], directive: 'files' };
-  if (variadic && !current.startsWith('-')) {
-    return { items: filter(await fieldValues(variadic, current, rawArgs, command)), directive: fieldDirective(variadic) };
-  }
+  if (variadic && !current.startsWith('-')) return optionValues(variadic);
 
   if (!afterDoubleDash && current.startsWith('-')) {
     const eq = current.indexOf('=');
     if (eq > 0) {
       const name = current.slice(0, eq);
       const option = findOption(fields, name);
-      const values = await fieldValues(option, current.slice(eq + 1), rawArgs, command);
-      return { items: filter(values.map((v) => ({ ...v, value: `${name}=${v.value}` }))), directive: fieldDirective(option) };
+      const values = await valuesOf(option, current.slice(eq + 1));
+      return { items: filter(values.items.map((v) => ({ ...v, value: `${name}=${v.value}` }))), directive: fieldDirective(option, values) };
     }
     // `-` and `-x` also get short flags, like cobra and clap
     const short = !current.startsWith('--');
@@ -298,15 +338,31 @@ export async function getCompletionResult(rootCommand: AnyPadroneCommand, words:
   const positional = parsePositionalConfig(command.meta?.positional ?? []);
   const slot = positional[positionals] ?? (positional.at(-1)?.variadic ? positional.at(-1) : undefined);
   const slotField = slot && fields.find((f) => f.name === slot.name);
-  const values = slotField ? await fieldValues(slotField, current, rawArgs, command) : [];
+  // A positional field's own `complete` wins over the command's hook
+  const hook = !helpWord && !slotField?.meta?.complete ? command.complete : undefined;
+  const values = hook
+    ? await runComplete(hook, { ...completeContext(), field: slot?.name, position: positionals, positionals: terms })
+    : slotField
+      ? await valuesOf(slotField)
+      : { items: [] };
   // With nothing left to type but subcommands, or every positional filled, there's nothing to fall back to
-  const directive = slotField && !helpWord ? fieldDirective(slotField) : subcommands.length || positional.length ? 'nofiles' : 'files';
-  return { items: filter([...subcommands, ...values]), directive };
+  const directive = hook
+    ? (values.directive ?? hintDirective(slotField?.hint, true))
+    : slotField && !helpWord
+      ? fieldDirective(slotField, values)
+      : subcommands.length || positional.length
+        ? 'nofiles'
+        : 'files';
+  return { items: filter([...subcommands, ...values.items]), directive };
 }
 
 /** Completion candidates for the word being typed (see `getCompletionResult`), without descriptions. */
-export async function getCompletions(rootCommand: AnyPadroneCommand, words: readonly string[]): Promise<string[]> {
-  return (await getCompletionResult(rootCommand, words)).items.map((item) => item.value);
+export async function getCompletions(
+  rootCommand: AnyPadroneCommand,
+  words: readonly string[],
+  environment?: CompletionEnvironment,
+): Promise<string[]> {
+  return (await getCompletionResult(rootCommand, words, environment)).items.map((item) => item.value);
 }
 
 /** The `__complete2` output: `value<TAB>description` lines (descriptions on one line), then `:<directive>`. */
@@ -394,7 +450,7 @@ export const powershellFallback = `$path = $wordToComplete -replace '^-[^=]*=', 
  * Shell scripts that ask the program for candidates (`<program> __complete2 ...`), with descriptions where the shell
  * shows them, falling back to what the directive line says.
  */
-export function generateDynamicCompletion(programName: string, shell: ShellType): string {
+export function generateDynamicCompletion(programName: string, shell: ShellType, descriptions = true): string {
   const fn = `_${programName.replace(/[^A-Za-z0-9_]/g, '_')}_completion`;
   const begin = `###-begin-${programName}-completion-###`;
   const end = `###-end-${programName}-completion-###`;
@@ -454,11 +510,15 @@ ${fn}() {
   fi
   for line in "\${lines[@]}"; do
     [[ -z "$line" ]] && continue
-    if [[ "$line" == *$'\\t'* ]]; then
+${
+  descriptions
+    ? `    if [[ "$line" == *$'\\t'* ]]; then
       items+=("\${\${line%%$'\\t'*}//:/\\\\:}:\${line#*$'\\t'}")
     else
       items+=("\${line//:/\\\\:}")
-    fi
+    fi`
+    : `    items+=("\${\${line%%$'\\t'*}//:/\\\\:}")`
+}
   done
   (( \${#items} )) && _describe -t values value items && return 0
   [[ "\${words[CURRENT]}" == -*=* ]] && compset -P '*='
@@ -492,7 +552,7 @@ function ${fn}
     set -e lines[-1]
   end
   if set -q lines[1]
-    printf '%s\\n' $lines
+    ${descriptions ? "printf '%s\\n' $lines" : "string replace -r -- '\\t.*' '' $lines"}
     return
   end
   set -l path (string replace -r -- '^-[^=]*=' '' $current)
@@ -531,7 +591,7 @@ Register-ArgumentCompleter -Native -CommandName ${programName} -ScriptBlock {
   }
   $results = @($lines | Where-Object { $_ } | ForEach-Object {
     $value, $description = $_ -split "\`t", 2
-    [System.Management.Automation.CompletionResult]::new($value, $value, 'ParameterValue', $(if ($description) { $description } else { $value }))
+    [System.Management.Automation.CompletionResult]::new($value, $value, 'ParameterValue', ${descriptions ? '$(if ($description) { $description } else { $value })' : '$value'})
   })
   if ($results.Count -gt 0) { return $results }
   ${powershellFallback}

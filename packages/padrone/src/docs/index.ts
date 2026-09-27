@@ -34,7 +34,12 @@ export type DocsOptions = {
   dryRun?: boolean;
   /** The date in man pages' `.TH` line. Defaults to `SOURCE_DATE_EPOCH` when set (reproducible builds), else today. */
   date?: string | Date;
+  /** The man page section (`.TH`, SEE ALSO references and the file extension). Defaults to `1`. */
+  section?: ManSection;
 };
+
+/** A man page section: `1` (user commands), `8` (administration), or a suffixed one like `'1m'`. */
+export type ManSection = number | string;
 
 export type DocsPage = {
   /** File path relative to output directory (e.g., "deploy.md", "index.md"). */
@@ -427,6 +432,9 @@ function escapeMan(text: string): string {
   );
 }
 
+/** A quoted macro argument (`.TH "..."`): `"` can't appear in one as is. */
+const manArg = (text: string) => `"${escapeMan(text).replace(/"/g, '\\(dq')}"`;
+
 /** Joins escaped parts into a sentence line; a part ending in a newline would start the next line with the `.` separator. */
 const manJoin = (parts: string[]) => parts.join('. ').replace(/\n\./g, '\n\\&.');
 
@@ -440,6 +448,7 @@ const manPageName = (info: HelpInfo, programName: string) => manCommandName(info
 
 type ManPageContext = {
   programName: string;
+  section: string;
   /** The `.TH` date. */
   date: string;
   /** The `.TH` source: the program and its version. */
@@ -456,10 +465,20 @@ function manDate(date: string | Date | undefined, env: Record<string, string | u
   return value.toISOString().slice(0, 10);
 }
 
-function manPageContext(cmd: AnyPadroneCommand, infos: HelpInfo[], date: string | Date | undefined): ManPageContext {
+function manPageContext(
+  cmd: AnyPadroneCommand,
+  infos: HelpInfo[],
+  date: string | Date | undefined,
+  section: ManSection | undefined,
+): ManPageContext {
   const programName = cmd.name || 'program';
   const source = cmd.version ? `${programName} ${cmd.version}` : '';
-  return { programName, date: manDate(date, getCommandRuntime(cmd).env()), source, infos };
+  return { programName, section: manSectionName(section), date: manDate(date, getCommandRuntime(cmd).env()), source, infos };
+}
+
+/** The section as written in file names and references; anything but letters and digits is dropped. */
+function manSectionName(section: ManSection | undefined): string {
+  return String(section ?? 1).replace(/[^A-Za-z0-9]/g, '') || '1';
 }
 
 /** The pages of the parent command and the direct subcommands (the first info is the program's), like cobra's SEE ALSO. */
@@ -478,7 +497,7 @@ function generateManPage(info: HelpInfo, context: ManPageContext): string {
   const manName = commandName.replace(/\s+/g, '-');
   const lines: string[] = [];
 
-  lines.push(`.TH "${escapeMan(manName.toUpperCase())}" "1" "${escapeMan(context.date)}" "${escapeMan(context.source)}" ""`);
+  lines.push(`.TH ${[manName.toUpperCase(), context.section, context.date, context.source, ''].map(manArg).join(' ')}`);
 
   // NAME
   lines.push('.SH NAME');
@@ -568,7 +587,7 @@ function generateManPage(info: HelpInfo, context: ManPageContext): string {
   const related = manSeeAlso(info, context);
   if (related.length > 0) {
     lines.push('.SH SEE ALSO');
-    lines.push(related.map((name) => `\\fB${escapeMan(name)}\\fR(1)`).join(', '));
+    lines.push(related.map((name) => `\\fB${escapeMan(name)}\\fR(${context.section})`).join(', '));
   }
 
   return `${lines.join('\n')}\n`;
@@ -641,11 +660,11 @@ export function generateDocs(program: object, options: DocsOptions = {}): DocsRe
   const allInfos = collectAllHelpInfo(cmd, includeHidden);
   const rootInfo = allInfos[0]!;
   const programName = cmd.name || 'program';
-  const manContext = format === 'man' ? manPageContext(cmd, allInfos, options.date) : undefined;
+  const manContext = format === 'man' ? manPageContext(cmd, allInfos, options.date, options.section) : undefined;
 
   const pages: DocsPage[] = [];
 
-  const ext = format === 'markdown' ? '.md' : format === 'html' ? '.html' : format === 'man' ? '.1' : '.json';
+  const ext = format === 'markdown' ? '.md' : format === 'html' ? '.html' : format === 'man' ? `.${manContext!.section}` : '.json';
 
   for (let i = 0; i < allInfos.length; i++) {
     const info = allInfos[i]!;
@@ -745,35 +764,46 @@ export type SetupManPagesResult = {
   updated: boolean;
 };
 
-/**
- * Returns the local man page directory for the given section.
- * Uses `~/.local/share/man/man<section>` (XDG convention).
- */
-async function getManPageDir(section = 1): Promise<string> {
+/** Where `setupManPages()` / `removeManPages()` put the pages. */
+export type ManPagesInstallOptions = {
+  /** The man page section. Defaults to `1`. */
+  section?: ManSection;
+  /**
+   * The directory the pages are written to. Defaults to `man<section>` under `$XDG_DATA_HOME/man`
+   * (`~/.local/share/man`), read from the program's runtime environment. A leading `~/` is the home directory.
+   */
+  dir?: string;
+};
+
+/** The directory to install man pages in (see `ManPagesInstallOptions.dir`). */
+async function getManPageDir(cmd: AnyPadroneCommand, section: string, dir: string | undefined): Promise<string> {
   const { homedir } = await import('node:os');
-  return join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'man', `man${section}`);
+  const env = getCommandRuntime(cmd).env();
+  const home = env.HOME || env.USERPROFILE || homedir();
+  if (dir) return resolve(dir === '~' || /^~[/\\]/.test(dir) ? join(home, dir.slice(2)) : dir);
+  return join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'man', `man${section}`);
 }
 
 /**
  * Converts a command name to a man page filename.
  * "myapp" → "myapp.1", "myapp deploy" → "myapp-deploy.1"
  */
-function manPageFilename(commandName: string, section = 1): string {
+function manPageFilename(commandName: string, section: string): string {
   return `${commandName.replace(/\s+/g, '-')}.${section}`;
 }
 
 /**
  * Installs man pages for a Padrone CLI program into the local man directory.
- * Generates man pages for all commands and writes them to `~/.local/share/man/man1/`.
+ * Generates man pages for all commands and writes them to `~/.local/share/man/man1/` (see `ManPagesInstallOptions`).
  *
  * After installation, `man <program>` and `man <program>-<subcommand>` should work
  * (assuming `~/.local/share/man` is in `MANPATH` or `manpath` picks it up).
  */
-export async function setupManPages(program: object): Promise<SetupManPagesResult> {
+export async function setupManPages(program: object, options: ManPagesInstallOptions = {}): Promise<SetupManPagesResult> {
   const cmd = getCommand(program);
   const allInfos = collectAllHelpInfo(cmd, false);
-  const context = manPageContext(cmd, allInfos, undefined);
-  const manDir = await getManPageDir(1);
+  const context = manPageContext(cmd, allInfos, undefined, options.section);
+  const manDir = await getManPageDir(cmd, context.section, options.dir);
 
   mkdirSync(manDir, { recursive: true });
 
@@ -781,7 +811,7 @@ export async function setupManPages(program: object): Promise<SetupManPagesResul
   let updated = false;
 
   for (const info of allInfos) {
-    const filename = manPageFilename(manCommandName(info, context.programName));
+    const filename = manPageFilename(manCommandName(info, context.programName), context.section);
     const fullPath = join(manDir, filename);
 
     if (existsSync(fullPath)) updated = true;
@@ -797,18 +827,19 @@ export async function setupManPages(program: object): Promise<SetupManPagesResul
 /**
  * Removes installed man pages for a Padrone CLI program.
  */
-export async function removeManPages(program: object): Promise<{ dir: string; removed: string[] }> {
+export async function removeManPages(program: object, options: ManPagesInstallOptions = {}): Promise<{ dir: string; removed: string[] }> {
   const { unlinkSync } = await import('node:fs');
   const cmd = getCommand(program);
   const allInfos = collectAllHelpInfo(cmd, false);
   const programName = cmd.name || 'program';
-  const manDir = await getManPageDir(1);
+  const section = manSectionName(options.section);
+  const manDir = await getManPageDir(cmd, section, options.dir);
   const removed: string[] = [];
 
   for (let i = 0; i < allInfos.length; i++) {
     const info = allInfos[i]!;
     const commandName = manCommandName(info, programName);
-    const filename = manPageFilename(commandName);
+    const filename = manPageFilename(commandName, section);
     const fullPath = join(manDir, filename);
 
     if (existsSync(fullPath)) {

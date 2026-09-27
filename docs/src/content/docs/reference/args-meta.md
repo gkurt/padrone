@@ -41,7 +41,7 @@ z.object({
 | `requiredIf` | `Record<string, unknown> \| Record<string, unknown>[]` | Required when other options have these values (any object of an array) |
 | `requiredUnless` | `string \| string[]` | Required unless one of these options is provided |
 | `sensitive` | `boolean` | Secret value: prompted without echo, default and examples hidden from help and tool schemas |
-| `complete` | `(ctx) => (string \| { value, description? })[]` (or a Promise) | Values shell completion offers for this option or positional (`fields` config only; needs `padroneCompletion()`) |
+| `complete` | `(ctx) => (string \| { value, description? })[] \| { values, directive? }` (or a Promise) | Values shell completion offers for this option or positional (`fields` config only; needs `padroneCompletion()`) |
 | `hint` | `'file' \| 'dir' \| 'url' \| 'command' \| 'none' \| { ext: string[] }` | What shell completion falls back to for the value (see [Value hints](#value-hints)) |
 | `valueName` | `string` | Placeholder for the value in help and docs (`--out <DIR>`, `<FILE>` for a positional) |
 
@@ -658,7 +658,31 @@ createPadrone('git')
   );
 ```
 
-The callback receives the word typed so far (`prefix`), the options typed before it (`args`, parsed but not validated) and the command path. Return candidates unfiltered or filtered, it's up to you: only those starting with the prefix are shown. Errors are swallowed so a failing lookup never breaks the shell.
+The callback receives the word typed so far (`prefix`), the options typed before it (`args`, parsed but not validated), the command path, the `field` being completed, the `runtime` and the `context` passed to `cli()` (with the commands' `.context()` transforms applied). Return candidates unfiltered or filtered, it's up to you: only those starting with the prefix are shown. Errors are swallowed so a failing lookup never breaks the shell.
+
+Return `{ values, directive }` to also say what the shell falls back to when nothing matches: `'files'`, `'dirs'`, `'ext:json,yaml'`, `'commands'` or `'nofiles'` (see [Value hints](#value-hints)):
+
+```typescript
+complete: async ({ prefix }) => ({ values: await listRemotes(prefix), directive: 'nofiles' }),
+```
+
+### Command-level completion
+
+`.configure({ complete })` completes a command's positionals in one place, like cobra's `ValidArgsFunction`. It's called for each positional word with its `position` (0-based), the positional `field` at that position (if any) and the `positionals` typed before it; a positional field's own `complete` wins over it, and subcommand names are still offered next to its values:
+
+```typescript
+createPadrone('kube')
+  .extend(padroneCompletion())
+  .command('get', (c) =>
+    c
+      .arguments(z.object({ kind: z.string(), names: z.string().array().optional() }), { positional: ['kind', '...names'] })
+      .configure({
+        complete: ({ position, positionals, runtime }) =>
+          position === 0 ? ['pods', 'services'] : listResources(positionals[0], runtime.env().KUBE_NAMESPACE),
+      })
+      .action(/* ... */),
+  );
+```
 
 Option names are offered as help shows them: `--dry-run` for a `dryRun` field (typing `--dryRun` still works), and short flags (`-f`) too when the word is `-` or `-f`. Hidden commands and options are never offered; deprecated ones only when nothing else matches what's typed (`--old` for a deprecated `--old-region`). The static scripts leave out hidden and deprecated ones too.
 

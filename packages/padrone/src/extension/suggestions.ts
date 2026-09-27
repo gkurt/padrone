@@ -1,10 +1,19 @@
 import { getJsonSchema } from '../core/args.ts';
-import { findCommandByName, formatSuggestions, getGlobalArgs, resolveCommand, subcommandNames, suggestSimilar } from '../core/commands.ts';
+import {
+  findCommandByName,
+  formatSuggestions,
+  getExtraCommands,
+  getGlobalArgs,
+  resolveCommand,
+  subcommandNames,
+  suggestSimilar,
+} from '../core/commands.ts';
 import { RoutingError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
-import { parseCliInputToParts, tokenizeInput } from '../core/parse.ts';
+import { unroutedTermIndex } from '../core/not-found.ts';
+import { tokenizeInput } from '../core/parse.ts';
 import { thenMaybe } from '../core/results.ts';
-import { createParseResolver, getDryRunFlagKeys, getKnownOptionNames } from '../core/validate.ts';
+import { getDryRunFlagKeys, getKnownOptionNames } from '../core/validate.ts';
 import { askRuntime } from '../feature/prompt.ts';
 import { getHelpTopics } from '../output/help.ts';
 import type {
@@ -49,7 +58,8 @@ function similarCommands(
   if (!term) return undefined;
 
   const sourceCmd = findSourceCommand(err.command, rootCommand);
-  return { term, similar: suggestSimilar(term, [...extraCandidates, ...subcommandNames(sourceCmd)]) };
+  const extras = getExtraCommands(sourceCmd).map((c) => c.name);
+  return { term, similar: suggestSimilar(term, [...extraCandidates, ...subcommandNames(sourceCmd), ...extras]) };
 }
 
 /** Parse-context key under which the aliases extension passes the alias names, suggested for an unknown top-level command. */
@@ -137,22 +147,6 @@ function extensionOptionNames(command: AnyPadroneCommand): string[] {
   return [...names];
 }
 
-const MARKER = 'padrone0suggestion0term';
-
-/** The first term of the input that doesn't route to a subcommand. */
-function unroutedTerm(tokens: readonly string[], rootCommand: AnyPadroneCommand, skipRootName: boolean): string | undefined {
-  const parts = parseCliInputToParts(tokens, createParseResolver(rootCommand, findCommandByName, skipRootName));
-  const terms = parts.filter((p) => p.type === 'term').map((p) => p.value);
-  if (skipRootName && terms[0] === rootCommand.name) terms.shift();
-  let command = rootCommand;
-  for (const term of terms) {
-    const found = findCommandByName(term, command.commands);
-    if (!found) return term;
-    command = found;
-  }
-  return undefined;
-}
-
 /**
  * `input` with the mistyped command `term` replaced by `replacement`, or `undefined` when there's no such token.
  * Only the token routing stopped at is replaced, not an option value or positional spelled the same.
@@ -166,9 +160,7 @@ function replaceTerm(
   if (input === undefined) return undefined;
   const skipRootName = typeof input === 'string';
   const tokens = tokenizeInput(input);
-  const index = tokens.findIndex(
-    (token, i) => token === term && unroutedTerm(tokens.with(i, MARKER), rootCommand, skipRootName) === MARKER,
-  );
+  const index = unroutedTermIndex(tokens, term, rootCommand, skipRootName);
   if (index === -1) return undefined;
   const replaced = tokens.with(index, replacement);
   return typeof input === 'string' ? replaced.map(quoteToken).join(' ') : replaced;

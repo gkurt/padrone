@@ -9,7 +9,7 @@ import {
   type PadroneArgsSchemaMeta,
   parsePositionalConfig,
 } from '../core/args.ts';
-import { findCommandByName, getGlobalArgs, resolveCommand } from '../core/commands.ts';
+import { findCommandByName, getExtraCommands, getGlobalArgs, resolveCommand } from '../core/commands.ts';
 import { getDryRunFlagKeys } from '../core/validate.ts';
 import type { PadroneHelpTopic } from '../extension/help.ts';
 import type { AnyPadroneCommand, InterceptorMeta, PadroneSchema } from '../types/index.ts';
@@ -38,6 +38,11 @@ export type HelpPreferences = {
   terminal?: { columns?: number; isTTY?: boolean };
   /** Environment variables for auto-detection (e.g., NO_COLOR, CI). */
   env?: Record<string, string | undefined>;
+  /**
+   * List the commands interceptors run without them being in the tree (`extraCommands` meta, e.g. external commands on
+   * `PATH`). Help shown on the command line does; help for remote callers and generated docs don't.
+   */
+  extraCommands?: boolean;
 };
 
 /**
@@ -237,7 +242,12 @@ function collectOptionsInfo(
  * @param cmd - The command to build help info for
  * @param detail - The level of detail ('minimal', 'standard', or 'full')
  */
-export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['detail'] = 'standard', all?: boolean): HelpInfo {
+export function getHelpInfo(
+  cmd: AnyPadroneCommand,
+  detail: HelpPreferences['detail'] = 'standard',
+  all?: boolean,
+  extraCommands?: boolean,
+): HelpInfo {
   const rootCmd = getRootCommand(cmd);
   // A command is a "default" command if its name is '' or it has '' as an alias
   const isDefaultCommand = cmd.parent && (!cmd.name || cmd.aliases?.includes(''));
@@ -342,6 +352,12 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
         ];
       }),
     ];
+
+    // Commands interceptors run without being in the tree (e.g. external commands on PATH)
+    if (extraCommands) {
+      for (const extra of getExtraCommands(cmd))
+        helpInfo.subcommands.push({ name: extra.name, description: extra.description, group: extra.group });
+    }
 
     // In 'full' detail mode, recursively build help for all nested commands
     if (detail === 'full') {
@@ -568,7 +584,7 @@ function findHelpTransform(command: AnyPadroneCommand): PadroneHelpTransform | u
 }
 
 export function generateHelp(rootCommand: AnyPadroneCommand, commandObj: AnyPadroneCommand = rootCommand, prefs?: HelpPreferences): string {
-  const helpInfo = getHelpInfo(commandObj, prefs?.detail, prefs?.all);
+  const helpInfo = getHelpInfo(commandObj, prefs?.detail, prefs?.all, prefs?.extraCommands);
   const formatter = createFormatter(
     prefs?.format ?? 'auto',
     prefs?.detail,

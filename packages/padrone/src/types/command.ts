@@ -67,6 +67,21 @@ export type PadroneActionContext<TContext = unknown> = {
   prompt: PadronePrompt;
 };
 
+/** The hooks `.hook()` registers: `preAction` runs before the action, `postAction` after it succeeds. */
+export type PadroneHookName = 'preAction' | 'postAction';
+
+/**
+ * What a `.hook()` handler receives: the action's context plus the validated args. On a command with subcommands the hook
+ * also runs for them, and then `command`, `args` and `context` are the running subcommand's; they're typed as the command's
+ * own (like its interceptors'), which its global args (`.globalArgs()`) always match.
+ */
+export type PadroneHookContext<TArgs = unknown, TContext = unknown> = PadroneActionContext<TContext> & {
+  /** The validated args of the running command. */
+  args: TArgs;
+  /** `true` under `--dry-run`: the command's dry-run handler runs instead of its action. */
+  dryRun?: boolean;
+};
+
 /**
  * Configuration for a command. `TArgs` is the validated args type `needsApproval` receives
  * (set when `.configure()` comes after `.arguments()`).

@@ -14,6 +14,8 @@ export {
 } from './core/errors.ts';
 export { defineEvent } from './core/events.ts';
 export { defineInterceptor, LOCAL_CALLERS, REMOTE_CALLERS } from './core/interceptors.ts';
+export type { PadroneCommandNotFound } from './core/not-found.ts';
+export { commandNotFound } from './core/not-found.ts';
 export type { OptionArity } from './core/parse.ts';
 export { asyncSchema } from './core/results.ts';
 export type {
@@ -47,6 +49,7 @@ export type {
   PadroneCredentials,
   PadroneCredentialsOptions,
   PadroneEnvOptions,
+  PadroneExternalCommandsOptions,
   PadroneFormatColumns,
   PadroneFormatOptions,
   PadroneHelpOptions,
@@ -63,6 +66,8 @@ export type {
   PadroneLogSerializer,
   PadroneLogStream,
   PadroneOutputFormat,
+  PadronePluginPackageManager,
+  PadronePluginsOptions,
   PadroneProgressConfig,
   PadroneProgressContext,
   PadroneProgressDefaults,
@@ -110,11 +115,13 @@ export {
   padroneConfirm,
   padroneCredentials,
   padroneEnv,
+  padroneExternalCommands,
   padroneFormat,
   padroneHelp,
   padroneInteractive,
   padroneJson,
   padroneLogger,
+  padronePlugins,
   padroneProgress,
   padroneRepl,
   padroneResponseFiles,
@@ -202,8 +209,11 @@ export type {
   PadroneEventContext,
   PadroneEventHandler,
   PadroneExtension,
+  PadroneExtraCommand,
   PadroneFieldGroups,
   PadroneGlobalArgsMeta,
+  PadroneHookContext,
+  PadroneHookName,
   PadroneInput,
   PadroneInterceptor,
   PadroneInterceptorFn,

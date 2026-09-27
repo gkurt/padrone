@@ -28,6 +28,7 @@ import {
   wrapWithCommandLifecycle,
   wrapWithLifecycle,
 } from './interceptors.ts';
+import { emitCommandNotFound, isNotFoundCommand } from './not-found.ts';
 import { errorResult, noop, thenMaybe, warnIfUnexpectedAsync, withDrain } from './results.ts';
 import { buildCommandArgs, formatIssueMessages, getDeprecationWarnings, takeDryRunFlag, validateCommandArgs } from './validate.ts';
 
@@ -43,6 +44,12 @@ export type ExecContext = {
   };
   collectInterceptorsFn: (cmd: AnyPadroneCommand) => RegisteredInterceptor[];
 };
+
+/** Where a program keeps its `ExecContext`, so a start interceptor's `next({ program })` can run the pipeline on another program. */
+export const execContextKey: unique symbol = Symbol('padrone:exec-context');
+
+/** How many times `commandNotFound` handlers may reroute one run, so two handlers can't bounce an input forever. */
+const MAX_REROUTES = 5;
 
 /**
  * Collects registered interceptors from the command's parent chain (root → ... → target).
@@ -131,7 +138,7 @@ export function execCommand(
   errorMode: 'soft' | 'hard' = 'soft',
   caller: PadroneActionContext['caller'] = 'eval',
 ) {
-  const { rootCommand, parseCommandFn, collectInterceptorsFn } = ctx;
+  const { rootCommand } = ctx;
   const baseRuntime = getCommandRuntime(rootCommand);
   const runtime = evalOptions?.runtime
     ? Object.assign({}, baseRuntime, Object.fromEntries(Object.entries(evalOptions.runtime).filter(([, v]) => v !== undefined)))
@@ -157,7 +164,13 @@ export function execCommand(
   // Root interceptors whose id a command-level one reuses: the command's wins for error/shutdown too
   const overridden = new Set<ResolvedInterceptor>();
 
-  const runPipeline = (signal: AbortSignal, pipelineContext: unknown) => {
+  const runPipeline = (signal: AbortSignal, pipelineContext: unknown, program?: AnyPadroneProgram) => {
+    // A start interceptor's `next({ program })` (e.g. with plugins loaded) routes and runs on that program; the lifecycle stays this one's
+    const active = (program !== ctx.builder && (program as { [execContextKey]?: ExecContext } | undefined)?.[execContextKey]) || ctx;
+    const { rootCommand, parseCommandFn, collectInterceptorsFn } = active;
+    const pipelineRootInterceptors =
+      active === ctx ? rootInterceptors : resolveRegisteredInterceptors(rootCommand.interceptors ?? [], factoryCache);
+
     // ── Phase 1: Parse ──────────────────────────────────────────────────
     const parseCtx: InterceptorParseContext = withEmit({
       input: resolvedInput,
@@ -165,23 +178,30 @@ export function execCommand(
       signal,
       context: pipelineContext as object,
       runtime,
-      program: ctx.builder,
+      program: active.builder,
       caller,
     });
 
     // Tokenizer issues (e.g. an option missing its value) surface as validation issues of the parsed command.
     let parseIssues: { command: AnyPadroneCommand; issues: StandardSchemaV1.Issue[] } | undefined;
-    const coreParse = (parseCtx: InterceptorParseContext): InterceptorParseResult => {
+    const coreParse = (parseCtx: InterceptorParseContext, reroutes = 0): InterceptorParseResult | Promise<InterceptorParseResult> => {
       const parseResult = parseCommandFn(parseCtx.input);
       if (parseResult.issues) parseIssues = { command: parseResult.command, issues: parseResult.issues };
       // Warn people typing commands; programmatic callers already see `deprecated` in help and types.
       if (caller === 'cli' || caller === 'repl') {
         for (const warning of getDeprecationWarnings(parseResult.command, parseResult.rawArgs)) parseCtx.runtime.error(warning);
       }
-      return validateParseResult(parseResult, rootCommand);
+      // An unknown command goes to the `commandNotFound` handlers first (only when there are any, so this stays sync otherwise)
+      const notFound = reroutes < MAX_REROUTES ? emitCommandNotFound(parseResult, rootCommand, parseCtx) : undefined;
+      if (!notFound) return validateParseResult(parseResult, rootCommand);
+      return notFound.then((outcome) => {
+        if (outcome && 'input' in outcome) return coreParse({ ...parseCtx, input: outcome.input }, reroutes + 1);
+        if (outcome) return { command: outcome.command, rawArgs: {}, positionalArgs: [] };
+        return validateParseResult(parseResult, rootCommand);
+      });
     };
 
-    const parsedOrPromise = runInterceptorChain('parse', rootInterceptors, parseCtx, coreParse);
+    const parsedOrPromise = runInterceptorChain('parse', pipelineRootInterceptors, parseCtx, (c) => coreParse(c));
 
     // ── Phases 2 & 3 chained after parse ────────────────────────────────
     const continueAfterParse = (parsed: InterceptorParseResult) => {
@@ -229,6 +249,8 @@ export function execCommand(
             validateCtx: InterceptorValidateContext,
           ): InterceptorValidateResult | Promise<InterceptorValidateResult> => {
             validatedCtx = validateCtx;
+            // A `commandNotFound` handler's stand-in has nothing to validate
+            if (isNotFoundCommand(validateCtx.command)) return { args: undefined, argsResult: { value: undefined } };
             if (parseIssues?.command === validateCtx.command) return { args: undefined, argsResult: { issues: parseIssues.issues } as any };
             const { args: preprocessedArgs, issues } = buildCommandArgs(
               validateCtx.command,
@@ -261,7 +283,7 @@ export function execCommand(
               const actionCtx: PadroneActionContext = withEmit({
                 runtime: effectiveRuntime,
                 command: executeCtx.command,
-                program: ctx.builder as any,
+                program: active.builder as any,
                 signal: executeCtx.signal,
                 context: executeCtx.context,
                 caller,
@@ -307,7 +329,7 @@ export function execCommand(
           signal,
           context,
           runtime,
-          ctx.builder,
+          active.builder,
           caller,
           pipelineState,
         );

@@ -17,12 +17,12 @@
     },
     "docs": {
       "name": "@padrone/docs",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "dependencies": {
         "@astrojs/react": "6.0.0",
         "@astrojs/starlight": "^0.41.1",
         "@astrojs/starlight-tailwind": "^5.0.0",
-        "@padrone/tasks-example": "workspace:",
+        "@padrone/pizza-example": "workspace:",
         "@tailwindcss/vite": "4.3.2",
         "@types/react": "19.2.17",
         "@types/react-dom": "19.2.3",
@@ -37,7 +37,7 @@
     },
     "examples/deploy-example": {
       "name": "@padrone/deploy-example",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "bin": "src/cli.ts",
       "dependencies": {
         "padrone": "workspace:*",
@@ -46,7 +46,7 @@
     },
     "examples/padrone-example": {
       "name": "@padrone/tasks-example",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "bin": "src/tasks.ts",
       "dependencies": {
         "ai": "^7.0.8",
@@ -59,9 +59,18 @@
         "@types/react": "^19.2.17",
       },
     },
+    "examples/pizza-example": {
+      "name": "@padrone/pizza-example",
+      "version": "2.1.0",
+      "bin": "src/cli.ts",
+      "dependencies": {
+        "padrone": "workspace:*",
+        "zod": "^4.4.3",
+      },
+    },
     "packages/padrone": {
       "name": "padrone",
-      "version": "2.0.0",
+      "version": "2.1.0",
       "bin": {
         "padrone": "./src/cli/index.ts",
       },
@@ -365,6 +374,8 @@
     "@padrone/deploy-example": ["@padrone/deploy-example@workspace:examples/deploy-example"],
 
     "@padrone/docs": ["@padrone/docs@workspace:docs"],
+
+    "@padrone/pizza-example": ["@padrone/pizza-example@workspace:examples/pizza-example"],
 
     "@padrone/tasks-example": ["@padrone/tasks-example@workspace:examples/padrone-example"],
 

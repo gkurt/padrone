@@ -1,0 +1,19 @@
+{
+  "name": "@padrone/pizza-example",
+  "version": "2.1.0",
+  "private": true,
+  "type": "module",
+  "module": "src/pizza.ts",
+  "exports": {
+    ".": "./src/pizza.ts"
+  },
+  "bin": "src/cli.ts",
+  "scripts": {
+    "start": "bun --conditions=padrone@dev src/cli.ts",
+    "dev": "bun --conditions=padrone@dev run --watch src/cli.ts"
+  },
+  "dependencies": {
+    "padrone": "workspace:*",
+    "zod": "^4.4.3"
+  }
+}

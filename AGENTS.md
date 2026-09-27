@@ -37,7 +37,7 @@ The `--conditions=padrone@dev` flag is critical — it resolves package exports 
 
 ## Project Structure
 
-Monorepo with bun workspaces: `packages/*`, `examples/*`, `docs/`.
+Monorepo with bun workspaces: `packages/*`, `examples/*`, `docs/`. The homepage terminal (`docs/src/components/terminal/`) runs `examples/pizza-example` in the browser through a custom `PadroneRuntime` (ghostty-web terminal, a small shell, `padroneConfig({ loadConfig })` over an in-memory file system, completion via `__complete`); keep that example working in both Bun and the browser.
 
 The core library lives in `packages/padrone/`:
 - `src/types.ts` — All type definitions (`PadroneCommand`, `PadroneBuilder`, `PadroneProgram`, interceptors, extensions, etc.). PadroneCommand has 8 generic type params.
@@ -104,7 +104,7 @@ Keep entries concise — short sentences covering only user-facing changes, no i
 
 **Flags vs aliases vs negatives**: `flags` = single-char short flags (`-v`), stackable. `alias` = multi-char alternative long names (`--dry-run`). `autoAlias` (default: true) auto-generates kebab-case aliases for camelCase option names. `negative` = custom negation keyword(s) for booleans (`negative: 'remote'` makes `--remote` set the arg to `false` and disables `--no-` prefix). Set to `''` or `[]` to only disable the prefix.
 
-**Execution paths**: `eval()`/`cli()` runs all 7 interceptor phases; `parse()` runs parse + validate; `run()` runs execute only (no validation).
+**Execution paths**: `eval()`/`cli()` runs all 7 interceptor phases; `parse()` runs parse + validate; `run()` runs execute only (no validation). `repl({ context })` passes the context to each command; the `repl` command and `--repl` pass on the caller's (pre-transform) context from the repl interceptor's start phase.
 
 **Context**: User-defined, strongly-typed object that flows through the command tree. Defined via `.context<T>()` (type-only) or `.context(transform)` (with runtime callback). Subcommands inherit the parent context type but can transform it. `mount()` accepts an optional `{ context }` option for context transforms. Context is provided at invocation via `cli()`, `eval()`, `run()`. Resolved by walking the command parent chain and applying transforms from root to target. Available in action handlers via `ctx.context` and in all interceptor phase contexts.
 

@@ -195,7 +195,8 @@ export function isProvidedPositionally(command: AnyPadroneCommand, field: string
   return index >= 0 && positionalArgs.length > index;
 }
 
-function isLooseSchema(schema: PadroneSchema | undefined): boolean {
+/** Whether a schema accepts keys it doesn't list (`additionalProperties`, or no object properties to check against). */
+export function isLooseSchema(schema: PadroneSchema | undefined): boolean {
   if (!schema) return false;
   try {
     const json = getJsonSchema(schema);

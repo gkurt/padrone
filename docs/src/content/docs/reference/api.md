@@ -301,6 +301,12 @@ program.extend(padroneConfig({ files: ['.myapprc.json'], searchParents: true, pa
 program.extend(padroneConfig({ files: ['config.json'], xdg: true, searchParents: true, merge: true }));
 // A config file can build on others: { "extends": ["./base.json", "@company/cli-config"], "port": 8080 }
 
+// Profiles: { "port": 3000, "profiles": { "prod": { "port": 80 } } } — `--profile prod` or MYAPP_PROFILE=prod
+program.extend(padroneConfig({ files: ['config.json'], profiles: true }));
+
+// A `config` command for the user config file: myapp config set port 8080, config get port, config list, config edit
+program.extend(padroneConfig({ command: true }));
+
 // Disable config loading
 program.extend(padroneConfig({ files: 'app.config.json', disabled: true }));
 ```
@@ -318,9 +324,24 @@ program.extend(padroneConfig({ files: 'app.config.json', disabled: true }));
 | `packageJson` | `boolean \| string` | Read config from a `package.json` key in each searched directory, after its config files. `true` uses the program name (default: `false`) |
 | `merge` | `boolean` | Merge every config found instead of using the first: the user config directory, then the searched directories from the farthest to cwd, each overriding the last. Objects merge key by key, arrays are replaced. A `--config` file is still used alone (default: `false`) |
 | `extends` | `boolean` | Follow `extends` keys (a path relative to the file, a package name, or a list) to load base configs first (default: `true`) |
-| `loadConfig` | `(files: string \| string[], xdgAppName?: string, search?: { parents?, packageJsonKey?, merge?, extends? }) => Record<string, unknown> \| undefined \| Promise<...>` | Custom config loader function. Replaces the built-in JSON/YAML/TOML loader |
+| `profiles` | `boolean \| { flag?: string; env?: string }` | Named value sets: `profiles.<name>` in a config overrides its top-level values when selected by `--profile <name>`, the `<PROGRAM>_PROFILE` env variable, or a top-level `profile` key (in that order). An unknown profile is a `ConfigError` listing the available ones. `flag`/`env` rename the flag and the variable (default: `false`) |
+| `command` | `boolean \| string` | Add a command group that manages the user config file (`true` names it `config`). Also makes `xdg` default to `true` and `files` to `['config.json']` (default: `false`) |
+| `loadConfig` | `(files: string \| string[], xdgAppName?: string, search?: { parents?, packageJsonKey?, merge?, extends?, env? }) => Record<string, unknown> \| undefined \| Promise<...>` | Custom config loader function. Replaces the built-in JSON/YAML/TOML loader |
 
 Config values have the lowest precedence: CLI > stdin > env > config. Not included by default — must be explicitly applied via `.extend(padroneConfig(...))`. Can be applied at the program level (inherited by all commands) or at the command level.
+
+**The `config` command** (`command: true`), like `git config`. Keys are dotted for nested values (`db.host`), and every subcommand but `path` and `edit` takes `--profile <name>` when `profiles` is on (to read, or write inside `profiles.<name>`):
+
+| Subcommand | Does |
+|------------|------|
+| `config get <key>` | Prints the effective value from the configs the program loads (with the selected profile applied) |
+| `config set <key> <value>` | Writes to the user config file: the first of `files` in the user config directory, else the first JSON name in `files`. The key must be an option (name, alias or kebab-case name) of the command or one of its subcommands, or of global args, unless one of their schemas is loose; with a `schema`, the key and value must fit it instead. The value is coerced by the option's type (`[...]`/`{...}` are read as JSON) and validated. Only JSON files are written (comments are dropped); YAML, TOML and script files are refused |
+| `config unset <key>` | Removes a value from the user config file (and objects left empty) |
+| `config list` (`ls`) | Prints every effective value as `key=value` with the file it comes from |
+| `config path` | Prints the user config file and the files loaded, lowest precedence first |
+| `config edit` | Opens the user config file in `runtime.editor()` and saves it only if it still parses |
+
+`set`, `unset` and `edit` are `mutation: true`. The group doesn't load configs into its own arguments.
 
 ---
 
@@ -1410,7 +1431,7 @@ These extensions are available as named exports from `'padrone'`:
 | Export | Purpose |
 |--------|---------|
 | `padroneEnv(schema?, options?)` | Parse environment variables into args (`vars` maps args to variables, `prefix` reads every option from `PREFIX_*`; both shown in help) |
-| `padroneConfig(options)` | Load args from config files (layered with `merge` and `extends`) |
+| `padroneConfig(options)` | Load args from config files (layered with `merge` and `extends`; `profiles`; a `config` command) |
 | `padroneProgress(config)` | Auto-managed progress indicators, and task lists with `progress.tasks()` |
 | `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable). Logs go to stderr with colored level labels; `stdout: true` sends `trace`/`debug`/`info` to stdout, and `format: 'json'` writes JSON lines (`logger.info({ userId }, 'signed in')` adds fields) |
 | `padroneJson(options?)` | `--json` flag: prints the result as JSON (iterator items one per line). `--jq <expr>` filters it (a built-in jq subset, or pass `jq: (input, expr) => outputs` for a full implementation) and `--template '{{.name}}'` formats it; both imply `--json`. Errors in `cli()` print as `{ "error": { ... } }` on stdout under JSON output. `fields: true` lets `--json=name,url` keep only those fields (`fields: 'required'`: also `--json name,url`, and a bare `--json` fails listing the fields); `availableFields` declares them |

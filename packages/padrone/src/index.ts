@@ -28,6 +28,7 @@ export type {
   PadroneAliasesOptions,
   PadroneAutoOutputOptions,
   PadroneConfigOptions,
+  PadroneConfigProfilesOptions,
   PadroneConfirmOptions,
   PadroneEnvOptions,
   PadroneFormatOptions,

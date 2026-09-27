@@ -1,6 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { OptionArity } from '../core/parse.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
+import type { HelpArgumentInfo } from '../output/formatter.ts';
 import type { AnyPadroneProgram } from './builder.ts';
 import type { AnyPadroneCommand, PadroneActionContext } from './command.ts';
 
@@ -194,6 +195,11 @@ export type InterceptorMeta = {
    * or a function from arg name to variables. Shown in help as `Env: APP_PORT`.
    */
   env?: Record<string, string | readonly string[]> | ((arg: string) => string | readonly string[] | undefined);
+  /**
+   * Options (from `options`) listed in the help of the commands this interceptor applies to, e.g. `--profile <name>`,
+   * or a function from the command to them.
+   */
+  helpOptions?: readonly HelpArgumentInfo[] | ((command: AnyPadroneCommand) => readonly HelpArgumentInfo[]);
 };
 
 /**

@@ -23,7 +23,7 @@ import type { ResolvedPadroneRuntime } from './runtime.ts';
 // ---------------------------------------------------------------------------
 
 /** Meta fields stored as own properties of an interceptor function (`name` is the function's name). */
-const META_KEYS = ['id', 'order', 'disabled', 'inherit', 'options', 'env', 'async'] as const;
+const META_KEYS = ['id', 'order', 'disabled', 'inherit', 'options', 'env', 'async', 'helpOptions'] as const;
 
 function buildInterceptorFn(meta: InterceptorMeta, factory: InterceptorFactory<any, any, any>): PadroneInterceptorFn<any, any, any> {
   Object.defineProperty(factory, 'name', { value: meta.name, configurable: true });
@@ -109,6 +109,7 @@ export function toRegisteredInterceptor(
         options: metaOrFn.options,
         env: metaOrFn.env,
         async: metaOrFn.async,
+        helpOptions: metaOrFn.helpOptions,
         requires: (metaOrFn as { '~requires'?: string[] })['~requires'],
       },
       factory: metaOrFn,

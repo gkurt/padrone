@@ -372,6 +372,8 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
       ...(dryRunKeys.includes('n') && { flags: ['n'] }),
     });
   }
+  const listedNames = new Set(visibleArgs.map((arg) => arg.name));
+  for (const option of collectInterceptorHelpOptions(cmd)) if (!listedNames.has(option.name)) visibleArgs.push({ ...option });
   const envVarsOf = collectInterceptorEnv(cmd);
   for (const arg of visibleArgs) {
     const names = envVarsOf(arg.name);
@@ -511,6 +513,22 @@ function collectInterceptorEnv(command: AnyPadroneCommand): (arg: string) => str
     }
     return undefined;
   };
+}
+
+/** Options that interceptors on the command chain list in help (`meta.helpOptions`). The nearest interceptor of an id wins. */
+function collectInterceptorHelpOptions(command: AnyPadroneCommand): HelpArgumentInfo[] {
+  const seen = new Set<string>();
+  const options: HelpArgumentInfo[] = [];
+  for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
+    for (const { meta } of [...(current.interceptors ?? [])].reverse()) {
+      if (current !== command && meta.inherit === false) continue;
+      if (meta.id && seen.has(meta.id)) continue;
+      if (meta.id) seen.add(meta.id);
+      if (meta.disabled || !meta.helpOptions) continue;
+      options.push(...(typeof meta.helpOptions === 'function' ? meta.helpOptions(command) : meta.helpOptions));
+    }
+  }
+  return options;
 }
 
 /** The flag that shows help (`--help`, or a renamed one), from the help command's flags. */

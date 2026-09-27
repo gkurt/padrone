@@ -64,8 +64,8 @@ export function parseWithFallback<T>(next: () => T | Promise<T>, handle: (res: T
   return parsed instanceof Promise ? parsed.then(handle, fail) : handle(parsed);
 }
 
-/** Turns a result (or one streamed item) into the lines printed under JSON output, e.g. from `--jq`. */
-export type JsonOutputFilter = (value: unknown) => string[];
+/** Turns a result (or one streamed item, `item: true`) into the lines printed under JSON output, e.g. from `--jq`. */
+export type JsonOutputFilter = (value: unknown, item?: boolean) => string[];
 
 const jsonOutputFilters = new WeakMap<object, JsonOutputFilter>();
 
@@ -76,6 +76,23 @@ export function setJsonOutputFilter(runtime: object, filter: JsonOutputFilter): 
 
 export function getJsonOutputFilter(runtime: object): JsonOutputFilter | undefined {
   return jsonOutputFilters.get(runtime);
+}
+
+/**
+ * Prints results in a format of its own when the output isn't JSON (e.g. `-o csv`). `render` gets the result, or one
+ * streamed item (`item: true`), and returns the lines to print, or `undefined` to print it as text; `end` runs after a stream.
+ */
+export type OutputRenderer = { render(value: unknown, item: boolean): string[] | undefined; end?(): string[] };
+
+const outputRenderers = new WeakMap<object, OutputRenderer>();
+
+/** Sets how auto-output prints results for this run, unless JSON output applies (which takes precedence). */
+export function setOutputRenderer(runtime: object, renderer: OutputRenderer): void {
+  outputRenderers.set(runtime, renderer);
+}
+
+export function getOutputRenderer(runtime: object): OutputRenderer | undefined {
+  return outputRenderers.get(runtime);
 }
 
 /** Callers that return results through their own transport (HTTP, MCP, AI tool calls): no terminal, no stdin. */

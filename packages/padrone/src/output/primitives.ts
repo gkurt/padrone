@@ -13,6 +13,8 @@ export type TableOptions = {
   maxColumnWidth?: number;
   /** Show borders (default: true for ansi/text, false for others). */
   border?: boolean;
+  /** Show the header row in text output (default: true). */
+  header?: boolean;
 };
 
 function stringifyCell(value: unknown): string {
@@ -56,7 +58,7 @@ export function renderTable(data: Record<string, unknown>[], options: TableOptio
   );
 
   const colWidths = columns.map((_, i) => {
-    const headerWidth = headers[i]!.length;
+    const headerWidth = options?.header === false ? 0 : headers[i]!.length;
     const maxCellWidth = rows.reduce((max, row) => Math.max(max, row[i]!.length), 0);
     return Math.max(headerWidth, maxCellWidth);
   });
@@ -65,7 +67,7 @@ export function renderTable(data: Record<string, unknown>[], options: TableOptio
 
   if (ctx.format === 'markdown') return renderTableMarkdown(headers, rows, colWidths, getAlign);
   if (ctx.format === 'html') return renderTableHtml(columns, headers, rows, data, getAlign);
-  return renderTableText(headers, rows, colWidths, getAlign, options?.border !== false, ctx);
+  return renderTableText(headers, rows, colWidths, getAlign, options?.border !== false, options?.header !== false, ctx);
 }
 
 function renderTableText(
@@ -74,6 +76,7 @@ function renderTableText(
   colWidths: number[],
   getAlign: (i: number) => 'left' | 'right' | 'center',
   border: boolean,
+  header: boolean,
   ctx: OutputContext,
 ): string {
   const { styler } = ctx;
@@ -90,15 +93,14 @@ function renderTableText(
       formatRow(cells, style)
         .map((c) => ` ${c} `)
         .join(styler.meta('│'));
-    const headerRow = row(headers, styler.label);
     const dataRows = rows.map((r) => row(r, styler.description));
-    return [headerRow, divider, ...dataRows].join('\n');
+    return (header ? [row(headers, styler.label), divider, ...dataRows] : dataRows).join('\n');
   }
 
   const headerCells = formatRow(headers, styler.label);
   const dataCells = rows.map((r) => formatRow(r, styler.description));
   const gap = '  ';
-  return [headerCells.join(gap), ...dataCells.map((r) => r.join(gap))].join('\n');
+  return [...(header ? [headerCells.join(gap)] : []), ...dataCells.map((r) => r.join(gap))].join('\n');
 }
 
 function renderTableMarkdown(

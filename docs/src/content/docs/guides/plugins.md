@@ -42,7 +42,8 @@ Additional opt-in extensions are available for advanced features:
 | `padroneConfig(options)` | `'padrone'` | Load args from config files (`xdg`, `searchParents`, `packageJson`, `merge`, `extends` options) |
 | `padroneProgress(config)` | `'padrone'` | Auto-managed progress indicators and `progress.tasks()` task lists (no-op for serve, MCP and `tool()` calls) |
 | `padroneLogger(options)` | `'padrone'` | Structured logging to stderr with levels (`--verbose` repeatable; `shortFlags`, `env`, `stdout`, `format: 'json'` options) |
-| `padroneJson(options?)` | `'padrone'` | `--json` flag: results and errors as JSON; `--jq` and `--template` filter and format the result |
+| `padroneJson(options?)` | `'padrone'` | `--json` flag: results and errors as JSON; `--jq` and `--template` filter and format the result; `fields` adds gh-style `--json name,url` |
+| `padroneFormat(options?)` | `'padrone'` | `--output`/`-o <format>`: text, json, yaml, csv, tsv or table; `tableFlags` adds `--columns`, `--sort`, `--no-header` |
 | `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`) before `mutation: true` commands |
 | `padroneTiming()` | `'padrone'` | Execution timing (`--time`) |
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking |
@@ -78,6 +79,30 @@ const program = createPadrone('myapp')
 ```
 
 Extensions compose naturally — chain multiple `.extend()` calls to layer functionality. Extensions applied at the program level affect all commands; extensions applied inside a `.command()` callback affect only that command.
+
+### Output Formats
+
+`padroneJson()` adds `--json` (with `--jq` and `--template`), and `padroneFormat()` adds `--output`/`-o <format>`:
+
+```typescript
+import { createPadrone, padroneFormat, padroneJson } from 'padrone';
+
+const program = createPadrone('myapp')
+  .extend(padroneJson({ fields: true }))
+  .extend(padroneFormat({ tableFlags: true }))
+  .command('users', (c) => c.action(() => fetchUsers()));
+
+// myapp users --json=id,name              only these fields of each user
+// myapp users -o yaml
+// myapp users -o csv --columns id,name --sort -createdAt --no-header
+// myapp users -o table
+```
+
+**Field selection.** With `fields: true`, `--json=a,b` keeps only those keys of the result (of each item, for arrays and streamed items); `--jq` and `--template` then apply to what's left. The list must be attached with `=` so `--json` never takes the next argument (`myapp user --json 42` keeps `42` as a positional). With `fields: 'required'` (like `gh`), `--json a,b` also works, and a bare `--json` fails with `Specify one or more comma-separated fields for --json: …`. The available fields are `availableFields` when given (a list, or `(command) => list | undefined`), checked before the command runs; otherwise they're the keys of the result, checked when it's printed.
+
+**Formats.** `text` (the default) is how auto-output prints results without the extension; `json` is the same as a bare `--json` that prints every field (errors print as JSON too); `yaml` uses a small built-in emitter (streamed items as `---` documents); `csv` (RFC 4180 quoting) and `tsv` (tabs and newlines escaped as `\t`/`\n`) print an object, or an array of objects, as rows under a header, and streamed items one row each (the header comes from the first item); `table` renders the rows with the table primitive (a stream is rendered when it ends). A result that isn't an object, such as a string, prints as text under csv, tsv and table. Options: `formats` restricts the accepted list, `default` sets the format without `-o`, `flags` renames the flag (`['output', 'o']`), `tableFlags` adds `--columns a,b` (pick and order), `--sort <column>` (`-column` for descending; sorted streams wait for the end) and `--no-header` for table, csv and tsv; unknown columns are errors.
+
+`--json`, `--jq` and `--template` take precedence over `-o`. Serve, MCP and `tool()` calls get raw results either way. A command's own `--output`/`-o` option wins over the extension's.
 
 ### Writing Custom Extensions
 

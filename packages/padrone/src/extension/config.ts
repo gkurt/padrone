@@ -11,7 +11,7 @@ import type { ConfigSource } from './config-command.ts';
 import { addConfigCommand } from './config-command.ts';
 import type { ConfigSearchOptions } from './config-loader.ts';
 import { applyProfile, loadConfig, profileEnvVar } from './config-loader.ts';
-import { frameworkFlags, valuesForCommand } from './utils.ts';
+import { frameworkFlags, isRemoteCaller, valuesForCommand } from './utils.ts';
 
 export type { ConfigSearchOptions } from './config-loader.ts';
 
@@ -193,9 +193,9 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
     () => ({
       validate(ctx: InterceptorValidateContext, next) {
         const flags = frameworkFlags(ctx.rawArgs, ctx.command);
-        // Extract --config / -c from rawArgs
+        // Extract --config / -c from rawArgs. Remote callers can't point at local files: for them it's an unknown option
         let explicitConfigPath: string | undefined;
-        if (flagEnabled) {
+        if (flagEnabled && !isRemoteCaller(ctx.caller)) {
           explicitConfigPath = (flags.get('config') ?? flags.get('c')) as string | undefined;
           if (typeof explicitConfigPath === 'string') flags.delete('config', 'c');
         }

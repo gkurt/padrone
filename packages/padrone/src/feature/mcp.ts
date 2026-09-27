@@ -159,6 +159,9 @@ export function createMcpHandler(
       case 'tools/call': {
         const toolName = params?.name as string;
         const args = (params?.arguments ?? {}) as Record<string, unknown>;
+        if (typeof args !== 'object' || Array.isArray(args)) {
+          return { jsonrpc: '2.0', id: id ?? null, error: { code: -32602, message: 'Invalid params: arguments must be an object' } };
+        }
 
         // Built-in help tool
         if (toolName === helpToolName) {

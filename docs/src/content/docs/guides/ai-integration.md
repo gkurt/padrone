@@ -136,7 +136,7 @@ When you run `myapp serve`, Padrone:
 
 1. Collects all non-hidden commands that have an action or schema
 2. Maps each to a URL path (e.g., `users list` → `/users/list`)
-3. For each request, converts query params (GET) or JSON body (POST) to CLI flags and calls `eval()`. Nested objects are passed as dotted query params (`?db.host=localhost`), repeated params fill arrays, `_` gives positional values, and `null` in a JSON body means unset
+3. For each request, converts query params (GET) or JSON body (POST) to CLI flags and calls `eval()`. Nested objects are passed as dotted query params (`?db.host=localhost`), repeated params fill arrays, `_` gives positional values, a param without a value is an empty string (`?name=`) or turns a boolean on (`?verbose`), and `null` in a JSON body means unset
 4. Returns structured JSON responses
 
 ### Mutation Commands
@@ -228,7 +228,7 @@ await program.serve({
 { "ok": false, "error": "action_error", "message": "Database unavailable" }
 ```
 
-Validation errors go through `onError` when it's set. Arguments reach the command intact: strings with spaces or quotes, arrays, nested objects (as `--a.b=`) and booleans with a custom `negative` keyword. An empty POST body means no arguments.
+Validation errors go through `onError` when it's set. Arguments reach the command intact: strings with spaces or quotes, arrays (empty ones too, and items like `[x]`), nested objects (as `--a.b=`) and `false` for booleans with a custom `negative` keyword or none. An empty POST body means no arguments. Serve, MCP and `tool()` callers can't pick a config file: `--config`/`-c` is an unknown option for them, so they can't make the server read local files.
 
 The `serve` command is hidden from help. Leave out `padroneServe()` to go without it; `program.serve()` works either way.
 
@@ -342,7 +342,7 @@ Your action handlers should return data that the AI can use:
 })
 ```
 
-The tool returns `{ result, logs, error }` to the AI model: `result` is the action's return value, `logs` what the command printed (`runtime.output`, `ctx.context.output.*`), and `error` the error message when the command failed, its arguments didn't validate, or the command doesn't exist. The AI SDK's `abortSignal` cancels the command through `ctx.signal`.
+The tool returns `{ result, logs, error }` to the AI model: `result` is the action's return value, `logs` what the command printed (`runtime.output`, `ctx.context.output.*`, and its stderr when it succeeded), and `error` the error message, after what it wrote to stderr, when the command failed, its arguments didn't validate, or the command doesn't exist. The AI SDK's `abortSignal` cancels the command through `ctx.signal`.
 
 ### Multiple Tools
 
@@ -366,7 +366,7 @@ const result = await streamText({
 
 ### Tool Schema
 
-The `.tool()` method generates a JSON schema from your Zod definitions. The descriptions you provide with `.describe()` help the AI understand how to use each argument:
+The tool takes a single `command` string (`"weather current London --units fahrenheit"`), and its description holds the program's help. The model reads a command's arguments with `help <command>`, so the descriptions you provide with `.describe()` help it understand how to use each one:
 
 ```typescript
 z.object({

@@ -420,14 +420,18 @@ function buildArgsInputSchema(cmd: AnyPadroneCommand): Record<string, unknown> {
   };
 }
 
-/** Arg name → first custom negative keyword (`negative: 'remote'`), from the command's schema and its global args. */
+/**
+ * Arg name → first custom negative keyword (`negative: 'remote'`), or `''` when the `--no-` prefix is disabled without one,
+ * from the command's schema and its global args.
+ */
 export function getNegativeKeywords(cmd: AnyPadroneCommand): Record<string, string> {
   const keywords: Record<string, string> = {};
   const collect = (schema: PadroneSchema | undefined, meta: { fields?: any; autoAlias?: boolean } | undefined) => {
     if (!schema) return;
     try {
-      const { negatives } = extractSchemaMetadata(schema, meta?.fields, meta?.autoAlias);
+      const { negatives, customNegation } = extractSchemaMetadata(schema, meta?.fields, meta?.autoAlias);
       for (const [keyword, argName] of Object.entries(negatives)) keywords[argName] ??= keyword;
+      for (const argName of customNegation) keywords[argName] ??= '';
     } catch {}
   };
   collect(cmd.argsSchema, cmd.meta);
@@ -438,7 +442,8 @@ export function getNegativeKeywords(cmd: AnyPadroneCommand): Record<string, stri
 
 /**
  * Serializes args into argv tokens (`--key=value`, one per token, unquoted), for passing to `eval()` as an array:
- * `null` and `undefined` are left out, booleans become `--key` / `--no-key` (or the custom negative keyword), arrays repeat the flag, objects become `--a.b=`.
+ * `null` and `undefined` are left out, booleans become `--key` / `--no-key` (or the custom negative keyword, or `--key=false`),
+ * arrays repeat the flag (`--key=[]` when empty), objects become `--a.b=`.
  */
 export function serializeArgsToFlags(args: Record<string, unknown>, cmd?: AnyPadroneCommand): string[] {
   const negatives = cmd ? getNegativeKeywords(cmd) : {};
@@ -447,9 +452,16 @@ export function serializeArgsToFlags(args: Record<string, unknown>, cmd?: AnyPad
     // `null` (allowed by nullable fields' JSON Schema) is unset, like an omitted key
     if (value === undefined || value === null) return;
     if (typeof value === 'boolean') {
-      parts.push(value ? `--${key}` : `--${negatives[key] ?? `no-${key}`}`);
+      const negative = negatives[key] ?? `no-${key}`;
+      parts.push(value ? `--${key}` : negative ? `--${negative}` : `--${key}=false`);
     } else if (Array.isArray(value)) {
-      for (const v of value) parts.push(`--${key}=${typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)}`);
+      if (value.length === 0) parts.push(`--${key}=[]`);
+      for (const v of value) {
+        const text = typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v);
+        // `--key=[a,b]` is list syntax, so a bracketed item goes in a token of its own, which is taken as is
+        if (text.startsWith('[') && text.endsWith(']')) parts.push(`--${key}`, text);
+        else parts.push(`--${key}=${text}`);
+      }
     } else if (typeof value === 'object' && value !== null) {
       for (const [nestedKey, nestedValue] of Object.entries(value)) add(`${key}.${nestedKey}`, nestedValue);
     } else {

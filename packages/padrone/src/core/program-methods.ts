@@ -85,8 +85,9 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
 
       const named = Object.fromEntries(Object.entries(args).filter(([key]) => !positionalNames.has(key)));
       for (const token of serializeArgsToFlags(named, commandObj)) {
-        const eq = token.indexOf('=');
-        parts.push(eq !== -1 && token.includes(' ', eq) ? `${token.slice(0, eq)}="${token.slice(eq + 1)}"` : token);
+        const eq = token.startsWith('--') ? token.indexOf('=') : -1;
+        if (!token.includes(' ', eq)) parts.push(token);
+        else parts.push(eq === -1 ? `"${token}"` : `${token.slice(0, eq)}="${token.slice(eq + 1)}"`);
       }
     }
 
@@ -200,27 +201,38 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
         const parsed = await parse(input.command);
         // A dry run changes nothing
         if (parsed.dryRun) return false;
-        if (typeof parsed.command.needsApproval === 'function') return parsed.command.needsApproval(parsed.args);
+        // Without valid args the approval function can't decide (values from env or config aren't applied here): ask
+        if (typeof parsed.command.needsApproval === 'function')
+          return parsed.argsResult?.issues ? true : parsed.command.needsApproval(parsed.args);
         if (parsed.command.needsApproval != null) return !!parsed.command.needsApproval;
         return !!parsed.command.mutation;
       },
       execute: async (input, options) => {
-        const output: string[] = [];
-        const errors: string[] = [];
+        const printed: { text: string; stderr?: boolean }[] = [];
         const result = await evalCommand(input.command, {
           caller: 'tool',
           signal: options?.abortSignal,
           runtime: {
-            output: (...args) => output.push(args.map(outputValueToText).join(' ')),
-            error: (text) => errors.push(text),
+            output: (...args) => printed.push({ text: args.map(outputValueToText).join(' ') }),
+            error: (text) => printed.push({ text, stderr: true }),
             interactive: 'unsupported',
             format: 'text',
           },
         });
         // Failures come back in `error` for the model to read; auto-output only prints errors in `cli()`
-        if (result.error !== undefined) errors.push(result.error instanceof Error ? result.error.message : String(result.error));
-        else if (result.argsResult?.issues) errors.push(`Validation error:\n${formatIssueMessages(result.argsResult.issues)}`);
-        return { result: result.result, logs: output.join('\n'), error: errors.join('\n') };
+        const failure =
+          result.error !== undefined
+            ? result.error instanceof Error
+              ? result.error.message
+              : String(result.error)
+            : result.argsResult?.issues
+              ? `Validation error:\n${formatIssueMessages(result.argsResult.issues)}`
+              : undefined;
+        const lines = (keep: (line: { stderr?: boolean }) => boolean) => printed.filter(keep).map((line) => line.text);
+        // What a successful command wrote to stderr (warnings, logs) is part of its logs, not an error
+        if (failure === undefined) return { result: result.result, logs: lines(() => true).join('\n'), error: '' };
+        const error = [...lines((line) => !!line.stderr), failure].join('\n');
+        return { result: result.result, logs: lines((line) => !line.stderr).join('\n'), error };
       },
     };
   };

@@ -196,3 +196,4 @@ This adds `| ` before each line of output, creating a visual distinction.
 | `outputPrefix` | `string` | none | Prefix for output lines |
 | `scope` | `string` | none | Start scoped to a command path |
 | `runtime` | `Partial<PadroneRuntime>` | none | Runtime overrides for the session (`readLine`, `output`, `error`, …) |
+| `context` | `TContext` | none | Context each command receives; the `repl` command and `--repl` pass on the one given to `cli()` |

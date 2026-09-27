@@ -4,7 +4,13 @@ const TerminalLazy = lazy(() => import('./TerminalRender.tsx').then((module) => 
 
 export function Terminal() {
   return (
-    <Suspense fallback={<div>Loading Terminal...</div>}>
+    <Suspense
+      fallback={
+        <div className="not-content flex h-[29rem] items-center justify-center rounded-xl bg-[#1a1b26] text-sm text-[#a9b1d6]">
+          Loading terminal…
+        </div>
+      }
+    >
       <TerminalLazy />
     </Suspense>
   );

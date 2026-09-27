@@ -48,6 +48,19 @@ describe('renderTable', () => {
     expect(result).toContain('┼');
   });
 
+  it('draws the border divider as wide as the rows', () => {
+    const lines = renderTable(data, undefined, textCtx()).split('\n');
+    expect(new Set(lines.map((line) => line.length)).size).toBe(1);
+  });
+
+  it('aligns bordered columns when cells are colored', () => {
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI escapes
+    const ansi = /\x1b\[[0-9;]*m/g;
+    const lines = renderTable(data, undefined, ansiCtx()).replace(ansi, '').split('\n');
+    expect(lines[2]).toBe(' api  │ up     │ 42ms    ');
+    expect(new Set(lines.map((line) => line.length)).size).toBe(1);
+  });
+
   it('renders text format without borders', () => {
     const result = renderTable(data, { border: false }, textCtx());
     expect(result).toContain('api');

@@ -46,6 +46,8 @@ export type PadroneReplPreferences<TScope extends string = string> = {
   scope?: TScope;
   /** Override runtime functions for the session (input via `readLine`, `output`, `error`, …), like `eval()`'s `runtime`. */
   runtime?: Partial<PadroneRuntime>;
+  /** The context each command in the session receives, like `eval()`'s `context`. The `repl` command and `--repl` pass on the one given to `cli()`. */
+  context?: unknown;
 };
 
 /**

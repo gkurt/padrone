@@ -1084,6 +1084,7 @@ for await (const result of program.repl({
   - `outputPrefix`: Prefix for output lines
   - `scope`: Start scoped to a command path (strongly typed)
   - `runtime`: Runtime overrides for the session (`readLine`, `output`, `error`, …), like `eval()`'s `runtime`
+  - `context`: The context each command receives, like `eval()`'s `context` (the `repl` command and `--repl` pass on the one given to `cli()`)
 
 **Returns:** `AsyncIterable<PadroneCommandResult>`
 

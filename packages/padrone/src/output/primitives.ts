@@ -86,10 +86,13 @@ function renderTableText(
   if (border) {
     const sep = ctx.styler.meta('─');
     const divider = colWidths.map((w) => sep.repeat(w + 2)).join(styler.meta('┼'));
-    const row = (cells: string[]) => cells.map((c, i) => ` ${padCell(c, colWidths[i]!, getAlign(i))} `).join(styler.meta('│'));
-    const headerRow = row(headers.map((h) => styler.label(h)));
-    const dataRows = rows.map((r) => row(r.map((c) => styler.description(c))));
-    return [headerRow, styler.meta('─') + divider + styler.meta('─'), ...dataRows].join('\n');
+    const row = (cells: string[], style: (s: string) => string) =>
+      formatRow(cells, style)
+        .map((c) => ` ${c} `)
+        .join(styler.meta('│'));
+    const headerRow = row(headers, styler.label);
+    const dataRows = rows.map((r) => row(r, styler.description));
+    return [headerRow, divider, ...dataRows].join('\n');
   }
 
   const headerCells = formatRow(headers, styler.label);

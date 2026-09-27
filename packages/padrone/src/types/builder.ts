@@ -974,7 +974,9 @@ export type PadroneProgram<
 
   /** Start an interactive REPL session. @category Execution */
   repl: (
-    options?: PadroneReplPreferences<PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>>,
+    options?: PadroneReplPreferences<PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>> & {
+      context?: TContext;
+    },
   ) => AsyncIterable<PadroneCommandResult<FlattenCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>>> & {
     drain: () => Promise<
       PadroneDrainResult<

@@ -197,6 +197,11 @@ describe('tool()', () => {
     expect((await pending).result).toBe('aborted');
   });
 
+  test("the repl command doesn't start a REPL for AI tools", async () => {
+    const res = (await tool.execute!({ command: 'repl' }, {} as never)) as { error: string };
+    expect(res.error).toContain('The REPL needs a terminal');
+  });
+
   test('the input schema requires the command', () => {
     expect((tool.inputSchema as any).jsonSchema.required).toEqual(['command']);
   });

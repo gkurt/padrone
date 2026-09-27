@@ -429,6 +429,7 @@ for await (const result of program.repl({
   spacing: { after: true },
   outputPrefix: '  ',
   completion: true,
+  context: { db },          // the context each command receives
 })) {
   // handle each result
 }
@@ -635,6 +636,8 @@ const builder = testCli(program);
 | `.args(input)` | Set CLI input string |
 | `.env(vars)` | Set environment variables |
 | `.prompt(answers)` | Mock interactive prompt answers |
+| `.stdin(data)` | Mock piped stdin |
+| `.context(value)` | Context commands receive, as passed to `cli()` |
 | `.run(input?)` | Execute and return `TestCliResult` |
 | `.repl(inputs)` | Run REPL session with array of inputs |
 

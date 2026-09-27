@@ -63,14 +63,15 @@ function answerValue(
     const toChoice = (v: unknown) => choices.find((c) => c.value === v || String(c.value) === String(v))?.value ?? v;
     return Array.isArray(answer) ? answer.map(toChoice) : toChoice(answer);
   }
-  if (typeof answer !== 'string' || !schema) return answer;
+  if (!schema) return answer;
   const value =
-    propSchema?.type === 'array'
+    typeof answer === 'string' && propSchema?.type === 'array'
       ? answer
           .split(',')
           .map((item) => item.trim())
           .filter(Boolean)
       : answer;
+  if (typeof value !== 'string' && !Array.isArray(value)) return value;
   return coerceArgs({ [field]: value }, schema)[field];
 }
 

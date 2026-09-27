@@ -39,6 +39,7 @@ test('greet command', async () => {
 | `.prompt(answers)` | Provide mock answers for interactive prompts |
 | `.config(files)` | Provide mock config file contents |
 | `.stdin(data)` | Provide mock stdin data (piped input) |
+| `.context(value)` | The context commands receive (`ctx.context`), as passed to `cli()` |
 | `.run(input?)` | Execute the command and return the result |
 | `.repl(inputs)` | Run a REPL session with a sequence of inputs |
 

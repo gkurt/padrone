@@ -181,8 +181,9 @@ import { testCli } from 'padrone/test';
 const result = await testCli(program).run('greet World');
 // result: { command, args, result, issues, stdout, stderr, error }
 
-// With mocks
+// With mocks (and the typed context, if the program declares one)
 await testCli(program)
+  .context({ db })
   .env({ API_KEY: 'xxx' })
   .prompt({ name: 'myapp' })
   .run('deploy --env staging');

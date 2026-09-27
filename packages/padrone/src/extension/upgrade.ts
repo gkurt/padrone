@@ -1,4 +1,5 @@
 import { ActionError } from '../core/errors.ts';
+import { defineInterceptor } from '../core/interceptors.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import { fetchLatestVersion, isNewerVersion } from '../feature/update-check.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
@@ -28,12 +29,12 @@ export type PadroneUpgradeOptions = {
   /** The dist-tag to upgrade to when no version is given, e.g. `'next'`. `--channel` overrides it. Defaults to `'latest'`. */
   channel?: string;
   /**
-   * How the program is installed. Detected from where it runs by default (a Homebrew cellar, `~/.bun`, pnpm's or
-   * yarn's global directory, otherwise npm). A function returns the command to run (`['npm', 'i', '-g', ...]`), or performs
+   * How the program is installed. Detected from its script path by default, symlinks resolved (a Homebrew cellar, `~/.bun`,
+   * pnpm's or yarn's global directory, otherwise npm), then from the executable for a compiled binary. A function returns the command to run (`['npm', 'i', '-g', ...]`), or performs
    * the upgrade itself (e.g. downloading a standalone binary) and returns nothing.
    */
   installer?: PadroneInstaller | ((plan: PadroneUpgradePlan) => readonly string[] | undefined | Promise<readonly string[] | undefined>);
-  /** Homebrew formula, when installed with `brew`. Defaults to the package name. */
+  /** Homebrew formula, when installed with `brew`. Defaults to the package name. `brew` only upgrades to the latest: `--to` and `--channel` fail. */
   brewFormula?: string;
   /** Name of the command. Defaults to `'upgrade'`. */
   command?: string;
@@ -43,19 +44,40 @@ export type PadroneUpgradeOptions = {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-/** How the running program was installed, from its script path (`process.argv[1]`) and the runtime's path. */
+function installerFromPath(path: string): PadroneInstaller | undefined {
+  const p = path.replace(/\\/g, '/').toLowerCase();
+  // Where a JS runtime lives (e.g. Homebrew's Node) says nothing about how the program was installed
+  if (/\/(node|nodejs|bun|deno)(\.exe)?$/.test(p)) return undefined;
+  if (p.includes('/cellar/')) return 'brew';
+  if (p.includes('/.bun/')) return 'bun';
+  if (/\/pnpm\/|\/pnpm-global\//.test(p)) return 'pnpm';
+  if (/\/\.yarn\/|\/yarn\/global\//.test(p)) return 'yarn';
+  if (p.includes('/node_modules/')) return 'npm';
+  return undefined;
+}
+
+/**
+ * How the running program was installed: decided by the first path that tells, its script path (`process.argv[1]`),
+ * then the executable (a compiled binary; a JS runtime's own path is ignored). So an npm install under Homebrew's Node
+ * is npm and a pnpm install run by Bun is pnpm.
+ */
 export function detectInstaller(
   paths: readonly (string | undefined)[] = [globalThis.process?.argv?.[1], globalThis.process?.execPath],
 ): PadroneInstaller {
-  const joined = paths.filter(Boolean).join('\n').replace(/\\/g, '/').toLowerCase();
-  if (/\/cellar\/|\/homebrew\/|\/linuxbrew\//.test(joined)) return 'brew';
-  if (joined.includes('/.bun/')) return 'bun';
-  if (/\/pnpm\/|\/pnpm-global\//.test(joined)) return 'pnpm';
-  if (/\/\.yarn\/|\/yarn\/global\//.test(joined)) return 'yarn';
+  for (const path of paths) {
+    const installer = path ? installerFromPath(path) : undefined;
+    if (installer) return installer;
+  }
   return 'npm';
 }
 
-function installerCommand(installer: PadroneInstaller, packageName: string, version: string, brewFormula?: string): string[] {
+function installerCommand(
+  installer: PadroneInstaller,
+  packageName: string,
+  version: string,
+  brewFormula?: string,
+  pinned?: boolean,
+): string[] {
   const spec = `${packageName}@${version}`;
   switch (installer) {
     case 'bun':
@@ -65,11 +87,24 @@ function installerCommand(installer: PadroneInstaller, packageName: string, vers
     case 'yarn':
       return ['yarn', 'global', 'add', spec];
     case 'brew':
+      if (pinned)
+        throw new ActionError('Homebrew can only upgrade to the latest version of the formula; --to and --channel are not supported');
       return ['brew', 'upgrade', brewFormula ?? packageName];
     default:
       return ['npm', 'install', '-g', spec];
   }
 }
+
+/** The script path with symlinks resolved (npm's global `bin` links into `lib/node_modules`), then the executable. */
+async function installPaths(): Promise<(string | undefined)[]> {
+  const script = globalThis.process?.argv?.[1];
+  const real = script ? await import('node:fs').then((fs) => fs.promises.realpath(script)).catch(() => script) : undefined;
+  return [real, globalThis.process?.execPath];
+}
+
+/** Versions and dist-tags end up in a shell command on Windows */
+const VERSION_PATTERN = /^[\w.+-]+$/;
+const normalizeVersion = (version: string) => version.replace(/^v(?=\d)/, '');
 
 async function spawnCommand(command: readonly string[]): Promise<number> {
   const { spawn } = await import('node:child_process');
@@ -79,6 +114,15 @@ async function spawnCommand(command: readonly string[]): Promise<number> {
     child.on('error', reject);
     child.on('close', (code) => resolve(code ?? 1));
   });
+}
+
+/** Marks the upgrade command, so `padroneUpdateCheck()` doesn't suggest upgrading right after it ran. */
+const UPGRADE_ID = 'padrone:upgrade';
+const upgradeMarker = defineInterceptor({ id: UPGRADE_ID, name: UPGRADE_ID }, () => ({}));
+
+/** Whether `command` is the one `padroneUpgrade()` adds. */
+export function isUpgradeCommand(command: AnyPadroneCommand): boolean {
+  return !!command.interceptors?.some((interceptor) => interceptor.meta.id === UPGRADE_ID);
 }
 
 type UpgradeArgs = { check?: boolean; to?: string; channel?: string; force?: boolean };
@@ -107,22 +151,28 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
     const packageName = options.packageName ?? root.name;
     const current = await getVersion(root.version);
     const channel = args.channel ?? options.channel ?? 'latest';
-    const version = args.to ?? (await fetchLatestVersion(packageName, options.registry ?? 'npm', channel));
-    if (!version) throw new ActionError(`Couldn't find the ${channel} version of ${packageName}; check your connection or the registry`);
+    if (!VERSION_PATTERN.test(channel)) throw new ActionError(`Invalid channel "${channel}"`);
+    const found = args.to ?? (await fetchLatestVersion(packageName, options.registry ?? 'npm', channel));
+    if (!found) throw new ActionError(`Couldn't find the ${channel} version of ${packageName}; check your connection or the registry`);
+    if (!VERSION_PATTERN.test(found)) throw new ActionError(`Invalid version "${found}"`);
+    const version = normalizeVersion(found);
     // A channel other than `latest` may point at a pre-release, which is what the user asked for
-    const upToDate = args.to ? version === current : !isNewerVersion(current, version, { prerelease: channel !== 'latest' });
-    return { packageName, current, version, upToDate, runtime };
+    const upToDate = args.to
+      ? version === normalizeVersion(current)
+      : !isNewerVersion(current, version, { prerelease: channel !== 'latest' });
+    return { packageName, current, version, upToDate, runtime, pinned: !!args.to || channel !== 'latest' };
   };
 
-  const describe = (installer: PadroneUpgradeOptions['installer'], packageName: string, version: string) =>
+  const describe = async (installer: PadroneUpgradeOptions['installer'], p: { packageName: string; version: string; pinned: boolean }) =>
     typeof installer === 'function'
       ? undefined
-      : installerCommand(installer ?? detectInstaller(), packageName, version, options.brewFormula);
+      : installerCommand(installer ?? detectInstaller(await installPaths()), p.packageName, p.version, options.brewFormula, p.pinned);
 
   return ((builder: AnyPadroneBuilder) =>
     builder.command(options.command ?? 'upgrade', (c) =>
       c
         .configure({ description: 'Upgrade to the latest version', mutation: true })
+        .intercept(upgradeMarker)
         .arguments(
           passthroughSchema({
             check: { type: 'boolean', description: 'Only check whether a newer version is available' },
@@ -138,9 +188,9 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
             return p.upToDate ? `${p.packageName} is up to date (${p.current})` : `Update available: ${p.current} → ${p.version}`;
           if (p.upToDate && !args.force) return `${p.packageName} is up to date (${p.current})`;
 
+          const planned = await describe(options.installer, p);
           ctx.runtime.error(`Upgrading ${p.packageName} ${p.current} → ${p.version}…`);
-          const command =
-            typeof options.installer === 'function' ? await options.installer(p) : describe(options.installer, p.packageName, p.version);
+          const command = typeof options.installer === 'function' ? await options.installer(p) : planned;
           if (command?.length) {
             const code = await exec(command);
             if (code !== 0) throw new ActionError(`"${command.join(' ')}" failed with exit code ${code}`, { exitCode: code });
@@ -150,7 +200,7 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
         .dryRun(async (args, ctx) => {
           const p = await plan(args, ctx.command, ctx.runtime);
           if (p.upToDate && !args.force) return `${p.packageName} is up to date (${p.current})`;
-          const command = describe(options.installer, p.packageName, p.version);
+          const command = await describe(options.installer, p);
           return command
             ? `Would upgrade ${p.packageName} ${p.current} → ${p.version} with: ${command.join(' ')}`
             : `Would upgrade ${p.packageName} ${p.current} → ${p.version}`;

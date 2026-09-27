@@ -321,6 +321,8 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
           const now = Date.now();
           // Progress moved backwards (a new phase started): estimate from scratch
           if (parsed.progress < (etaSamples[etaSamples.length - 1]?.progress ?? 0)) etaSamples.length = 0;
+          // Only the first and latest samples are used
+          if (etaSamples.length > 1) etaSamples.pop();
           etaSamples.push({ time: now, progress: parsed.progress });
           const estimated = estimateEta(etaSamples);
           if (estimated !== undefined) {

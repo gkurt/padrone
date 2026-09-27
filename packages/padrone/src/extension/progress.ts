@@ -113,35 +113,45 @@ function resolveMessage(field: unknown, value: unknown, fallback?: string): { me
   return { message: fallback };
 }
 
-type Finish = (isError: boolean, value: unknown, dryRun?: boolean) => void;
+type Finish = (isError: boolean, value: unknown, quiet?: boolean) => void;
 
-/** Wraps an async iterator so `finish` runs when it's exhausted, fails, or is closed early. */
+/** Wraps an async iterator so `finish` runs when it's exhausted or fails; closed early, the indicator stops quietly. */
 async function* finishAfterAsyncIteration(iterable: AsyncIterable<unknown>, finish: Finish, dryRun?: boolean) {
   const items: unknown[] = [];
+  let settled = false;
   try {
     for await (const item of iterable) {
       items.push(item);
       yield item;
     }
+    settled = true;
+    finish(false, items, dryRun);
   } catch (err) {
+    settled = true;
     finish(true, err);
     throw err;
+  } finally {
+    if (!settled) finish(false, items, true);
   }
-  finish(false, items, dryRun);
 }
 
 function* finishAfterIteration(iterable: Iterable<unknown>, finish: Finish, dryRun?: boolean) {
   const items: unknown[] = [];
+  let settled = false;
   try {
     for (const item of iterable) {
       items.push(item);
       yield item;
     }
+    settled = true;
+    finish(false, items, dryRun);
   } catch (err) {
+    settled = true;
     finish(true, err);
     throw err;
+  } finally {
+    if (!settled) finish(false, items, true);
   }
-  finish(false, items, dryRun);
 }
 
 function cleanup(indicator: PadroneProgress, msgs: ResolvedMessages, isError: boolean, value: unknown) {
@@ -222,6 +232,8 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
       let indicator: PadroneProgress | undefined;
       let restoreOutput: (() => void) | undefined;
       let activeTaskList: ReturnType<PadroneTaskListRenderer> | undefined;
+      /** A streamed result is still being consumed: it finishes the indicator itself. */
+      let streaming = false;
 
       /** `progress.tasks()`: hides the indicator while the list is drawn. */
       const tasksFor =
@@ -291,15 +303,15 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
         };
       };
 
-      /** Stops the indicator with the configured success/error message (none for a dry run). Runs at most once. */
-      const finish = (isError: boolean, value: unknown, dryRun = false) => {
+      /** Stops the indicator with the configured success/error message (none when `quiet`, e.g. a dry run). Runs at most once. */
+      const finish = (isError: boolean, value: unknown, quiet = false) => {
         const active = indicator;
         if (!active) return;
         restoreOutput?.();
         indicator = undefined;
         restoreOutput = undefined;
         try {
-          if (dryRun && !isError) active.stop();
+          if (quiet && !isError) active.stop();
           else cleanup(active, settings!.msgs, isError, value);
         } catch (err) {
           active.stop();
@@ -347,9 +359,10 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
           };
           // A streamed result succeeds once it's fully consumed (by auto-output or the caller)
           const settleValue = (value: unknown): unknown => {
+            const isStream = isAsyncIterator(value) || (isIterator(value) && !Array.isArray(value));
+            if (isStream && indicator) streaming = true;
             if (isAsyncIterator(value)) return finishAfterAsyncIteration(value as unknown as AsyncIterable<unknown>, finish, ctx.dryRun);
-            if (isIterator(value) && !Array.isArray(value))
-              return finishAfterIteration(value as unknown as Iterable<unknown>, finish, ctx.dryRun);
+            if (isStream) return finishAfterIteration(value as unknown as Iterable<unknown>, finish, ctx.dryRun);
             finish(false, value, ctx.dryRun);
             return value;
           };
@@ -370,7 +383,8 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
         shutdown(ctx, next) {
           // Safety net: if validate/execute cleanup paths were bypassed (e.g., outer interceptor
           // threw during execute before reaching this interceptor's execute handler), stop the indicator.
-          finish(!!ctx.error, ctx.error ?? ctx.result);
+          // A stream the caller hasn't consumed yet finishes the indicator itself.
+          if (!streaming || ctx.error) finish(!!ctx.error, ctx.error ?? ctx.result);
           return next();
         },
       };
@@ -410,5 +424,5 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
  * ```
  */
 export function padroneProgress<T extends CommandTypesBase>(config?: string | PadroneProgressConfig): (builder: T) => WithProgress<T> {
-  return ((builder: AnyPadroneBuilder) => builder.intercept(progressInterceptor(config ?? 'Working...'))) as any;
+  return ((builder: AnyPadroneBuilder) => builder.intercept(progressInterceptor(config ?? {}))) as any;
 }

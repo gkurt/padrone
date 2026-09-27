@@ -26,13 +26,11 @@ import { getJsonOutputFilter, isErrorReported, isRemoteCaller, markErrorReported
 function outputAndCollect(value: unknown, output: (value: unknown) => void, outputItem = output): unknown {
   if (value == null) return value;
 
+  // `for` loops close the iterator (running its `finally`) when outputting an item throws
   if (isAsyncIterator(value)) {
     return (async () => {
       const items: unknown[] = [];
-      const iter = (value as any)[Symbol.asyncIterator]();
-      while (true) {
-        const { done, value: item } = await iter.next();
-        if (done) break;
+      for await (const item of value as unknown as AsyncIterable<unknown>) {
         items.push(item);
         if (item != null) outputItem(item);
       }
@@ -42,10 +40,7 @@ function outputAndCollect(value: unknown, output: (value: unknown) => void, outp
 
   if (typeof value !== 'string' && !Array.isArray(value) && isIterator(value)) {
     const items: unknown[] = [];
-    const iter = (value as any)[Symbol.iterator]();
-    while (true) {
-      const { done, value: item } = iter.next();
-      if (done) break;
+    for (const item of value as unknown as Iterable<unknown>) {
       items.push(item);
       if (item != null) outputItem(item);
     }
@@ -133,8 +128,16 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
         // If the action already called output.*, skip auto-output
         if (indicator.called) return e;
 
+        // An async action or a stream may call output.* after this handler ran: checked again for each value
+        const unlessCalled =
+          (write: (value: unknown) => void) =>
+          (value: unknown): void => {
+            if (!indicator.called) write(value);
+          };
+        const output = unlessCalled((v) => ctx.runtime.output(v));
+
         const autoOutput = (value: unknown): unknown => {
-          if (value == null) return value;
+          if (value == null || indicator.called) return value;
 
           // Serve, MCP and tool calls return the result through their transport: collect streams without printing
           if (isRemoteCaller(ctx.caller)) return outputAndCollect(value, () => {});
@@ -144,9 +147,9 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
           // `--jq` / `--template` turn each value into lines of their own
           const filter = json ? getJsonOutputFilter(ctx.runtime) : undefined;
           if (filter) {
-            const writeLines = (v: unknown) => {
+            const writeLines = unlessCalled((v) => {
               for (const line of filter(v)) ctx.runtime.output(line);
-            };
+            });
             return outputAndCollect(value, writeLines);
           }
 
@@ -161,10 +164,10 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
 
           // `format: 'json'` (e.g. from `--json`): values as JSON, iterator items one per line (NDJSON)
           if (json) {
-            const write = (space?: number) => (v: unknown) => ctx.runtime.output(safeJsonStringify(v, space) ?? String(v));
+            const write = (space?: number) => unlessCalled((v) => ctx.runtime.output(safeJsonStringify(v, space) ?? String(v)));
             return outputAndCollect(value, write(2), write());
           }
-          return outputAndCollect(value, ctx.runtime.output);
+          return outputAndCollect(value, output);
         };
 
         if (e.result instanceof Promise) {

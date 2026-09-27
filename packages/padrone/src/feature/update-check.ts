@@ -77,7 +77,7 @@ export function parseInterval(interval: string): number {
  */
 export function isNewerVersion(current: string, latest: string, options?: { prerelease?: boolean }): boolean {
   const parse = (v: string) => {
-    const cleaned = v.replace(/^v/, '');
+    const cleaned = v.replace(/^v/, '').replace(/\+.*$/, '');
     const dash = cleaned.indexOf('-');
     const nums = (dash === -1 ? cleaned : cleaned.slice(0, dash)).split('.').map(Number);
     return { major: nums[0] ?? 0, minor: nums[1] ?? 0, patch: nums[2] ?? 0, prerelease: dash === -1 ? undefined : cleaned.slice(dash + 1) };
@@ -151,14 +151,12 @@ async function writeCache(cachePath: string, data: CacheData): Promise<void> {
 }
 
 /**
- * Resolves the cache path, expanding `~` to the home directory.
+ * Resolves the cache path, expanding a leading `~` or `~/` to the home directory.
  */
 async function resolveCachePath(cachePath: string): Promise<string> {
   const { homedir } = await import('node:os');
   const { resolve } = await import('node:path');
-  if (cachePath.startsWith('~')) {
-    return cachePath.replace('~', homedir());
-  }
+  if (cachePath === '~' || /^~[/\\]/.test(cachePath)) return resolve(homedir(), cachePath.slice(2));
   return resolve(cachePath);
 }
 

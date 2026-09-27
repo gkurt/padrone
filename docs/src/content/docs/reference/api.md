@@ -611,14 +611,14 @@ program.extend(padroneUpdateCheck({
 **Configuration:**
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `packageName` | `string` | auto-detected | Package name to check |
+| `packageName` | `string` | program name | Package name to check |
 | `registry` | `string` | `'npm'` | Registry URL or `'npm'` shorthand |
 | `interval` | `string` | `'1d'` | Check interval (e.g., `'1d'`, `'12h'`, `'30m'`, `'1w'`) |
 | `cache` | `string` | auto | Path to cache file for last check timestamp |
 | `disableEnvVar` | `string` | auto | Env var name that disables update checking |
 | `updateCommand` | `string \| (packageName, latestVersion) => string` | `npm update -g <name>` | Command suggested in the notice |
 
-Non-blocking (the registry request times out after 3 seconds) and caches check timestamps. Skipped in CI, when stdout isn't a TTY, when `NO_UPDATE_NOTIFIER` or the `disableEnvVar` variable is set, and with `--no-update-check`.
+Non-blocking (the registry request times out after 3 seconds) and caches check timestamps. Skipped in CI, when stdout isn't a TTY, when `NO_UPDATE_NOTIFIER` or the `disableEnvVar` variable is set, with `--no-update-check`, and for the `padroneUpgrade()` command.
 
 ---
 
@@ -648,8 +648,8 @@ my-cli upgrade --dry-run    # show the install command without running it
 | `packageName` | `string` | program name | npm package to upgrade |
 | `registry` | `string` | `'npm'` | `'npm'` or a URL returning `{ version }` or `{ "dist-tags": { ... } }` |
 | `channel` | `string` | `'latest'` | Dist-tag to follow (`--channel` overrides it); other channels may be pre-releases |
-| `installer` | `'npm' \| 'bun' \| 'pnpm' \| 'yarn' \| 'brew' \| (plan) => string[] \| void` | detected | How the program is installed. Detected from its path (Homebrew cellar, `~/.bun`, pnpm/yarn global dirs, else npm). A function returns the command to run, or performs the upgrade itself (e.g. downloading a binary) |
-| `brewFormula` | `string` | package name | Formula for `brew upgrade` |
+| `installer` | `'npm' \| 'bun' \| 'pnpm' \| 'yarn' \| 'brew' \| (plan) => string[] \| void` | detected | How the program is installed. Detected from its script path with symlinks resolved (Homebrew cellar, `~/.bun`, pnpm/yarn global dirs, else npm), then from the executable of a compiled binary. A function returns the command to run, or performs the upgrade itself (e.g. downloading a binary) |
+| `brewFormula` | `string` | package name | Formula for `brew upgrade`. Homebrew only upgrades to the formula's latest version, so `--to` and `--channel` fail |
 | `command` | `string` | `'upgrade'` | Command name |
 | `exec` | `(command: string[]) => Promise<number>` | spawn with inherited stdio | Runs the installer command |
 

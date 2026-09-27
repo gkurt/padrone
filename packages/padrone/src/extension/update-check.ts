@@ -4,6 +4,7 @@ import { defineInterceptor } from '../core/interceptors.ts';
 import type { UpdateCheckConfig } from '../feature/update-check.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
 import { getRootCommand, getVersion } from '../util/utils.ts';
+import { isUpgradeCommand } from './upgrade.ts';
 import { frameworkFlags } from './utils.ts';
 
 // ── Interceptor ─────────────────────────────────────────────────────────
@@ -24,8 +25,8 @@ function createUpdateCheckInterceptor(config: UpdateCheckConfig) {
         const flags = frameworkFlags(rawArgs, command);
         const suppressed = flags.flag('update-check') === false;
         flags.delete('update-check');
-        // Only people running the CLI see the notice; `--no-update-check` skips the request too
-        if (suppressed || ctx.caller !== 'cli') return;
+        // Only people running the CLI see the notice, never right after upgrading; `--no-update-check` skips the request too
+        if (suppressed || ctx.caller !== 'cli' || isUpgradeCommand(command)) return;
 
         const rootCommand = getRootCommand(command);
         const runtime = ctx.runtime;

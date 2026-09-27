@@ -150,7 +150,7 @@ success: (result) => result.silent ? null : `Done: ${result.count} items`
 
 ### Messages from Context
 
-Messages can be provided at the runtime level via `progressConfig.message` in the context. Command-level message fields take precedence per-field, so you can set shared defaults and override specific phases per command:
+Messages can be provided at the runtime level via `progressConfig.message` in the context. Command-level message fields take precedence per-field, so you can set shared defaults and override specific phases per command. `padroneProgress()` without arguments takes every message from the context, falling back to `'Working...'`; a string shorthand (`padroneProgress('Syncing...')`) sets all messages and ignores the context ones:
 
 ```typescript
 const program = createPadrone('app')
@@ -467,6 +467,7 @@ Manual calls to `ctx.context.progress.pause()` and `ctx.context.progress.resume(
 2. **Provides typed context** via `.provides<{ progress: PadroneProgressContext }>()` so `ctx.context.progress` (the indicator plus `tasks()`) is fully typed
 3. **Creates the indicator** using the configured renderer (defaults to the built-in terminal renderer)
 4. **Uses a shutdown handler** as a safety net — if the indicator is not cleaned up by validate/execute (e.g., an outer interceptor threw), the command-level shutdown phase stops it
+5. **Follows streamed results** — when the action returns an iterator or async iterator, the indicator succeeds (or fails) once the stream is fully consumed, whether by auto-output or by the caller. A consumer that stops early (`break`) stops the indicator without a success message
 
 This means progress indicators interact naturally with other interceptors. The indicator starts before validation interceptors run and is cleaned up after execution. Interceptor errors are caught and reflected in the progress indicator:
 

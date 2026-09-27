@@ -155,12 +155,12 @@ function formatArgs(args: unknown[]): string {
     const val = args[argIndex++];
     switch (token) {
       case '%s':
-        return String(val);
+        return typeof val === 'object' && val !== null ? stringifyValue(val) : String(val);
       case '%d':
       case '%i':
-        return String(Math.trunc(Number(val)));
+        return typeof val === 'symbol' ? 'NaN' : String(Math.trunc(Number(val)));
       case '%f':
-        return String(Number(val));
+        return typeof val === 'symbol' ? 'NaN' : String(Number(val));
       case '%j':
         return typeof val === 'string' ? JSON.stringify(val) : stringifyValue(val);
       case '%o':
@@ -194,9 +194,12 @@ function resolveCliLevel(
     return { value };
   };
   const enabled = (flag: { value: unknown } | undefined) => !!flag && toFlag(flag.value) === true;
-  // Counting flags: `--verbose` / `-v` once is 1, `-vv` is 2, `--no-verbose` is 0
-  const count = (flag: { value: unknown } | undefined) =>
-    !flag ? 0 : typeof flag.value === 'number' ? flag.value : flag.value === false ? 0 : Number(flag.value) || 1;
+  // Counting flags: `--verbose` / `-v` once is 1, `-vv` is 2, `--no-verbose` / `--verbose=false` is 0, `--verbose=2` is 2
+  const count = (flag: { value: unknown } | undefined): number => {
+    if (!flag || toFlag(flag.value) === false) return 0;
+    const n = typeof flag.value === 'number' ? flag.value : typeof flag.value === 'string' && flag.value.trim() ? Number(flag.value) : NaN;
+    return Number.isNaN(n) ? 1 : n;
+  };
 
   // Every flag is consumed even when an earlier one already decided the level
   const trace = take('trace');
@@ -324,7 +327,7 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
               rawConfig?.level ??
               ctxCfg?.level ??
               'info',
-            prefix: rawConfig?.prefix ?? '',
+            prefix: rawConfig?.prefix ?? ctxCfg?.prefix ?? '',
             timestamps: rawConfig?.timestamps ?? ctxCfg?.timestamps ?? false,
             stdout: rawConfig?.stdout ?? ctxCfg?.stdout ?? false,
             format: rawConfig?.format ?? ctxCfg?.format ?? 'text',

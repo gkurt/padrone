@@ -31,6 +31,19 @@ export function describe(value: unknown): string {
 
 const TYPE_ORDER: JqType[] = ['null', 'boolean', 'number', 'string', 'array', 'object'];
 
+/** By code point, as jq compares UTF-8 bytes (`<` on JavaScript strings compares UTF-16 code units). */
+function compareStrings(a: string, b: string): number {
+  for (let i = 0; i < a.length && i < b.length; i++) {
+    const x = a.codePointAt(i)!;
+    const y = b.codePointAt(i)!;
+    if (x !== y) return x - y;
+    if (x > 0xffff) i++;
+  }
+  return a.length - b.length;
+}
+
+const sortedKeys = (object: object) => Object.keys(object).sort(compareStrings);
+
 /** jq's total order: null < false < true < numbers < strings < arrays < objects. */
 export function compareValues(a: unknown, b: unknown): number {
   const ta = typeOf(a);
@@ -38,7 +51,7 @@ export function compareValues(a: unknown, b: unknown): number {
   if (ta !== tb) return TYPE_ORDER.indexOf(ta) - TYPE_ORDER.indexOf(tb);
   if (ta === 'null') return 0;
   if (ta === 'boolean' || ta === 'number') return Number(a) - Number(b);
-  if (ta === 'string') return (a as string) < (b as string) ? -1 : (a as string) > (b as string) ? 1 : 0;
+  if (ta === 'string') return compareStrings(a as string, b as string);
   if (ta === 'array') {
     const x = a as unknown[];
     const y = b as unknown[];
@@ -50,9 +63,9 @@ export function compareValues(a: unknown, b: unknown): number {
   }
   const x = a as Record<string, unknown>;
   const y = b as Record<string, unknown>;
-  const keys = compareValues(Object.keys(x).sort(), Object.keys(y).sort());
+  const keys = compareValues(sortedKeys(x), sortedKeys(y));
   if (keys !== 0) return keys;
-  for (const key of Object.keys(x).sort()) {
+  for (const key of sortedKeys(x)) {
     const c = compareValues(x[key], y[key]);
     if (c !== 0) return c;
   }
@@ -78,8 +91,8 @@ export function iterate(value: unknown): unknown[] {
 export function slice(value: unknown, from: unknown, to: unknown): unknown {
   if (value === null || value === undefined) return null;
   if (typeof value !== 'string' && !Array.isArray(value)) throw new JqError(`Cannot slice ${typeOf(value)}`);
-  const start = from === null || from === undefined ? undefined : Number(from);
-  const end = to === null || to === undefined ? undefined : Number(to);
+  const start = from === null || from === undefined ? undefined : Math.floor(Number(from));
+  const end = to === null || to === undefined ? undefined : Math.ceil(Number(to));
   // Strings by code point, as `length` counts them
   return typeof value === 'string' ? [...value].slice(start, end).join('') : value.slice(start, end);
 }
@@ -97,10 +110,12 @@ function length(value: unknown): number {
 // ── Arithmetic ──────────────────────────────────────────────────────────
 
 function deepMerge(a: Record<string, unknown>, b: Record<string, unknown>): Record<string, unknown> {
-  const result = { ...a };
-  for (const [key, value] of Object.entries(b))
-    result[key] = isObject(result[key]) && isObject(value) ? deepMerge(result[key], value) : value;
-  return result;
+  const merged = Object.entries(b).map(([key, value]) => {
+    const current = Object.hasOwn(a, key) ? a[key] : undefined;
+    return [key, isObject(current) && isObject(value) ? deepMerge(current, value) : value];
+  });
+  // Spread defines own properties, so a "__proto__" key is a key
+  return { ...a, ...Object.fromEntries(merged) };
 }
 
 function split(value: unknown, separator: unknown): string[] {
@@ -288,7 +303,7 @@ type Builtin = (input: unknown, ...args: JqFilter[]) => unknown[];
 export const BUILTINS: Record<string, Builtin> = {
   'keys/0': (x) => {
     if (Array.isArray(x)) return [x.map((_, i) => i)];
-    if (isObject(x)) return [Object.keys(x).sort()];
+    if (isObject(x)) return [sortedKeys(x)];
     throw new JqError(`${typeOf(x)} has no keys`);
   },
   'length/0': (x) => [length(x)],
@@ -313,7 +328,7 @@ export const BUILTINS: Record<string, Builtin> = {
   'last/0': (x) => [index(x, -1)],
   'add/0': (x) => [add(x)],
   'sort/0': (x) => [[...iterate(x)].sort(compareValues)],
-  'reverse/0': (x) => [typeof x === 'string' ? [...x].reverse().join('') : [...iterate(x)].reverse()],
+  'reverse/0': (x) => [typeof x === 'string' ? [...x].reverse().join('') : x === null ? [] : [...iterate(x)].reverse()],
   'unique/0': (x) => [groupBy(x, (v) => [v]).map((group) => group[0])],
   'min/0': (x) => [extremeBy(x, (v) => [v], false)],
   'max/0': (x) => [extremeBy(x, (v) => [v], true)],
@@ -322,11 +337,13 @@ export const BUILTINS: Record<string, Builtin> = {
     if (isObject(x)) return [Object.entries(x).map(([key, value]) => ({ key, value }))];
     throw new JqError(`${typeOf(x)} has no keys`);
   },
+  // jq 1.7.1: `key`, else the first truthy of `k name Name K Key`, as a string; `value` if present, else `v`
   'from_entries/0': (x) => [
     Object.fromEntries(
       iterate(x).map((entry) => {
-        const e = entry as Record<string, unknown>;
-        return [String(e.key ?? e.name ?? e.k), e.value ?? e.v ?? null];
+        if (!isObject(entry)) throw new JqError(`Cannot use ${describe(entry)} as an entry`);
+        const key = index(entry, 'key') ?? ['k', 'name', 'Name', 'K', 'Key'].map((k) => index(entry, k)).find(truthy) ?? null;
+        return [typeof key === 'string' ? key : JSON.stringify(key), index(entry, Object.hasOwn(entry, 'value') ? 'value' : 'v')];
       }),
     ),
   ],

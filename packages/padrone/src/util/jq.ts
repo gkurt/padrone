@@ -445,13 +445,14 @@ class Parser {
     const filters = entries.flat();
     return (x) =>
       product(filters, x).map((values) => {
-        const object: Record<string, unknown> = {};
+        const pairs: [string, unknown][] = [];
         for (let i = 0; i < values.length; i += 2) {
           const key = values[i];
           if (typeof key !== 'string') throw new JqError(`Object keys must be strings, got ${typeOf(key)}`);
-          object[key] = values[i + 1];
+          pairs.push([key, values[i + 1]]);
         }
-        return object;
+        // Defines own properties, so a "__proto__" key is a key
+        return Object.fromEntries(pairs);
       });
   }
 }

@@ -44,7 +44,8 @@ Additional opt-in extensions are available for advanced features:
 | `padroneLogger(options)` | `'padrone'` | Structured logging to stderr with levels (`--verbose` repeatable; `shortFlags`, `env`, `stdout`, `format: 'json'`, `redact`, `destination` options; `child({ requestId })` bindings) |
 | `padroneJson(options?)` | `'padrone'` | `--json` flag: results and errors as JSON; `--jq` and `--template` filter and format the result; `fields` adds gh-style `--json name,url` |
 | `padroneFormat(options?)` | `'padrone'` | `--output`/`-o <format>`: text, json, yaml, csv, tsv or table; `tableFlags` adds `--columns`, `--sort`, `--no-header` |
-| `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`, or `<PROGRAM>_YES=1`) before `mutation: true` commands |
+| `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`, or `<PROGRAM>_YES=1`) before `mutation: true` commands; `.configure({ confirm })` sets a command's question (or `false`), `nonInteractive: 'fail' \| 'yes' \| 'no'` decides without a terminal |
+| `padroneCredentials(options?)` | `'padrone'` | Secret storage for actions (`ctx.context.credentials.get/set/delete`): the OS keychain (macOS `security`, Linux `secret-tool`), else a `0600` file; refused for serve, MCP and `tool()` calls unless `remote: true` |
 | `padroneTiming()` | `'padrone'` | Execution timing (`--time`; `Done in …` / `Failed after …`, `format` option) |
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking (notice from the cached latest version; a stale cache refreshes in a detached process, so exit is never delayed) |
 | `padroneUpgrade(options?)` | `'padrone'` | Self-update command (`upgrade`, `--check`, `--exit-code`, `--to`, `--channel`; asks `padroneConfirm()` only when there is something to install) using the package manager the program was installed with |
@@ -107,6 +108,35 @@ const program = createPadrone('myapp')
 
 Under JSON output, an error's `message` leaves out the "Did you mean" hint, which is in `suggestions` instead. `--json`, `--jq` and `--template` take precedence over `-o`. Serve, MCP and `tool()` calls get raw results either way. A command's own `--output`/`-o` option wins over the extension's.
 
+### Credential Storage
+
+`padroneCredentials()` keeps tokens and API keys for the program, like `gh auth` or keytar. Actions get `ctx.context.credentials` with async `get(name)`, `set(name, secret)`, `delete(name)` and `backend()`:
+
+```typescript
+import { createPadrone, padroneCredentials } from 'padrone';
+
+const program = createPadrone('my-cli')
+  .extend(padroneCredentials())
+  .command('login', (c) =>
+    c.action(async (_, ctx) => {
+      await ctx.context.credentials.set('github', await ctx.prompt.password('GitHub token'));
+      return `Saved to ${await ctx.context.credentials.backend()}`;
+    }),
+  )
+  .command('logout', (c) => c.action((_, ctx) => ctx.context.credentials.delete('github')));
+```
+
+**Backends.** `backend: 'auto'` (the default) uses the OS keychain when its tool works, else a file:
+
+- macOS: the login keychain through `/usr/bin/security` (generic passwords, `-s <service> -a <name>`). The secret is written with `security -i` on stdin (hex-encoded with `-X`), so it never shows up in `ps`; the service and name do, and can't contain quotes or backslashes. Secrets that aren't printable ASCII are stored base64-encoded behind a `padrone-base64:` prefix, as `security` would print them in hex.
+- Linux (and the BSDs): the Secret Service (GNOME Keyring, KWallet) through libsecret's `secret-tool`, with keytar's `service`/`account` attributes; the secret goes through stdin. Without `secret-tool` or a reachable Secret Service (a headless session without D-Bus), it falls back to the file.
+- Windows: no keychain support (the Credential Manager has no CLI that reads secrets); the file is used.
+- The file: `credentials.json` in `program.dirs.data` (or `file`), `{ [service]: { [name]: secret } }`, written atomically with mode `0600` in a `0700` directory. Secrets are plain text there, readable by the user's own processes, like `gh`'s `hosts.yml`.
+
+`backend: 'keychain'` fails where there's no keychain instead of falling back, `'file'` always uses the file, and a `PadroneCredentialBackend` object (`{ name, get, set, delete }`, each taking the service and the name) stores secrets anywhere else. `service` defaults to the program name. Tools are spawned with argv, never through a shell; `runner` replaces the spawner (tests pass a fake so they never touch the real keychain), and `platform` overrides `process.platform`.
+
+**Remote callers.** Serve, MCP and `tool()` calls get a `credentials` object whose methods reject (`Credentials aren't available to "mcp" calls`), so a command that reads a token can't hand it to an HTTP client or an AI model. Pass `remote: true` when commands only use the secrets themselves (e.g. to call an API) and never return them.
+
 ### Writing Custom Extensions
 
 A `PadroneExtension` is a function `(builder) => builder`:
@@ -136,6 +166,8 @@ const program = createPadrone('myapp')
   .extend(withLogging)
   .extend(withAdmin);
 ```
+
+Interceptors that ask the user something use `createPrompt(ctx)` from `'padrone'` with any phase context: the same `text`/`password`/`confirm`/`select`/`multiselect`/`group` kit actions get as `ctx.prompt`, which returns defaults or throws a `PromptUnavailableError` where it can't ask (see [Interactive Prompting](/padrone/guides/interactive-prompting/)).
 
 ### Extension Pattern: Interceptor + Command
 

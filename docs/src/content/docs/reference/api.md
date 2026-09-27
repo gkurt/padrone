@@ -45,6 +45,7 @@ program.configure({
 | `group` | `string` | Group name for organizing in help output |
 | `mutation` | `boolean` | Mark as mutation (POST-only in serve, destructiveHint in MCP, defaults needsApproval in tool) |
 | `needsApproval` | `boolean \| (args) => boolean \| Promise<boolean>` | Whether `tool()` asks for approval before running the command. A function gets the validated args (call `.configure()` after `.arguments()` for them to be typed); with invalid args approval is asked. Defaults to `mutation`; dry runs never need approval |
+| `confirm` | `boolean \| string \| (args) => string` | Whether `padroneConfirm()` asks before running the command, overriding its `when` (by default, `mutation` commands ask): `false` never asks, `true` asks the default question, a string or a function of the validated args is the question |
 | `outputSchema` | `PadroneSchema` | Schema of the object the action returns: MCP's tool `outputSchema` (object schemas only) and the OpenAPI `result`. Not validated at runtime |
 | `builtin` | `boolean` | Mark a command an extension adds for the program itself (like the built-in `help`, `config` or `serve`): `padroneConfig()` and `padroneEnv()` don't fill its options or its subcommands' unless their `builtins: true` |
 | `help` | `PadroneHelpConfig \| PadroneHelpTransform` | `{ usage?, before?, after? }` for this command, or `(info, ctx) => HelpInfo \| string` for this command and its subcommands. See [Customizing Help](/padrone/guides/commands-arguments/#customizing-help) |
@@ -215,8 +216,25 @@ program.action((args, ctx) => {
 | `program` | `PadroneProgram` | The root program instance |
 | `progress` | `PadroneProgress` | Auto-managed progress indicator, or lazy indicator for manual use. See [Progress Indicators](/padrone/guides/progress-indicators/) |
 | `context` | `TContext` | User-defined context, resolved through the command parent chain |
+| `prompt` | `PadronePrompt` | Prompts asked through `runtime.prompt`: `text`, `password`, `confirm`, `select`, `multiselect`, `group` and `available`. See [ctx.prompt](#ctxprompt) |
 
 **Returns:** The program builder (chainable)
+
+#### ctx.prompt
+
+| Method | Resolves with | Options |
+|--------|---------------|---------|
+| `text(message \| options)` | `string` | `message`, `name`, `default` (a blank answer takes it), `validate(value) => error \| undefined` (asks again) |
+| `password(message \| options)` | `string` | `message`, `name`, `validate`; masked, never prefilled |
+| `confirm(message \| options)` | `boolean` | `message`, `name`, `default` |
+| `select(options)` | the chosen value | `message`, `name`, `choices` (values or `{ value, label?, hint? }`), `default` |
+| `multiselect(options)` | the chosen values | `message`, `name`, `choices`, `default` (array), `required` (at least one) |
+| `group(steps)` | `{ [key]: answer }` | `{ key: ({ results }) => answer }`, run in order; `results` holds the earlier answers, `undefined` skips a step, and questions without a `name` are named after the step's key. Steps that read `results` infer as `unknown`: pass the type, `group<{ … }>(…)` |
+
+- `name` is what `runtime.prompt` receives as `config.name` (and what `testCli().prompt({ … })` answers by); it defaults to the group step's key, else the message.
+- Cancelling (Ctrl+C, Esc) throws a `PromptCancelledError` (exit code 130; `isPromptCancel(err)`); an empty answer is `''`. A custom `runtime.prompt` cancels by resolving with `PROMPT_CANCEL` or throwing a `PromptCancelledError`.
+- Without an interactive terminal (CI, piped stdin, `--no-interactive`, `interactive: 'disabled'`/`'unsupported'`) or for `serve`/`mcp`/`tool` calls, prompts return their `default` without asking, or throw a `PromptUnavailableError`. `available` says whether they'd ask.
+- Interceptors build the same object with `createPrompt(ctx)` from any phase context.
 
 ---
 
@@ -1489,7 +1507,8 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable). Logs go to stderr with colored level labels; `stdout: true` sends `trace`/`debug`/`info` to stdout, and `format: 'json'` writes JSON lines (`logger.info({ userId }, 'signed in')` adds fields). `logger.child({ requestId })` adds bindings to every line; `redact: ['user.password', '*.token']` (or `{ paths, censor }`) censors logged objects; `destination` writes lines to a file path, a function or a `{ write }` stream instead. Colors follow whether stderr is a terminal |
 | `padroneJson(options?)` | `--json` flag: prints the result as JSON (iterator items one per line). `--jq <expr>` filters it (a built-in jq subset with `if`, `as $x`, arithmetic, regex `test`/`sub`/`gsub` and `@csv`/`@tsv`, or pass `jq: (input, expr) => outputs` for a full implementation; non-string outputs are compact JSON when piped, indented on a terminal) and `--template '{{.name}}'` formats it; both imply `--json`. Errors in `cli()` print as `{ "error": { ... } }` on stdout under JSON output. `fields: true` lets `--json=name,url` keep only those fields (`fields: 'required'`: also `--json name,url`, and a bare `--json` fails listing the fields); `availableFields` declares them |
 | `padroneFormat(options?)` | `--output`/`-o <format>`: `text` (default), `json` (like `--json`), `yaml`, `csv`, `tsv`, `table`. Options: `formats`, `default`, `flags`, `tableFlags` for `--columns a,b`, `--sort [-]column` and `--no-header`, `columns` (`{ id: 'ID' }` or `(command) => …`: default columns and header labels), `pipedTable: 'tsv'` (`-o table` prints TSV when stdout isn't a terminal) and `csvLineEnding: 'crlf'`. Table cells with newlines span several lines. String results print as text under yaml/csv/tsv/table (other non-objects under csv/tsv/table); `--json`/`--jq`/`--template` take precedence |
-| `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and so does `<PROGRAM>_YES=1` in the environment (`env` renames the variable, `false` turns it off). Without a terminal (CI, piped stdin or stdout, `--no-interactive`) the command fails unless one of those is given. Options: `message`, `when`, `flags`, `env` |
+| `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and so does `<PROGRAM>_YES=1` in the environment (`env` renames the variable, `false` turns it off). Without a terminal (CI, piped stdin or stdout, `--no-interactive`) the command fails unless one of those is given; `nonInteractive: 'yes'` runs it there and `'no'` aborts it. A command's `.configure({ confirm })` overrides `when` and `message`. Cancelling the question aborts. Options: `message`, `when`, `flags`, `env`, `nonInteractive` |
+| `padroneCredentials(options?)` | Secret storage: `ctx.context.credentials.get(name)` / `set(name, secret)` / `delete(name)` / `backend()` (all async). `backend: 'auto'` (default) uses the OS keychain (macOS `security`, with the secret on stdin through `security -i`; Linux `secret-tool`, secret on stdin), else `credentials.json` in `program.dirs.data` (`file`) with mode `0600`; `'keychain'` fails without one, `'file'` always uses the file, or pass a `PadroneCredentialBackend`. `service` defaults to the program name. Serve, MCP and `tool()` calls are refused unless `remote: true`. `runner` (argv, no shell) and `platform` are injectable for tests |
 | `padroneTiming(options?)` | Execution timing: `Done in 1.20s`, or `Failed after 1.20s` when the command fails, printed after its result or error. `enabled: true` turns it on without `--time`; `format: ({ elapsed, duration, failed, error }) => string \| null` changes the line |
 | `padroneUpdateCheck(config)` | Background version checking |
 | `padroneUpgrade(options?)` | `upgrade` command: self-update with the package manager the program was installed with (`--check`, `--exit-code`, `--to`, `--channel`) |
@@ -1564,6 +1583,23 @@ import type {
   ResolvedPadroneRuntime,
   InteractivePromptConfig,
   PadroneReplPreferences,
+
+  // Prompt and credential types
+  PadronePrompt,
+  PadronePromptContext,
+  PadronePromptGroup,
+  PadronePromptChoice,
+  PadroneTextPromptOptions,
+  PadronePasswordPromptOptions,
+  PadroneConfirmPromptOptions,
+  PadroneSelectPromptOptions,
+  PadroneMultiselectPromptOptions,
+  PadroneCredentials,
+  PadroneCredentialsOptions,
+  PadroneCredentialBackend,
+  PadroneCommandRunner,
+  PadroneCommandRunResult,
+  WithCredentials,
   PadroneEvalPreferences,
   PadroneMcpPreferences,
   PadroneServePreferences,

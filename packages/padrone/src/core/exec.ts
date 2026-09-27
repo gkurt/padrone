@@ -1,4 +1,5 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
+import { createPrompt } from '../feature/prompt.ts';
 import type {
   AnyPadroneCommand,
   AnyPadroneProgram,
@@ -279,6 +280,7 @@ export function execCommand(
                 signal: executeCtx.signal,
                 context: executeCtx.context,
                 caller,
+                prompt: createPrompt(executeCtx),
               });
               const result = handler(executeCtx.args as any, actionCtx);
               return { result };

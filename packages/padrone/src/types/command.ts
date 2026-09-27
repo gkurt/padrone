@@ -1,6 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { PadroneRuntime, ResolvedPadroneRuntime } from '../core/runtime.ts';
 import type { PadroneHelpTopic } from '../extension/help.ts';
+import type { PadronePrompt } from '../feature/prompt.ts';
 import type { PadroneHelpConfig, PadroneHelpTransform } from '../output/formatter.ts';
 import type { FullCommandName } from '../util/type-utils.ts';
 import type { PadroneArgsSchemaMeta, PadroneGlobalArgsMeta } from './args-meta.ts';
@@ -59,6 +60,11 @@ export type PadroneActionContext<TContext = unknown> = {
   caller: PadroneCaller;
   /** Emits a custom event to the handlers of the interceptors on this command's chain (see `defineEvent()`). */
   emit: PadroneEmit;
+  /**
+   * Prompts (`text`, `password`, `confirm`, `select`, `multiselect`, `group`) asked through `runtime.prompt`.
+   * Without an interactive terminal, or for remote callers, they return their `default` or throw a `PromptUnavailableError`.
+   */
+  prompt: PadronePrompt;
 };
 
 /**
@@ -93,6 +99,11 @@ export type PadroneCommandConfig<TArgs = any> = {
    * Defaults to `mutation`. Dry runs never need approval.
    */
   needsApproval?: boolean | ((args: TArgs) => boolean | Promise<boolean>);
+  /**
+   * Whether `padroneConfirm()` asks before running this command, overriding its `when` (by default, `mutation` commands):
+   * `false` never asks, `true` asks with the default question, and a string or a function of the validated args is the question.
+   */
+  confirm?: boolean | string | ((args: TArgs) => string);
   /**
    * Schema of the object the action returns. `mcp()` advertises it as the tool's `outputSchema` (it must describe
    * an object), and `serve()` documents it as the OpenAPI `result`. Not validated at runtime.
@@ -139,6 +150,8 @@ export type PadroneCommand<
   builtin?: boolean;
   /** Whether `tool()` asks for approval before running this command. Set by `.configure({ needsApproval })`. */
   needsApproval?: boolean | ((args: StandardSchemaV1.InferOutput<TArgs>) => Promise<boolean> | boolean);
+  /** Whether `padroneConfirm()` asks before running this command, or the question. Set by `.configure({ confirm })`. */
+  confirm?: boolean | string | ((args: StandardSchemaV1.InferOutput<TArgs>) => string);
   /** Schema of the action's result, set by `.configure({ outputSchema })`. */
   outputSchema?: PadroneSchema;
   /** Usage examples shown in help output. Each entry is a command-line invocation string. */

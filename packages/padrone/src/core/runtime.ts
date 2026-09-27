@@ -191,8 +191,9 @@ export type PadroneRuntime = {
    */
   interactive?: InteractiveMode;
   /**
-   * Prompt the user for input. Called during `cli()` / `eval()` for fields marked as interactive, and by extensions that ask
-   * (confirm, suggestions, help's `pickSubcommand`). Defaults to an Enquirer-based terminal prompt.
+   * Prompt the user for input. Called during `cli()` / `eval()` for fields marked as interactive, by extensions that ask
+   * (confirm, suggestions, help's `pickSubcommand`), and by `ctx.prompt` in actions. Defaults to an Enquirer-based terminal prompt.
+   * When the user cancels (Ctrl+C, Esc), resolve with `PROMPT_CANCEL` or throw a `PromptCancelledError`.
    */
   prompt?: (config: InteractivePromptConfig) => Promise<unknown>;
   /**
@@ -272,6 +273,12 @@ export type ResolvedPadroneRuntime = Required<
  * Distinguished from empty string (user pressed enter) and null (EOF/Ctrl+D).
  */
 export const REPL_SIGINT = Symbol('REPL_SIGINT');
+
+/**
+ * What a runtime's `prompt` resolves with when the user cancels (Ctrl+C, Esc), distinct from an empty answer.
+ * Padrone turns it into a `PromptCancelledError`; `testCli().prompt({ name: PROMPT_CANCEL })` scripts a cancellation.
+ */
+export const PROMPT_CANCEL = Symbol('PROMPT_CANCEL');
 
 /**
  * Internal session config for the REPL's persistent readline interface.

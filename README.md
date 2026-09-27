@@ -103,7 +103,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 
 **Env & Config** — load from environment variables with `.extend(padroneEnv(schema))` (or `padroneEnv({ prefix: 'MY_APP' })` for every option, `MY_APP_DB__HOST` for nested ones) and config files with `.extend(padroneConfig({ files, schema }))`, with `--profile` profiles (`profiles: true`), per-command sections (`sections: true`) and a `config get|set|list|edit` command (`command: true`, with `--local`/`--file`, keeping comments). Precedence: CLI > stdin > env > config > defaults.
 
-**Interactive prompts** — auto-prompt for missing fields. Booleans become confirm, enums become select, arrays become multi-select.
+**Interactive prompts** — auto-prompt for missing fields. Booleans become confirm, enums become select, arrays become multi-select. Actions ask their own questions with `ctx.prompt.text/confirm/select/multiselect/password/group`, which fail fast (or take their `default`) without a terminal.
 
 **Progress indicators** — auto-managed spinners and progress bars with elapsed time and ETA. `.extend(padroneProgress({ message: 'Deploying...', bar: true, time: true, eta: true }))`.
 
@@ -135,7 +135,8 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.extend(padroneProgress(config?))` | Auto-managed progress indicator and `progress.tasks()` task lists (extension) |
 | `.extend(padroneJson())` | `--json` flag: results and errors as JSON, `--jq` / `--template` to filter and format, `fields` for `--json name,url` (extension) |
 | `.extend(padroneFormat())` | `--output`/`-o`: text, json, yaml, csv, tsv or table, with `--columns` / `--sort` / `--no-header`, `columns` labels, `pipedTable: 'tsv'` and `csvLineEnding: 'crlf'` (extension) |
-| `.extend(padroneConfirm())` | Confirm `mutation: true` commands, skipped with `--yes` or `<PROGRAM>_YES=1` (extension) |
+| `.extend(padroneConfirm())` | Confirm `mutation: true` commands (or `.configure({ confirm })`), skipped with `--yes` or `<PROGRAM>_YES=1`; `nonInteractive` decides without a terminal (extension) |
+| `.extend(padroneCredentials())` | Store secrets in the OS keychain (macOS `security`, Linux `secret-tool`) or a `0600` file: `ctx.context.credentials.get/set/delete` (extension) |
 | `.intercept(interceptor)` | Register middleware interceptor (use `defineInterceptor()`) |
 | `.extend(extension)` | Apply a build-time extension (bundle of config, commands, interceptors) |
 | `.runtime(runtime)` | Custom I/O (for non-terminal use) |

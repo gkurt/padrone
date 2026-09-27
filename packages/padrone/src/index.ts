@@ -2,7 +2,16 @@ export { buildReplCompleter } from './core/commands.ts';
 export type { PadroneOptions } from './core/create.ts';
 export { createPadrone, defineCommand } from './core/create.ts';
 export type { PadroneErrorOptions } from './core/errors.ts';
-export { ActionError, ConfigError, PadroneError, RoutingError, SignalError, ValidationError } from './core/errors.ts';
+export {
+  ActionError,
+  ConfigError,
+  PadroneError,
+  PromptCancelledError,
+  PromptUnavailableError,
+  RoutingError,
+  SignalError,
+  ValidationError,
+} from './core/errors.ts';
 export { defineEvent } from './core/events.ts';
 export { defineInterceptor, LOCAL_CALLERS, REMOTE_CALLERS } from './core/interceptors.ts';
 export type { OptionArity } from './core/parse.ts';
@@ -22,7 +31,7 @@ export type {
   PadroneSpinnerConfig,
   PadroneSpinnerPreset,
 } from './core/runtime.ts';
-export { REPL_SIGINT } from './core/runtime.ts';
+export { PROMPT_CANCEL, REPL_SIGINT } from './core/runtime.ts';
 export type {
   ConfigSearchOptions,
   HelpCommand,
@@ -32,6 +41,8 @@ export type {
   PadroneConfigOptions,
   PadroneConfigProfilesOptions,
   PadroneConfirmOptions,
+  PadroneCredentials,
+  PadroneCredentialsOptions,
   PadroneEnvOptions,
   PadroneFormatColumns,
   PadroneFormatOptions,
@@ -72,6 +83,7 @@ export type {
   PadroneVersionOptions,
   VersionCommand,
   WithAsync,
+  WithCredentials,
   WithHelp,
   WithLogger,
   WithProgress,
@@ -89,6 +101,7 @@ export {
   padroneColor,
   padroneConfig,
   padroneConfirm,
+  padroneCredentials,
   padroneEnv,
   padroneFormat,
   padroneHelp,
@@ -107,7 +120,25 @@ export {
   padroneVersion,
   redactArgs,
 } from './extension/index.ts';
+export type {
+  PadroneCommandRunner,
+  PadroneCommandRunResult,
+  PadroneCredentialBackend,
+} from './feature/credentials.ts';
+export { fileCredentialBackend, macosKeychainBackend, secretServiceBackend } from './feature/credentials.ts';
 export type { PadronePageOptions } from './feature/pager.ts';
+export type {
+  PadroneConfirmPromptOptions,
+  PadroneMultiselectPromptOptions,
+  PadronePasswordPromptOptions,
+  PadronePrompt,
+  PadronePromptChoice,
+  PadronePromptContext,
+  PadronePromptGroup,
+  PadroneSelectPromptOptions,
+  PadroneTextPromptOptions,
+} from './feature/prompt.ts';
+export { createPrompt, isPromptCancel } from './feature/prompt.ts';
 export type { PadroneEditorOptions } from './feature/system.ts';
 export type { UpdateCheckConfig } from './feature/update-check.ts';
 export type { WrapConfig, WrapResult } from './feature/wrap.ts';

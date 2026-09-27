@@ -5,6 +5,7 @@ import { getNestedValue } from '../core/parse.ts';
 import { hasInteractiveConfig } from '../core/results.ts';
 import type { InteractivePromptConfig, ResolvedPadroneRuntime } from '../core/runtime.ts';
 import type { AnyPadroneCommand, PadroneSchema } from '../types/index.ts';
+import { askRuntime, choiceValue } from './prompt.ts';
 
 /**
  * Auto-detect the prompt type for a field based on its JSON schema property definition.
@@ -79,10 +80,7 @@ function answerValue(
   schema: PadroneSchema | undefined,
 ): unknown {
   const choices = config.choices;
-  if (choices) {
-    const toChoice = (v: unknown) => choices.find((c) => c.value === v || String(c.value) === String(v))?.value ?? v;
-    return Array.isArray(answer) ? answer.map(toChoice) : toChoice(answer);
-  }
+  if (choices) return Array.isArray(answer) ? answer.map((a) => choiceValue(choices, a)) : choiceValue(choices, answer);
   if (!schema) return answer;
   const value =
     typeof answer === 'string' && propSchema?.type === 'array'
@@ -117,7 +115,7 @@ async function promptWithValidation(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const typed = await runtime.prompt!(promptConfig);
+    const typed = await askRuntime(runtime, promptConfig);
     const blank = typeof typed === 'string' && !typed.trim();
     if (blank && keep !== undefined) return keep;
     if (blank && optional) return undefined;
@@ -283,7 +281,7 @@ export async function promptInteractiveFields(
 
   // Show multiselect for optional fields, then prompt selected ones
   if (optionalFields.length > 0) {
-    const selected = (await runtime.prompt({
+    const selected = (await askRuntime(runtime, {
       name: '_optionalFields',
       message: 'Would you also like to configure:',
       type: 'multiselect',

@@ -6,6 +6,7 @@ import {
   type HelpInfo,
   type HelpPositionalInfo,
   type HelpSubcommandInfo,
+  hasDefaultValue,
   optionPlaceholder,
   positionalLabel,
 } from '../output/formatter.ts';
@@ -98,7 +99,7 @@ function formatMarkdownPositional(arg: HelpPositionalInfo): string {
   parts.push(`- \`${positionalLabel(arg)}\``);
   if (arg.type) parts.push(`*(${arg.type})*`);
   if (arg.optional) parts.push('*(optional)*');
-  if (arg.default !== undefined) parts.push(`— default: \`${String(arg.default)}\``);
+  if (hasDefaultValue(arg.default)) parts.push(`— default: \`${String(arg.default)}\``);
   if (arg.description) parts.push(`— ${arg.description}`);
   return parts.join(' ');
 }
@@ -121,7 +122,7 @@ function formatMarkdownArgument(arg: HelpArgumentInfo): string[] {
   const meta: string[] = [];
   if (arg.type && arg.type !== 'boolean') meta.push(`**Type:** \`${arg.type}\``);
   if (!arg.optional) meta.push('**Required**');
-  if (arg.default !== undefined) meta.push(`**Default:** \`${String(arg.default)}\``);
+  if (hasDefaultValue(arg.default)) meta.push(`**Default:** \`${String(arg.default)}\``);
   if (arg.enum) meta.push(`**Choices:** ${arg.enum.map((v) => `\`${v}\``).join(', ')}`);
   if (arg.variadic) meta.push('**Repeatable**');
   if (arg.deprecated) {
@@ -161,7 +162,8 @@ function formatMarkdownSubcommand(sub: HelpSubcommandInfo): string {
   const aliases = sub.aliases?.filter((a) => a !== '[default]');
   parts.push(`| ${aliases?.length ? aliases.map((a) => `\`${a}\``).join(', ') : ''}`);
 
-  const desc = sub.title ?? sub.description ?? '';
+  // A table cell is one line, and `|` would end it
+  const desc = (sub.title ?? sub.description ?? '').replace(/\s*\n\s*/g, ' ').replace(/\|/g, '\\|');
   parts.push(`| ${desc}`);
   parts.push('|');
 
@@ -364,7 +366,7 @@ function generateHtmlPage(info: HelpInfo, depth: number): string {
         `    <dt><code>${escapeHtml(positionalLabel(arg))}</code>${arg.type ? ` <span class="type">${escapeHtml(arg.type)}</span>` : ''}${arg.optional ? ' <em>(optional)</em>' : ''}</dt>`,
       );
       if (arg.description) sections.push(`    <dd>${escapeHtml(arg.description)}</dd>`);
-      if (arg.default !== undefined) sections.push(`    <dd>Default: <code>${escapeHtml(String(arg.default))}</code></dd>`);
+      if (hasDefaultValue(arg.default)) sections.push(`    <dd>Default: <code>${escapeHtml(String(arg.default))}</code></dd>`);
     }
     sections.push('  </dl>');
   }
@@ -384,7 +386,7 @@ function generateHtmlPage(info: HelpInfo, depth: number): string {
 
       const meta: string[] = [];
       if (!arg.optional) meta.push('Required');
-      if (arg.default !== undefined) meta.push(`Default: <code>${escapeHtml(String(arg.default))}</code>`);
+      if (hasDefaultValue(arg.default)) meta.push(`Default: <code>${escapeHtml(String(arg.default))}</code>`);
       if (arg.enum) meta.push(`Choices: ${arg.enum.map((v) => `<code>${escapeHtml(v)}</code>`).join(', ')}`);
       if (arg.variadic) meta.push('Repeatable');
       if (arg.deprecated) {
@@ -492,7 +494,7 @@ function generateManPage(info: HelpInfo, _depth: number, programName: string): s
       const parts: string[] = [];
       if (arg.description) parts.push(escapeMan(arg.description));
       if (arg.optional) parts.push('(optional)');
-      if (arg.default !== undefined) parts.push(`Default: ${escapeMan(String(arg.default))}`);
+      if (hasDefaultValue(arg.default)) parts.push(`Default: ${escapeMan(String(arg.default))}`);
       if (parts.length > 0) lines.push(parts.join('. '));
     }
   }
@@ -505,10 +507,11 @@ function generateManPage(info: HelpInfo, _depth: number, programName: string): s
       const flagStr = arg.flags?.length ? `${arg.flags.map((f) => `\\-${escapeMan(f)}`).join(', ')}, ` : '';
       const aliasStr = arg.aliases?.length ? `${arg.aliases.map((a) => `\\-\\-${escapeMan(a)}`).join(', ')}, ` : '';
       lines.push('.TP');
-      lines.push(`\\fB${flagStr}${aliasStr}${flagName}\\fR${arg.type ? ` \\fI${escapeMan(arg.valueName ?? arg.type)}\\fR` : ''}`);
+      const placeholder = optionPlaceholder(arg);
+      lines.push(`\\fB${flagStr}${aliasStr}${flagName}\\fR${placeholder ? ` \\fI${escapeMan(placeholder)}\\fR` : ''}`);
       const parts: string[] = [];
       if (arg.description) parts.push(escapeMan(arg.description));
-      if (arg.default !== undefined) parts.push(`Default: ${escapeMan(String(arg.default))}`);
+      if (hasDefaultValue(arg.default)) parts.push(`Default: ${escapeMan(String(arg.default))}`);
       if (arg.enum) parts.push(`Choices: ${arg.enum.map((v) => escapeMan(v)).join(', ')}`);
       if (parts.length > 0) lines.push(parts.join('. '));
 

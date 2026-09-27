@@ -28,6 +28,8 @@ type CompletionField = {
   longNames: string[];
   shortFlags: string[];
   takesValue: boolean;
+  /** Takes every following word up to the next option or `--` (`variadic: true` arrays). */
+  variadic: boolean;
   description?: string;
   values?: PadroneCompletionItem[];
   hint?: PadroneValueHint;
@@ -55,11 +57,13 @@ function schemaFields(
     const { flags, aliases } = extractSchemaMetadata(schema, fieldsMeta, autoAlias);
     return Object.entries(jsonSchema.properties as Record<string, any>).map(([name, prop]): CompletionField => {
       const meta = fieldsMeta?.[name];
+      const arity = getOptionArity(prop);
       return {
         name,
         longNames: [name, ...Object.keys(aliases).filter((alias) => aliases[alias] === name)],
         shortFlags: Object.keys(flags).filter((flag) => flags[flag] === name),
-        takesValue: getOptionArity(prop) !== 'flag' && !(meta?.count ?? prop?.count),
+        takesValue: arity !== 'flag' && !(meta?.count ?? prop?.count),
+        variadic: arity === 'array' && !!(meta?.variadic ?? prop?.variadic),
         description: meta?.description ?? prop?.description,
         values: enumItems(prop),
         hint: meta?.hint ?? prop?.hint,
@@ -78,6 +82,16 @@ function commandFields(command: AnyPadroneCommand): CompletionField[] {
   const ownNames = new Set(own.map((f) => f.name));
   const inherited = globals ? schemaFields(globals.schema, globals.meta?.fields, globals.meta?.autoAlias) : [];
   return [...own, ...inherited.filter((f) => !ownNames.has(f.name))];
+}
+
+/** The command's fields, then its default (`''`) subcommand's: options typed without a subcommand go to it. */
+function routedFields(command: AnyPadroneCommand): CompletionField[] {
+  const own = commandFields(command);
+  const defaultCommand = findCommandByName('', command.commands);
+  // Hidden ones (like the built-in `help`) aren't offered
+  if (!defaultCommand || defaultCommand.hidden) return own;
+  const ownNames = new Set(own.map((f) => f.name));
+  return [...own, ...commandFields(defaultCommand).filter((f) => !ownNames.has(f.name))];
 }
 
 function findOption(fields: CompletionField[], token: string): CompletionField | undefined {
@@ -155,13 +169,16 @@ export async function getCompletionResult(rootCommand: AnyPadroneCommand, words:
   const valuePrefix = current === '=' ? '' : current;
 
   let command = rootCommand;
-  let positionals = 0;
+  const terms: string[] = [];
   let pending: CompletionField | undefined;
   // The next word is the value of an option an extension declares (`-c file.json`, `--log-level debug`)
   let extensionValue = false;
   let afterDoubleDash = false;
+  // A variadic option takes the words after its value too, up to the next option or `--`
+  let variadic: CompletionField | undefined;
   for (const word of typed) {
     if (pending || extensionValue) {
+      variadic = pending?.variadic ? pending : undefined;
       pending = undefined;
       extensionValue = false;
       continue;
@@ -169,11 +186,13 @@ export async function getCompletionResult(rootCommand: AnyPadroneCommand, words:
     if (word === '=') continue;
     if (word === '--') {
       afterDoubleDash = true;
+      variadic = undefined;
       continue;
     }
     if (!afterDoubleDash && word.startsWith('-') && word.length > 1) {
+      variadic = undefined;
       if (word.includes('=')) continue;
-      const option = findOption(commandFields(command), word);
+      const option = findOption(routedFields(command), word);
       if (option?.takesValue) pending = option;
       else if (!option) {
         const name = word.startsWith('--') ? word.slice(2) : word.slice(1).at(-1);
@@ -182,13 +201,15 @@ export async function getCompletionResult(rootCommand: AnyPadroneCommand, words:
       }
       continue;
     }
+    if (variadic) continue;
     // After `--` every word is a positional, as when the command runs
-    const subcommand = positionals === 0 && !afterDoubleDash ? findCommandByName(word, command.commands) : undefined;
+    const subcommand = terms.length === 0 && !afterDoubleDash ? findCommandByName(word, command.commands) : undefined;
     if (subcommand) command = subcommand;
-    else positionals++;
+    else terms.push(word);
   }
+  const positionals = terms.length;
 
-  const fields = commandFields(command);
+  const fields = positionals === 0 ? routedFields(command) : commandFields(command);
   let rawArgs: Record<string, unknown> = {};
   try {
     if (typed.length > 0) rawArgs = parseCommand([...typed], rootCommand, findCommandByName).rawArgs;
@@ -206,6 +227,9 @@ export async function getCompletionResult(rootCommand: AnyPadroneCommand, words:
   }
   if (pending) return { items: filter(await fieldValues(pending, current, rawArgs, command)), directive: fieldDirective(pending) };
   if (extensionValue) return { items: [], directive: 'files' };
+  if (variadic && !current.startsWith('-')) {
+    return { items: filter(await fieldValues(variadic, current, rawArgs, command)), directive: fieldDirective(variadic) };
+  }
 
   if (!afterDoubleDash && current.startsWith('-')) {
     const eq = current.indexOf('=');
@@ -230,14 +254,17 @@ export async function getCompletionResult(rootCommand: AnyPadroneCommand, words:
       .filter((c) => !c.hidden && c.name && c.name !== COMPLETE_COMMAND)
       .map((c) => ({ value: c.name, description: c.title ?? c.description }));
   const subcommands = positionals === 0 && !afterDoubleDash ? visibleCommands(command) : [];
-  // `help <word>`: the built-in help command takes a command or a help topic
-  const helpWord =
-    positionals === 0 && !afterDoubleDash && !!command.flagNames && command.name === 'help' && !!command.parent && !command.parent.parent;
+  // `help <word>...`: the built-in help command takes a command path (`help db migrate`) or a help topic
+  const helpWord = !afterDoubleDash && !!command.flagNames && command.name === 'help' && !!command.parent && !command.parent.parent;
   if (helpWord) {
-    subcommands.push(
-      ...visibleCommands(rootCommand),
-      ...getHelpTopics(rootCommand).map(([name, topic]) => ({ value: name, description: topic.description ?? topic.title })),
-    );
+    let target: AnyPadroneCommand | undefined = rootCommand;
+    for (const term of terms) target = target && findCommandByName(term, target.commands);
+    if (target) subcommands.push(...visibleCommands(target));
+    if (positionals === 0) {
+      subcommands.push(
+        ...getHelpTopics(rootCommand).map(([name, topic]) => ({ value: name, description: topic.description ?? topic.title })),
+      );
+    }
   }
   const positional = parsePositionalConfig(command.meta?.positional ?? []);
   const slot = positional[positionals] ?? (positional.at(-1)?.variadic ? positional.at(-1) : undefined);

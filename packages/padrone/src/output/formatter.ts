@@ -181,6 +181,11 @@ export function positionalLabel(arg: HelpPositionalInfo): string {
   return arg.name.startsWith('...') ? `...${arg.valueName}` : arg.valueName;
 }
 
+/** Whether a default is worth showing: not unset, `''` or `[]`. */
+export function hasDefaultValue(value: unknown): boolean {
+  return value !== undefined && value !== '' && !(Array.isArray(value) && value.length === 0);
+}
+
 /** The value placeholder of an option (`valueName`, or its type); none for booleans and counts. */
 export function optionPlaceholder(arg: HelpArgumentInfo): string | undefined {
   return arg.type && arg.type !== 'boolean' ? (arg.valueName ?? arg.type) : undefined;
@@ -328,7 +333,7 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
         metaParts.push(text);
         styledMetaParts.push(styler.meta(text));
       }
-      if (arg.default !== undefined) {
+      if (hasDefaultValue(arg.default)) {
         const text = `(default: ${String(arg.default)})`;
         metaParts.push(text);
         styledMetaParts.push(styler.meta(text));
@@ -361,14 +366,6 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
   function formatArgumentsSection(info: HelpInfo): string[] {
     const lines: string[] = [];
     const argList = info.arguments || [];
-
-    // Helper to check if a default value is meaningful (not empty string/array)
-    const hasDefault = (value: unknown): boolean => {
-      if (value === undefined) return false;
-      if (value === '') return false;
-      if (Array.isArray(value) && value.length === 0) return false;
-      return true;
-    };
 
     // Build columns: flags | names | type | description
     const argColumns = argList.map((arg) => {
@@ -436,7 +433,7 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
           inlineMeta.push('(deprecated)');
           styledInlineMeta.push(styler.meta('(deprecated)'));
         }
-        if (hasDefault(arg.default)) {
+        if (hasDefaultValue(arg.default)) {
           const text = `(default: ${String(arg.default)})`;
           inlineMeta.push(text);
           styledInlineMeta.push(styler.meta(text));

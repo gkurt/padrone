@@ -64,7 +64,7 @@ Task ID
 \\fB\\-\\-priority\\fR \\fIstring\\fR
 Priority level. Default: medium. Choices: low, medium, high
 .TP
-\\fB\\-\\-verbose\\fR \\fIboolean\\fR
+\\fB\\-\\-verbose\\fR
 Show detailed information
 "
 `;

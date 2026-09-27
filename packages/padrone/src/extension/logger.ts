@@ -118,8 +118,14 @@ function formatJsonLine(level: Exclude<PadroneLogLevel, 'silent'>, names: string
     level,
     ...(prefix && { prefix }),
     ...(names.length > 0 && { name: names.join('.') }),
+    // Fields can't change the line's time or level, and a message argument wins over a `msg` field
+    ...(fields &&
+      Object.fromEntries(
+        Object.entries(fields)
+          .filter(([k]) => k !== 'time' && k !== 'level')
+          .map(([k, v]) => [k, v instanceof Error ? errorJson(v) : v]),
+      )),
     ...(msgArgs.length > 0 && { msg: formatArgs(msgArgs) }),
-    ...(fields && Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, v instanceof Error ? errorJson(v) : v]))),
     ...(error && { err: errorJson(error) }),
   };
   return safeJsonStringify(line) ?? JSON.stringify({ time: line.time, level, msg: String(line.msg ?? '') });

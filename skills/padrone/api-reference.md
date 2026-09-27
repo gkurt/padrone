@@ -375,7 +375,7 @@ import { padroneUpdateCheck } from 'padrone';
 }))
 ```
 
-Non-blocking. Skipped in CI, when stdout isn't a TTY, with `NO_UPDATE_NOTIFIER` or `--no-update-check`. Shows the notice after command output.
+Non-blocking. Needs the program's `version` (`.configure({ version })`). Skipped in CI (`CI` other than `0`/`false`), when stdout isn't a TTY, with `NO_UPDATE_NOTIFIER` or `--no-update-check`. Shows the notice after command output.
 
 ### `.async()`
 

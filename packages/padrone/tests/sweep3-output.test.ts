@@ -235,11 +235,16 @@ describe('progress', () => {
       return line;
     };
     Object.defineProperty(stderr, 'isTTY', { value: true, configurable: true, writable: true });
+    // The renderer doesn't animate in CI or on a dumb terminal
+    const env = { CI: process.env.CI, TERM: process.env.TERM };
+    delete process.env.CI;
+    delete process.env.TERM;
     try {
       const many = lastLine(Array.from({ length: 100 }, (_, i) => i + 1));
       expect(many).toContain('ETA');
       expect(many).toBe(lastLine([1, 100]));
     } finally {
+      for (const [key, value] of Object.entries(env)) if (value !== undefined) process.env[key] = value;
       Object.defineProperty(stderr, 'isTTY', { value: original.isTTY, configurable: true, writable: true });
       stderr.write = original.write;
       Date.now = original.now;

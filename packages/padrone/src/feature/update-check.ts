@@ -1,4 +1,5 @@
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
+import { isCI } from '../util/utils.ts';
 
 /**
  * Configuration for the update check feature.
@@ -220,7 +221,7 @@ export async function createUpdateChecker(
 
   // Check if disabled
   const env = runtime.env();
-  if (env.CI || env.CONTINUOUS_INTEGRATION || env.NO_UPDATE_NOTIFIER) return noop;
+  if (isCI(env) || env.NO_UPDATE_NOTIFIER) return noop;
   if (env[disableEnvVar]) return noop;
   if (runtime.terminal && !runtime.terminal.isTTY) return noop;
 

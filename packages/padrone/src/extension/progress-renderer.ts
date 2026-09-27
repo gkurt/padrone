@@ -7,6 +7,7 @@ import type {
   PadroneSpinnerConfig,
   PadroneSpinnerPreset,
 } from '../core/runtime.ts';
+import { isCI } from '../util/utils.ts';
 
 // ---------------------------------------------------------------------------
 // Spinner presets & resolution
@@ -142,9 +143,15 @@ export type PadroneProgressRenderer = (message: string, options?: PadroneProgres
 // Default terminal renderer
 // ---------------------------------------------------------------------------
 
+/** Whether `stderr` can be redrawn in place: a TTY, not `TERM=dumb`, and not in CI (like ora). */
+export function canAnimate(stderr: { isTTY?: boolean } | undefined): boolean {
+  const env = globalThis.process?.env ?? {};
+  return !!stderr?.isTTY && env.TERM !== 'dumb' && !isCI(env);
+}
+
 /**
  * Creates a terminal progress indicator (spinner, bar, or both).
- * When stderr is not a TTY, nothing is animated and only the final success/error line is printed.
+ * When stderr is not a TTY (or is `TERM=dumb`, or in CI), nothing is animated and only the final success/error line is printed.
  */
 export function createTerminalProgress(message: string, options?: PadroneProgressOptions): PadroneProgress {
   const spinnerCfg = resolveSpinnerConfig(options?.spinner);
@@ -155,7 +162,7 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
   const formatFinal = (icon: string, msg: string) => (icon ? `${icon} ${msg}\n` : `${msg}\n`);
 
   const proc = globalThis.process as NodeJS.Process | undefined;
-  if (!proc?.stderr?.isTTY) {
+  if (!proc?.stderr || !canAnimate(proc.stderr)) {
     // No animation: only the final status line is printed, using the latest message.
     let text = message;
     let done = false;

@@ -5,12 +5,12 @@ import { frameworkFlags, isRemoteCaller } from './utils.ts';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
+/** Rounded to what's shown before picking the unit, so 999.6ms is `1.00s` and 59.999s is `1m 0.00s`. */
 function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms.toFixed(0)}ms`;
-  if (ms < 60_000) return `${(ms / 1000).toFixed(2)}s`;
-  const mins = Math.floor(ms / 60_000);
-  const secs = ((ms % 60_000) / 1000).toFixed(2);
-  return `${mins}m ${secs}s`;
+  if (Math.round(ms) < 1000) return `${Math.round(ms)}ms`;
+  const centis = Math.round(ms / 10);
+  if (centis < 6000) return `${(centis / 100).toFixed(2)}s`;
+  return `${Math.floor(centis / 6000)}m ${((centis % 6000) / 100).toFixed(2)}s`;
 }
 
 // ── Interceptor ─────────────────────────────────────────────────────────

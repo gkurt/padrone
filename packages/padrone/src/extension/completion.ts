@@ -58,7 +58,7 @@ export function padroneCompletion(): <T extends CommandTypesBase>(builder: T) =>
     builder
       .command('completion', (c) =>
         c
-          .configure({ description: 'Generate shell completion scripts', hidden: true })
+          .configure({ description: 'Generate shell completion scripts', hidden: true, builtin: true })
           .arguments(
             passthroughSchema({
               shell: {

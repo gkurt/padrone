@@ -223,9 +223,9 @@ export type InterceptorMeta = {
   options?: Record<string, OptionArity>;
   /**
    * Environment variables this interceptor reads into args, keyed by arg name (e.g. `{ port: 'APP_PORT' }`),
-   * or a function from arg name to variables. Shown in help as `Env: APP_PORT`.
+   * or a function from arg name (and the command whose help is shown) to variables. Shown in help as `Env: APP_PORT`.
    */
-  env?: Record<string, string | readonly string[]> | ((arg: string) => string | readonly string[] | undefined);
+  env?: Record<string, string | readonly string[]> | ((arg: string, command: AnyPadroneCommand) => string | readonly string[] | undefined);
   /**
    * Options (from `options`) listed in the help of the commands this interceptor applies to, e.g. `--profile <name>`,
    * or a function from the command to them.

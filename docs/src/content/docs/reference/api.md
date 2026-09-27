@@ -46,6 +46,7 @@ program.configure({
 | `mutation` | `boolean` | Mark as mutation (POST-only in serve, destructiveHint in MCP, defaults needsApproval in tool) |
 | `needsApproval` | `boolean \| (args) => boolean \| Promise<boolean>` | Whether `tool()` asks for approval before running the command. A function gets the validated args (call `.configure()` after `.arguments()` for them to be typed); with invalid args approval is asked. Defaults to `mutation`; dry runs never need approval |
 | `outputSchema` | `PadroneSchema` | Schema of the object the action returns: MCP's tool `outputSchema` (object schemas only) and the OpenAPI `result`. Not validated at runtime |
+| `builtin` | `boolean` | Mark a command an extension adds for the program itself (like the built-in `help`, `config` or `serve`): `padroneConfig()` and `padroneEnv()` don't fill its options or its subcommands' unless their `builtins: true` |
 | `help` | `PadroneHelpConfig \| PadroneHelpTransform` | `{ usage?, before?, after? }` for this command, or `(info, ctx) => HelpInfo \| string` for this command and its subcommands. See [Customizing Help](/padrone/guides/commands-arguments/#customizing-help) |
 
 ---
@@ -264,11 +265,13 @@ program.extend(
 
 **Parameters:**
 - `schema`: A Standard Schema that validates env vars and transforms them to argument names
-- `options.vars`: Map arguments to variables directly, without a schema: `padroneEnv({ vars: { port: 'APP_PORT', token: ['API_TOKEN', 'TOKEN'] } })`. The first variable that is set wins, and values are coerced by the command's schema like CLI input. These variables are shown in help (`Env: APP_PORT`). Can be combined with a schema.
-- `options.prefix`: Read every option from a prefixed variable, like yargs' `.env('MY_APP')`: `padroneEnv({ prefix: 'MY_APP' })` reads `--dry-run` / `dryRun` from `MY_APP_DRY_RUN`. Variables named in `vars` take precedence. Shown in help.
+- `options.vars`: Map arguments to variables directly, without a schema: `padroneEnv({ vars: { port: 'APP_PORT', token: ['API_TOKEN', 'TOKEN'] } })`. The first variable that is set wins, and values are coerced by the command's schema like CLI input; a dotted key sets a nested value (`{ 'db.host': 'DB_HOST' }`). These variables are shown in help (`Env: APP_PORT`). Can be combined with a schema.
+- `options.prefix`: Read every option from a prefixed variable, like yargs' `.env('MY_APP')`: `padroneEnv({ prefix: 'MY_APP' })` reads `--dry-run` / `dryRun` from `MY_APP_DRY_RUN`, and a double underscore reaches into objects like viper and .NET (`MY_APP_DB__HOST` → `db.host`, `MY_APP_DB__MAX_CONNS` → `db.maxConns`). Variables named in `vars` take precedence. Shown in help.
+- `options.allowEmpty`: Read variables set to an empty string (`APP_PORT=`) as empty values. By default they count as unset, like viper, so an exported but empty variable doesn't fail validation or override a config value (default: `false`)
+- `options.builtins`: Also fill the options of built-in commands (`help`, `version`, `config`, `serve`, …, anything marked `builtin: true`); by default `APP_KEY` doesn't fill `config get`'s `key` (default: `false`)
 - `options.modes`, `local`, `dir`, `override`, `base`: `.env` file loading. Later files win, then `$VAR` / `${VAR}` references expand against the merged values and the process env (which wins unless `override`); single-quoted values aren't expanded
 
-Env values are applied after CLI args and stdin, but before config file values. Can be applied at the program level (inherited by all commands) or at the command level.
+Env values are applied after CLI args and stdin, but before config file values. A validation error about a value from a variable names it: `port: Invalid input: expected number, received string (from APP_PORT)`. Can be applied at the program level (inherited by all commands) or at the command level.
 
 ---
 
@@ -306,6 +309,9 @@ program.extend(padroneConfig({ files: ['config.json'], xdg: true, searchParents:
 // Profiles: { "port": 3000, "profiles": { "prod": { "port": 80 } } } — `--profile prod` or MYAPP_PROFILE=prod
 program.extend(padroneConfig({ files: ['config.json'], profiles: true }));
 
+// Per-command sections: { "port": 8080, "serve": { "port": 3000 }, "db": { "migrate": { "dryRun": true } } }
+program.extend(padroneConfig({ files: ['config.json'], sections: true }));
+
 // A `config` command for the user config file: myapp config set port 8080, config get port, config list, config edit
 program.extend(padroneConfig({ command: true }));
 
@@ -319,31 +325,33 @@ program.extend(padroneConfig({ files: 'app.config.json', disabled: true }));
 | `files` | `string \| string[]` | Config file path(s). When multiple paths are provided, the first existing file is used. An empty file, or one with only comments, is an empty config |
 | `schema` | `StandardSchema` | Optional schema to validate/transform config values |
 | `disabled` | `boolean` | Disable config file loading |
-| `flag` | `boolean` | Enable/disable the `--config`/`-c` flag (default: `true`). Serve, MCP and `tool()` calls can't use it: for them it's an unknown option |
+| `flag` | `boolean` | Enable/disable the `--config`/`-c` flag, listed in help (default: `true`). Serve, MCP and `tool()` calls can't use it: for them it's an unknown option |
 | `inherit` | `boolean` | Whether the config interceptor inherits to subcommands (default: `true`) |
 | `xdg` | `boolean \| string` | Also search the user config directory (`~/.config/<app>`, `~/Library/Application Support/<app>`, `%APPDATA%\<app>`) after cwd. `true` uses the program name |
 | `searchParents` | `boolean` | Also search the parent directories of cwd, nearest first, like cosmiconfig (default: `false`) |
 | `packageJson` | `boolean \| string` | Read config from a `package.json` key in each searched directory, after its config files. `true` uses the program name (default: `false`) |
 | `merge` | `boolean` | Merge every config found instead of using the first: the user config directory, then the searched directories from the farthest to cwd, each overriding the last. Objects merge key by key, arrays are replaced. A `--config` file is still used alone (default: `false`) |
 | `extends` | `boolean` | Follow `extends` keys (a path relative to the file, a package name, or a list) to load base configs first (default: `true`) |
-| `profiles` | `boolean \| { flag?: string; env?: string }` | Named value sets: `profiles.<name>` in a config overrides its top-level values when selected by `--profile <name>`, the `<PROGRAM>_PROFILE` env variable, or a top-level `profile` key (in that order). An unknown profile is a `ConfigError` listing the available ones. `flag`/`env` rename the flag and the variable (default: `false`) |
+| `profiles` | `boolean \| { flag?: string; env?: string; remote?: boolean }` | Named value sets: `profiles.<name>` in a config overrides its top-level values when selected by `--profile <name>`, the `<PROGRAM>_PROFILE` env variable, or a top-level `profile` key (in that order). An unknown profile is a `ConfigError` listing the available ones. `flag`/`env` rename the flag and the variable. Like `--config`, the flag is an unknown option for serve, MCP and `tool()` calls unless `remote: true` (the variable and the `profile` key still apply) (default: `false`) |
+| `sections` | `boolean` | Per-command sections, like viper and cobra: a key that names a subcommand (`"serve": { "port": 3000 }`, nested for deeper commands: `"db": { "migrate": { ... } }`) holds values for that command and its subcommands, overriding the ones above it. With sections on, such a key is always a section, never an option value (put a `serve` command's `db` option inside `"serve": { "db": ... }`). Profiles can hold sections too (default: `false`) |
+| `builtins` | `boolean` | Also fill the options of built-in commands (`help`, `version`, `serve`, `config`, …, anything marked `builtin: true`); by default a config `port` doesn't feed `serve --port` (default: `false`) |
 | `command` | `boolean \| string` | Add a command group that manages the user config file (`true` names it `config`). Also makes `xdg` default to `true` and `files` to `['config.json']` (default: `false`) |
 | `loadConfig` | `(files: string \| string[], xdgAppName?: string, search?: { parents?, packageJsonKey?, merge?, extends?, env? }) => Record<string, unknown> \| undefined \| Promise<...>` | Custom config loader function. Replaces the built-in JSON/YAML/TOML loader |
 
-Config values have the lowest precedence: CLI > stdin > env > config. Not included by default — must be explicitly applied via `.extend(padroneConfig(...))`. Can be applied at the program level (inherited by all commands) or at the command level.
+Config values have the lowest precedence: CLI > stdin > env > config. Numbers and booleans are coerced to the option's type like CLI input, so YAML `name: 123` gives a string option `"123"` and `verbose: 1` a boolean `true` (before the `schema` validates, too). A validation error about a value from a config file names it: `port: Invalid input: expected number, received string (from config.json)`. Built-in commands (`builtin: true`) get no config values unless `builtins: true`. Not included by default — must be explicitly applied via `.extend(padroneConfig(...))`. Can be applied at the program level (inherited by all commands) or at the command level.
 
-**The `config` command** (`command: true`), like `git config`. Keys are dotted for nested values (`db.host`), and every subcommand but `path` and `edit` takes `--profile <name>` when `profiles` is on (to read, or write inside `profiles.<name>`):
+**The `config` command** (`command: true`), like `git config`. Keys are dotted for nested values (`db.host`; with `sections`, `serve.port` is the `serve` section's `port`), and every subcommand but `path` and `edit` takes `--profile <name>` when `profiles` is on (to read, or write inside `profiles.<name>`). Every subcommand takes `--local` (the project config file: the first of `files` in cwd, or with `searchParents` in the nearest parent that has one, else a new one in cwd named after the first JSON name in `files`, or for `edit` the first that isn't a script) or `--file <path>` to work on that one file instead of the user config file, like `git config --local`/`--file`:
 
 | Subcommand | Does |
 |------------|------|
-| `config get <key>` | Prints the effective value from the configs the program loads (with the selected profile applied). Like `unset`, it takes an option's alias or kebab-case name too |
-| `config set <key> <value>` | Writes to the user config file: the first of `files` in the user config directory, else the first JSON name in `files`. The key must be an option (name, alias or kebab-case name) of the command or one of its subcommands, or of global args, unless one of their schemas is loose; with a `schema`, the key and value must fit it instead. The value is coerced by the option's type (`[...]`/`{...}` are read as JSON) and validated. Only JSON files are written (comments are dropped); YAML, TOML and script files are refused |
-| `config unset <key>` | Removes a value from the user config file (and objects left empty) |
+| `config get <key>` | Prints the effective value from the configs the program loads (with the selected profile applied), or the value in the `--local`/`--file` file. Like `unset`, it takes an option's alias or kebab-case name too |
+| `config set <key> <value>` | Writes to the user config file: the first of `files` in the user config directory, else the first JSON name in `files`. The key must be an option (name, alias or kebab-case name) of the command or one of its subcommands, or of global args, unless one of their schemas is loose; with a `schema`, the key and value must fit it instead. The value is coerced by the option's type (`[...]`/`{...}` are read as JSON) and validated. Only JSON files (JSONC and rc files included) are written, changing just that value, so comments and formatting stay; YAML, TOML and script files are refused |
+| `config unset <key>` | Removes a value from the user config file (and objects left empty), keeping comments |
 | `config list` (`ls`) | Prints every effective value as `key=value` with the file it comes from; values of `sensitive` options show as `[redacted]` |
-| `config path` | Prints the user config file and the files loaded, lowest precedence first |
+| `config path` | Prints the user config file and the files loaded, lowest precedence first (with `--local`/`--file`, just that file) |
 | `config edit` | Opens the user config file in `runtime.editor()` and saves it only if it still parses. A new file gets the first name in `files` that isn't a script, so YAML and TOML work too |
 
-`set`, `unset` and `edit` are `mutation: true`. The group doesn't load configs into its own arguments.
+`set`, `unset` and `edit` are `mutation: true`. The group doesn't load configs or env variables into its own arguments.
 
 ---
 

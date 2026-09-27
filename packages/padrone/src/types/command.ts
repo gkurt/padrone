@@ -99,6 +99,12 @@ export type PadroneCommandConfig<TArgs = any> = {
    */
   outputSchema?: PadroneSchema;
   /**
+   * Marks a command an extension adds for the program itself (like `help`, `version` or `config`): values from config
+   * files and environment variables don't fill its options or its subcommands' (unless `builtins: true` on `padroneConfig()`
+   * / `padroneEnv()`).
+   */
+  builtin?: boolean;
+  /**
    * Customize this command's help: a declarative `{ usage, before, after }` (this command only), or a function
    * receiving the generated help info that returns modified info or the final string (this command and its subcommands).
    */
@@ -129,6 +135,8 @@ export type PadroneCommand<
   group?: string;
   /** Whether this command performs a mutation (create, update, delete). Affects HTTP method in serve (POST-only) and MCP tool annotations (destructiveHint). */
   mutation?: boolean;
+  /** Whether an extension added this command for the program itself (see `PadroneCommandConfig.builtin`). */
+  builtin?: boolean;
   /** Whether `tool()` asks for approval before running this command. Set by `.configure({ needsApproval })`. */
   needsApproval?: boolean | ((args: StandardSchemaV1.InferOutput<TArgs>) => Promise<boolean> | boolean);
   /** Schema of the action's result, set by `.configure({ outputSchema })`. */

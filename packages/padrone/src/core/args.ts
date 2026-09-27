@@ -545,7 +545,17 @@ export function createOptionArityLookup(
 const DECIMAL_NUMBER = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
 
 /** Coerce a single CLI string to a primitive based on the set of allowed types. */
+const SCALAR_TYPES = ['string', 'number', 'integer', 'boolean'];
+
 function coerceScalar(value: unknown, allowedTypes: Set<string>): unknown {
+  // A number or boolean where the schema wants another scalar (YAML `name: 123` for a string) is read like the same text on the CLI
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    const allowed =
+      typeof value === 'boolean'
+        ? allowedTypes.has('boolean')
+        : allowedTypes.has('number') || (allowedTypes.has('integer') && Number.isInteger(value));
+    return allowed || !SCALAR_TYPES.some((type) => allowedTypes.has(type)) ? value : coerceScalar(String(value), allowedTypes);
+  }
   if (typeof value !== 'string') return value;
 
   if (allowedTypes.has('boolean')) {

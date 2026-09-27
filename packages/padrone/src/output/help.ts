@@ -365,6 +365,12 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
     : [];
 
   const visibleArgs = [...ownArgs, ...inheritedArgs].filter((arg) => !arg.hidden);
+  // Interceptors read env variables into the command's own options (not into framework options like --dry-run or --config)
+  const envVarsOf = collectInterceptorEnv(cmd);
+  for (const arg of visibleArgs) {
+    const names = envVarsOf(arg.name);
+    if (names) arg.env = typeof names === 'string' ? names : [...names];
+  }
   // Only commands with a dry-run handler take --dry-run
   const dryRunKeys = getDryRunFlagKeys(cmd);
   if (dryRunKeys.includes('dry-run')) {
@@ -378,11 +384,6 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
   }
   const listedNames = new Set(visibleArgs.map((arg) => arg.name));
   for (const option of collectInterceptorHelpOptions(cmd)) if (!listedNames.has(option.name)) visibleArgs.push({ ...option });
-  const envVarsOf = collectInterceptorEnv(cmd);
-  for (const arg of visibleArgs) {
-    const names = envVarsOf(arg.name);
-    if (names) arg.env = typeof names === 'string' ? names : [...names];
-  }
   if (visibleArgs.length > 0) {
     helpInfo.arguments = visibleArgs;
     helpInfo.usage.hasArguments = true;
@@ -517,7 +518,7 @@ function collectInterceptorEnv(command: AnyPadroneCommand): (arg: string) => str
   }
   return (arg) => {
     for (const env of sources) {
-      const names = typeof env === 'function' ? env(arg) : Object.hasOwn(env, arg) ? env[arg] : undefined;
+      const names = typeof env === 'function' ? env(arg, command) : Object.hasOwn(env, arg) ? env[arg] : undefined;
       if (names?.length) return names;
     }
     return undefined;

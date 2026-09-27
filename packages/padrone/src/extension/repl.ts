@@ -45,7 +45,7 @@ export function padroneRepl(
     builder
       .command('repl', (c) =>
         c
-          .configure({ description: 'Start an interactive REPL', hidden: true })
+          .configure({ description: 'Start an interactive REPL', hidden: true, builtin: true })
           .arguments(passthroughSchema({ scope: { type: 'string', description: 'Command to scope the REPL to' } }), {
             positional: ['scope'],
           })

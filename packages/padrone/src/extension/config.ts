@@ -1,17 +1,19 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
-import { applyValues } from '../core/args.ts';
+import { applyValues, coerceArgs } from '../core/args.ts';
+import { isBuiltinCommand } from '../core/commands.ts';
 import { ConfigError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
 import { formatIssueMessages } from '../core/validate.ts';
-import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, InterceptorValidateContext } from '../types/index.ts';
+import type { HelpArgumentInfo } from '../output/formatter.ts';
+import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, InterceptorValidateContext, PadroneSchema } from '../types/index.ts';
 import type { WithAsync } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
 import type { ConfigSource } from './config-command.ts';
 import { addConfigCommand } from './config-command.ts';
-import type { ConfigSearchOptions } from './config-loader.ts';
-import { applyProfile, loadConfig, profileEnvVar } from './config-loader.ts';
-import { frameworkFlags, isRemoteCaller, valuesForCommand } from './utils.ts';
+import type { ConfigLayer, ConfigLoader, ConfigSearchOptions } from './config-loader.ts';
+import { applyProfile, applySections, commandChain, displayPath, getPath, loadConfigData, profileEnvVar } from './config-loader.ts';
+import { addedPaths, frameworkFlags, isRemoteCaller, valuesForCommand, withIssueSources } from './utils.ts';
 
 export type { ConfigSearchOptions } from './config-loader.ts';
 
@@ -22,6 +24,11 @@ export type PadroneConfigProfilesOptions = {
   flag?: string;
   /** The environment variable that selects a profile. Defaults to `<PROGRAM>_PROFILE` (program `my-cli` → `MY_CLI_PROFILE`). */
   env?: string;
+  /**
+   * Let remote callers (serve, MCP, `tool()`) pick a profile with the flag. By default it's an unknown option for them,
+   * like `--config`, so a request can't switch to another profile's values. Defaults to `false`.
+   */
+  remote?: boolean;
 };
 
 export type PadroneConfigOptions = {
@@ -73,9 +80,17 @@ export type PadroneConfigOptions = {
   /**
    * Named sets of values, like AWS's `--profile`: `profiles: { <name>: { ... } }` in a config overrides its top-level values
    * when selected by `--profile <name>`, the `<PROGRAM>_PROFILE` environment variable or a top-level `profile` key (in that
-   * order). `true`, or `{ flag, env }` to rename the flag and the variable. Defaults to `false`.
+   * order). `true`, or `{ flag, env, remote }` to rename the flag and the variable. Defaults to `false`.
    */
   profiles?: boolean | PadroneConfigProfilesOptions;
+  /**
+   * Per-command sections, like viper and cobra: in `{ "port": 8080, "serve": { "port": 3000 }, "db": { "migrate": { ... } } }`
+   * a key that names a subcommand is that command's section, and its values override the ones above it for that command
+   * (and its subcommands). With sections, such a key is never an option value. Defaults to `false`.
+   */
+  sections?: boolean;
+  /** Also fill the options of built-in commands (`help`, `version`, `serve`, …). Defaults to `false`. */
+  builtins?: boolean;
   /**
    * Add a command that manages the user config file, like `git config`: `config get|set|unset|list|path|edit`.
    * `true` names it `config`, a string names it. With it, `xdg` defaults to `true` and `files` to `['config.json']`,
@@ -86,11 +101,7 @@ export type PadroneConfigOptions = {
    * Custom config loader. When provided, replaces the built-in file system loader.
    * Useful for testing or non-CLI environments.
    */
-  loadConfig?: (
-    files: string | string[],
-    xdgAppName?: string,
-    search?: ConfigSearchOptions,
-  ) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
+  loadConfig?: ConfigLoader;
 };
 
 // ── Extension ────────────────────────────────────────────────────────────
@@ -112,12 +123,15 @@ const disabledInterceptor = defineInterceptor(
  *   in a `package.json` key (`packageJson`) and in the user config directory (`xdg`)
  * - Layered configs: `merge: true` merges every config found, and `extends` keys pull in base configs
  * - Profiles (`profiles: true`): `--profile <name>` applies a config's `profiles.<name>` values
+ * - Per-command sections (`sections: true`): `serve: { ... }` applies to `serve`
  * - A `config` command (`command: true`) to get, set, list and edit the user config file
  * - Optional schema validation and transformation of config data
  * - Directly accesses the file system (gracefully no-ops in non-CLI environments)
  *
  * Config values have the lowest precedence (CLI > stdin > env > config). Only keys the command has options for are applied
  * (option names, aliases or kebab-case names), so a program-wide config file works for every command; `null` means unset.
+ * Numbers and booleans are coerced to the option's type like CLI input (YAML `name: 123` for a string gives `"123"`), and a
+ * validation error about a value from a config file names it: `… (from config.json)`. Built-in commands aren't filled.
  *
  * Not included in the default built-in extensions — must be explicitly added:
  * ```ts
@@ -144,15 +158,17 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
   const inherit = options?.inherit;
   const xdgOption = options?.xdg ?? !!commandName;
   const packageJsonOption = options?.packageJson;
-  const configLoader = options?.loadConfig ?? loadConfig;
   const profiles = options?.profiles ? (options.profiles === true ? {} : options.profiles) : undefined;
   const profileFlag = profiles ? (profiles.flag ?? 'profile') : undefined;
+  const sections = !!options?.sections;
+  const skips = (command: AnyPadroneCommand) => !options?.builtins && isBuiltinCommand(command);
 
   const source: ConfigSource = {
     files: configFiles ?? [],
     schema: configSchema,
     loadConfig: options?.loadConfig,
     profileFlag,
+    sections,
     profileEnv: (command) => profiles?.env ?? profileEnvVar(getRootCommand(command).name),
     locate(command: AnyPadroneCommand, env: Record<string, string | undefined>) {
       // `true` → the root command's name, string → as-is
@@ -174,6 +190,38 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
     },
   };
 
+  const helpOptions = (command: AnyPadroneCommand): HelpArgumentInfo[] => {
+    if (skips(command)) return [];
+    const config: HelpArgumentInfo = {
+      name: 'config',
+      flags: ['c'],
+      type: 'string',
+      valueName: 'file',
+      optional: true,
+      description: 'Config file to load',
+    };
+    const profile: HelpArgumentInfo = {
+      name: profileFlag!,
+      type: 'string',
+      optional: true,
+      description: 'Config profile to use',
+      env: source.profileEnv(command),
+    };
+    return [...(flagEnabled ? [config] : []), ...(profileFlag ? [profile] : [])];
+  };
+
+  /** The file a value at `path` (in the values for `command`) comes from: the last layer that sets it. */
+  const sourceOf = (layers: ConfigLayer[] | undefined, command: AnyPadroneCommand, profile: string | undefined, explicit?: string) => {
+    const chain = commandChain(command).map((c) => c.name);
+    const sectionPaths = sections ? chain.map((_, i) => chain.slice(0, i + 1)) : [];
+    const prefixes = [[], ...sectionPaths].flatMap((section) => [section, ...(profile ? [['profiles', profile, ...section]] : [])]);
+    return (path: readonly string[]) => {
+      if (!layers?.length) return explicit ?? 'config file';
+      const layer = layers.findLast((l) => prefixes.some((prefix) => getPath(l.data, [...prefix, ...path]) !== undefined));
+      return displayPath((layer ?? layers.at(-1)!).file);
+    };
+  };
+
   const interceptor = defineInterceptor(
     {
       id: 'padrone:config',
@@ -182,28 +230,25 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
       async: true,
       ...((flagEnabled || profileFlag) && {
         options: { ...(flagEnabled && { config: 'value', c: 'value' }), ...(profileFlag && { [profileFlag]: 'value' }) },
-      }),
-      ...(profileFlag && {
-        helpOptions: (command: AnyPadroneCommand) => [
-          { name: profileFlag, type: 'string', optional: true, description: 'Config profile to use', env: source.profileEnv(command) },
-        ],
+        helpOptions,
       }),
       ...(inherit === false && { inherit: false }),
     },
     () => ({
       validate(ctx: InterceptorValidateContext, next) {
         const flags = frameworkFlags(ctx.rawArgs, ctx.command);
-        // Extract --config / -c from rawArgs. Remote callers can't make the program read (or import) a local file:
-        // for them the flag stays an unknown option.
+        // Remote callers can't make the program read (or import) a local file, or pick a profile unless allowed:
+        // for them these flags stay unknown options.
+        const remote = isRemoteCaller(ctx.caller);
         let explicitConfigPath: string | undefined;
-        if (flagEnabled && !isRemoteCaller(ctx.caller)) {
+        if (flagEnabled && !remote) {
           explicitConfigPath = (flags.get('config') ?? flags.get('c')) as string | undefined;
           if (typeof explicitConfigPath === 'string') flags.delete('config', 'c');
         }
 
         let profile: string | undefined;
         if (profileFlag) {
-          const value = flags.get(profileFlag);
+          const value = remote && !profiles?.remote ? undefined : flags.get(profileFlag);
           if (value !== undefined) {
             flags.delete(profileFlag);
             if (typeof value !== 'string' || !value) throw new ConfigError(`--${profileFlag} needs a profile name`);
@@ -212,37 +257,40 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
           profile ||= ctx.runtime.env()[source.profileEnv(ctx.command)] || undefined;
         }
 
-        // Skip entirely when there's nothing to load
+        // Skip entirely for built-in commands and when there's nothing to load
         const nothingToLoad = !explicitConfigPath && !configFiles && !packageJsonOption;
-        if (nothingToLoad && !profile) return next();
+        if (skips(ctx.command) || (nothingToLoad && !profile)) return next();
 
         // Load config data: explicit --config flag takes priority, then auto-detect
         const { xdgAppName, search } = source.locate(ctx.command, ctx.runtime.env());
-        const configDataOrPromise = nothingToLoad ? undefined : configLoader(explicitConfigPath ?? configFiles ?? [], xdgAppName, search);
+        const loaded = nothingToLoad
+          ? {}
+          : loadConfigData(options?.loadConfig, explicitConfigPath ?? configFiles ?? [], xdgAppName, search);
 
-        const applyConfig = (loaded: Record<string, unknown> | undefined) => {
-          const configData = profileFlag && (loaded || profile) ? applyProfile(loaded ?? {}, profile) : loaded;
-          if (!configData) return next();
+        return thenMaybe(loaded, ({ data: loadedData, layers }) => {
+          const withProfile = profileFlag && (loadedData || profile) ? applyProfile(loadedData ?? {}, profile) : loadedData;
+          if (!withProfile) return next();
+          const configData = sections ? applySections(withProfile, ctx.command) : withProfile;
+          const selected = profile ?? (typeof loadedData?.profile === 'string' ? loadedData.profile : undefined);
+          const fromFile = sourceOf(layers, ctx.command, selected, explicitConfigPath);
 
-          // Validate against schema if provided
-          if (configSchema) {
-            const validated = configSchema['~standard'].validate(configData);
-            return thenMaybe(validated, (result) => {
-              if (result.issues) {
-                throw new ConfigError(`Invalid config file:\n${formatIssueMessages(result.issues)}`, {
-                  command: ctx.command.path || ctx.command.name,
-                });
-              }
-              const validatedData = result.value as Record<string, unknown>;
-              return next({ rawArgs: applyValues(ctx.rawArgs, valuesForCommand(ctx.command, validatedData, ctx.positionalArgs)) });
-            });
-          }
+          const fill = (values: Record<string, unknown>) => {
+            const rawArgs = applyValues(ctx.rawArgs, valuesForCommand(ctx.command, values, ctx.positionalArgs));
+            return thenMaybe(next({ rawArgs }), (result) => withIssueSources(result, addedPaths(ctx.rawArgs, rawArgs), fromFile));
+          };
+          if (!configSchema) return fill(configData);
 
-          // No schema — the keys this command has options for
-          return next({ rawArgs: applyValues(ctx.rawArgs, valuesForCommand(ctx.command, configData, ctx.positionalArgs)) });
-        };
-
-        return thenMaybe(configDataOrPromise, applyConfig);
+          const validated = configSchema['~standard'].validate(coerceArgs(configData, configSchema as PadroneSchema));
+          return thenMaybe(validated, (result) => {
+            if (result.issues) {
+              const files = layers?.length ? ` ${layers.map((layer) => displayPath(layer.file)).join(', ')}` : '';
+              throw new ConfigError(`Invalid config file${files}:\n${formatIssueMessages(result.issues)}`, {
+                command: ctx.command.path || ctx.command.name,
+              });
+            }
+            return fill(result.value as Record<string, unknown>);
+          });
+        });
       },
     }),
   );

@@ -30,7 +30,7 @@ export function padroneMan(): <T extends CommandTypesBase>(builder: T) => WithMa
   return ((builder: AnyPadroneBuilder) =>
     builder.command('man', (c) =>
       c
-        .configure({ description: 'Generate man pages', hidden: true })
+        .configure({ description: 'Generate man pages', hidden: true, builtin: true })
         .arguments(
           passthroughSchema({
             setup: { type: 'boolean', description: 'Install the man pages' },

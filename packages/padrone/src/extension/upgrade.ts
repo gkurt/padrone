@@ -228,7 +228,7 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
   return ((builder: AnyPadroneBuilder) =>
     builder.intercept(configMarker).command(commandName, (c) =>
       c
-        .configure({ description: 'Upgrade to the latest version', mutation: true })
+        .configure({ description: 'Upgrade to the latest version', mutation: true, builtin: true })
         .intercept(planner)
         .arguments(
           passthroughSchema({

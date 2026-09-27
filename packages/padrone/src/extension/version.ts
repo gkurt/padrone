@@ -178,6 +178,7 @@ export function padroneVersion(options: PadroneVersionOptions = {}): <T extends 
           .configure({
             description: 'Display the version number',
             hidden: true,
+            builtin: true,
             flagNames: options.flags ?? DEFAULT_VERSION_FLAGS,
           } as PadroneCommandConfig)
           .arguments(

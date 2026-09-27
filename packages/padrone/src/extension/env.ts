@@ -1,5 +1,6 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { applyValues } from '../core/args.ts';
+import { getGlobalArgs, isBuiltinCommand } from '../core/commands.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
 import { getKnownOptionNames } from '../core/validate.ts';
@@ -13,7 +14,7 @@ import type {
 import type { LoadEnvFilesOptions } from '../util/dotenv.ts';
 import { loadEnvFiles } from '../util/dotenv.ts';
 import type { WithAsync } from '../util/type-utils.ts';
-import { valuesForCommand } from './utils.ts';
+import { addedPaths, schemaProperties, valuesForCommand, withIssueSources } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -34,15 +35,21 @@ export type PadroneEnvOptions = {
   base?: boolean;
   /**
    * Map args to environment variables directly, e.g. `{ port: 'APP_PORT', token: ['API_TOKEN', 'TOKEN'] }`
-   * (the first variable that is set wins). Values are strings, coerced by the command's schema like CLI input.
-   * These variables are shown in help. Can be combined with an env schema.
+   * (the first variable that is set wins); a dotted key sets a nested value (`{ 'db.host': 'DB_HOST' }`).
+   * Values are strings, coerced by the command's schema like CLI input. These variables are shown in help.
+   * Can be combined with an env schema.
    */
   vars?: Record<string, string | readonly string[]>;
   /**
    * Read every option from a prefixed variable, like yargs' `.env('MY_APP')`: with `prefix: 'MY_APP'`,
-   * `--dry-run` / `dryRun` reads `MY_APP_DRY_RUN`. Variables named in `vars` take precedence. Shown in help.
+   * `--dry-run` / `dryRun` reads `MY_APP_DRY_RUN`, and a double underscore reaches into objects
+   * (`MY_APP_DB__HOST` → `db.host`). Variables named in `vars` take precedence. Shown in help.
    */
   prefix?: string;
+  /** Read variables set to an empty string (`APP_PORT=`) as empty values; by default they count as unset. @default false */
+  allowEmpty?: boolean;
+  /** Also fill the options of built-in commands (`help`, `version`, `config`, `serve`, …). @default false */
+  builtins?: boolean;
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -61,17 +68,71 @@ function prefixedEnvName(prefix: string, arg: string): string {
 }
 
 type EnvVarNames = (arg: string) => string | readonly string[] | undefined;
+/** Values read from variables, and (at the same paths) the variable each one came from. */
+type EnvValues = { values: Record<string, unknown>; sources: Record<string, unknown> };
 
-/** Reads each arg from the first of its variables that is set. */
-function readEnvVars(env: Record<string, string | undefined>, args: readonly string[], namesOf: EnvVarNames): Record<string, unknown> {
-  const values: Record<string, unknown> = {};
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** Sets `value` at `path` (and the variable it came from in `sources`), unless a value is already there. */
+function setEnvValue({ values, sources }: EnvValues, path: readonly string[], value: string, name: string): void {
+  if (path.some((key) => UNSAFE_KEYS.has(key))) return;
+  let target = values;
+  let names = sources;
+  for (const key of path.slice(0, -1)) {
+    if (target[key] === undefined) {
+      target[key] = {};
+      names[key] = {};
+    }
+    if (typeof target[key] !== 'object') return;
+    target = target[key] as Record<string, unknown>;
+    names = names[key] as Record<string, unknown>;
+  }
+  const last = path.at(-1)!;
+  if (target[last] !== undefined) return;
+  target[last] = value;
+  names[last] = name;
+}
+
+/** Reads each arg (a dotted one into nested objects) from the first of its variables that is set. */
+function readEnvVars(env: Record<string, string | undefined>, args: readonly string[], namesOf: EnvVarNames, into: EnvValues): void {
   for (const arg of args) {
     const names = namesOf(arg);
     if (!names) continue;
     const name = (typeof names === 'string' ? [names] : names).find((n) => env[n] !== undefined);
-    if (name) values[arg] = env[name];
+    if (name) setEnvValue(into, arg.split('.'), env[name]!, name);
   }
-  return values;
+}
+
+/** Nested values from prefixed variables with `__` between the keys: `MY_APP_DB__MAX_CONNS` → `db.maxConns`. */
+function readNestedEnvVars(env: Record<string, string | undefined>, prefix: string, command: AnyPadroneCommand, into: EnvValues): void {
+  const head = prefixedEnvName(prefix, '');
+  const properties = { ...schemaProperties(getGlobalArgs(command)?.schema), ...schemaProperties(command.argsSchema) };
+  const options = getKnownOptionNames(command);
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined || !name.startsWith(head) || !name.includes('__')) continue;
+    const [first, ...rest] = name.slice(head.length).split('__');
+    const option = options.find((o) => prefixedEnvName('', o) === first);
+    if (!option || rest.some((segment) => !segment)) continue;
+    let prop = properties[option];
+    const path = [option];
+    for (const segment of rest) {
+      const nested: Record<string, any> = prop?.properties ?? {};
+      const key = Object.keys(nested).find((k) => prefixedEnvName('', k) === segment) ?? segment.toLowerCase();
+      path.push(key);
+      prop = nested[key];
+    }
+    setEnvValue(into, path, value, name);
+  }
+}
+
+/** The variable a filled path came from. */
+function sourceIn(sources: Record<string, unknown>, path: readonly string[]): string | undefined {
+  let current: unknown = sources;
+  for (const key of path) {
+    if (!current || typeof current !== 'object' || !Object.hasOwn(current, key)) return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === 'string' ? current : undefined;
 }
 
 // ── Extension ────────────────────────────────────────────────────────────
@@ -97,11 +158,13 @@ function readEnvVars(env: Record<string, string | undefined>, args: readonly str
  * // .env file loading only (no schema validation)
  * .extend(padroneEnv({ modes: ['production'] }))
  *
- * // Every option from MY_APP_* variables (`--dry-run` ← MY_APP_DRY_RUN)
+ * // Every option from MY_APP_* variables (`--dry-run` ← MY_APP_DRY_RUN, `--db.host` ← MY_APP_DB__HOST)
  * .extend(padroneEnv({ prefix: 'MY_APP' }))
  * ```
  *
- * Env values have lower precedence than CLI args and stdin, but higher than config files.
+ * Env values have lower precedence than CLI args and stdin, but higher than config files. Variables set to an empty
+ * string count as unset (unless `allowEmpty`), built-in commands (`help`, `config`, `serve`, …) aren't filled
+ * (unless `builtins`), and a validation error about a value from a variable names it: `… (from MY_APP_PORT)`.
  */
 export function padroneEnv(schema: StandardSchemaV1): <T extends CommandTypesBase>(builder: T) => WithAsync<T>;
 export function padroneEnv(schema: StandardSchemaV1, options: PadroneEnvOptions): <T extends CommandTypesBase>(builder: T) => WithAsync<T>;
@@ -122,6 +185,7 @@ export function padroneEnv(
   const mapsArgs = !!vars || prefix !== undefined;
   const envVarNames: EnvVarNames = (arg) =>
     (vars && Object.hasOwn(vars, arg) ? vars[arg] : undefined) ?? (prefix !== undefined ? prefixedEnvName(prefix, arg) : undefined);
+  const fills = (command: AnyPadroneCommand) => options?.builtins || !isBuiltinCommand(command);
   const argsToRead = (command: AnyPadroneCommand) =>
     prefix !== undefined ? [...new Set([...Object.keys(vars ?? {}), ...getKnownOptionNames(command)])] : Object.keys(vars ?? {});
 
@@ -131,57 +195,57 @@ export function padroneEnv(
       name: 'padrone:env',
       order: -1000,
       async: hasFiles,
-      ...(mapsArgs && { env: prefix !== undefined ? envVarNames : vars }),
+      ...(mapsArgs && { env: (arg: string, command: AnyPadroneCommand) => (fills(command) ? envVarNames(arg) : undefined) }),
     },
     () => ({
       validate(ctx: InterceptorValidateContext, next) {
         const processEnv = ctx.runtime.env();
-
         const applyEnv = (envFromFiles: Record<string, string>) => {
           const rawEnv = override ? { ...processEnv, ...envFromFiles } : { ...envFromFiles, ...processEnv };
-          const forCommand = (values: Record<string, unknown>) => valuesForCommand(ctx.command, values, ctx.positionalArgs);
-          const rawArgs = mapsArgs
-            ? applyValues(ctx.rawArgs, forCommand(readEnvVars(rawEnv, argsToRead(ctx.command), envVarNames)))
-            : ctx.rawArgs;
           // Variables from `.env` files are visible to `runtime.env()` downstream (e.g. in the action)
           const runtime = hasFiles ? { ...ctx.runtime, env: () => rawEnv } : ctx.runtime;
-          const proceed = (args = rawArgs) => next({ rawArgs: args, runtime });
+          if (!fills(ctx.command)) return next({ runtime });
 
-          if (schema) {
-            const envValidated = schema['~standard'].validate(rawEnv);
-            return thenMaybe(envValidated, (result) => {
-              if (result.issues) {
-                // A variable that is set but invalid is an error; a missing one leaves the arg to the CLI or its default.
-                const invalid = result.issues.filter((issue) => {
-                  const name = issue.path?.[0];
-                  const key = typeof name === 'object' ? name.key : name;
-                  return key !== undefined && rawEnv[String(key)] !== undefined;
-                });
-                if (invalid.length === 0) return proceed();
-                return {
-                  args: undefined,
-                  argsResult: {
-                    issues: invalid.map((issue) => ({ ...issue, message: `Invalid environment variable: ${issue.message}` })),
-                  },
-                } as InterceptorValidateResult;
-              }
-              if (!result.value) return proceed();
-              return proceed(applyValues(rawArgs, forCommand(result.value as Record<string, unknown>)));
-            });
-          }
+          const env = options?.allowEmpty ? rawEnv : Object.fromEntries(Object.entries(rawEnv).filter(([, value]) => value !== ''));
+          const read: EnvValues = { values: {}, sources: {} };
+          if (mapsArgs) readEnvVars(env, argsToRead(ctx.command), envVarNames, read);
+          if (prefix !== undefined) readNestedEnvVars(env, prefix, ctx.command, read);
+          // Without `vars`, `prefix` or a schema: file variables named like the command's options fill them, with process env values
+          // winning unless `override`
+          if (!mapsArgs && !schema)
+            for (const key of Object.keys(envFromFiles)) if (env[key] !== undefined) setEnvValue(read, [key], env[key]!, key);
 
-          // No schema — file variables named like the command's options fill them (unless `vars` or `prefix` picks what to read),
-          // with process env values winning unless `override`
-          if (mapsArgs) return proceed();
-          const fileVars = Object.fromEntries(Object.keys(envFromFiles).map((key) => [key, rawEnv[key]]));
-          return proceed(applyValues(ctx.rawArgs, forCommand(fileVars)));
+          const forCommand = (values: Record<string, unknown>) => valuesForCommand(ctx.command, values, ctx.positionalArgs);
+          const sources = forCommand(read.sources);
+          const proceed = (rawArgs: Record<string, unknown>) =>
+            thenMaybe(next({ rawArgs, runtime }), (result) =>
+              withIssueSources(result, addedPaths(ctx.rawArgs, rawArgs), (path) => sourceIn(sources, path) ?? 'environment'),
+            );
+          const rawArgs = applyValues(ctx.rawArgs, forCommand(read.values));
+          if (!schema) return proceed(rawArgs);
+
+          return thenMaybe(schema['~standard'].validate(env), (result) => {
+            if (result.issues) {
+              // A variable that is set but invalid is an error; a missing one leaves the arg to the CLI or its default.
+              const invalid = result.issues.filter((issue) => {
+                const name = issue.path?.[0];
+                const key = typeof name === 'object' ? name.key : name;
+                return key !== undefined && env[String(key)] !== undefined;
+              });
+              if (invalid.length === 0) return proceed(rawArgs);
+              return {
+                args: undefined,
+                argsResult: {
+                  issues: invalid.map((issue) => ({ ...issue, message: `Invalid environment variable: ${issue.message}` })),
+                },
+              } as InterceptorValidateResult;
+            }
+            if (!result.value) return proceed(rawArgs);
+            return proceed(applyValues(rawArgs, forCommand(result.value as Record<string, unknown>)));
+          });
         };
 
-        if (hasFiles) {
-          const loaded = loadEnvFiles(fileOptions!, processEnv);
-          return thenMaybe(loaded, applyEnv);
-        }
-
+        if (hasFiles) return thenMaybe(loadEnvFiles(fileOptions!, processEnv), applyEnv);
         return applyEnv({});
       },
     }),

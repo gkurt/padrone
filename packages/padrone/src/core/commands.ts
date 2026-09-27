@@ -49,6 +49,7 @@ export const configKeys = [
   'deprecated',
   'hidden',
   'mutation',
+  'builtin',
   'needsApproval',
   'outputSchema',
   'help',
@@ -97,6 +98,12 @@ export function mergeCommands(existing: AnyPadroneCommand, override: AnyPadroneC
   }
 
   return merged;
+}
+
+/** Whether a command is, or is under, a command an extension added for the program itself (`builtin: true`). */
+export function isBuiltinCommand(command: AnyPadroneCommand): boolean {
+  for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) if (current.builtin) return true;
+  return false;
 }
 
 /** The global args in effect for a command: its own `.globalArgs()`, or else the nearest ancestor's. */

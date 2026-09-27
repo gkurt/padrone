@@ -1,12 +1,15 @@
 import { findCommandByName } from '../core/commands.ts';
+import { resolveStdinAlways } from '../core/default-runtime.ts';
 import { ActionError, ConfigError, PadroneError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { tokenizeInput } from '../core/parse.ts';
 import { thenMaybe } from '../core/results.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
 import { getProgramDirs } from '../util/dirs.ts';
+import { fileErrorReason } from '../util/files.ts';
 import { getRootCommand } from '../util/utils.ts';
-import { expandResponseFiles, responseFilesPrefix } from './response-files.ts';
+import { parseFlatYaml, toYaml } from '../util/yaml.ts';
+import { expandResponseFiles, responseFilesOptions } from './response-files.ts';
 import { aliasNamesKey } from './suggestions.ts';
 import { inputTokens, isRemoteCaller, localOnlyInterceptor, passthroughSchema, quoteToken } from './utils.ts';
 
@@ -20,7 +23,10 @@ export type PadroneAliasesOptions = {
   aliases?: Record<string, string>;
   /** JSON file the user's aliases are kept in. Defaults to `aliases.json` in the program's config directory (`program.dirs.config`). */
   file?: string;
-  /** Name of the command that manages aliases (`alias set|list|delete`), or `false` for none. Defaults to `'alias'`. */
+  /**
+   * Name of the command that manages aliases (`alias set|list|delete|import|export`), or `false` for none.
+   * Defaults to `'alias'`.
+   */
   command?: string | false;
 };
 
@@ -48,11 +54,46 @@ async function readAliases(file: string): Promise<AliasMap> {
   throw new ConfigError(`Invalid aliases file ${file}: must be an object of alias names to commands`);
 }
 
-async function writeAliases(file: string, aliases: AliasMap): Promise<void> {
+async function writeText(file: string, text: string): Promise<void> {
   const [fs, path] = await Promise.all([import('node:fs'), import('node:path')]);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(aliases, null, 2)}\n`, 'utf-8');
+  fs.writeFileSync(file, text, 'utf-8');
 }
+
+const writeAliases = (file: string, aliases: AliasMap) => writeText(file, `${JSON.stringify(aliases, null, 2)}\n`);
+
+const sorted = (aliases: AliasMap): AliasMap =>
+  Object.fromEntries(
+    Object.keys(aliases)
+      .sort()
+      .map((name) => [name, aliases[name]!]),
+  );
+
+const isJsonFile = (file: string) => /\.jsonc?$/i.test(file);
+
+/** The data in an imported file: JSON (`.json`, or text starting with `{`), else YAML (a flat `name: command` mapping without Bun). */
+function parseImport(text: string, file: string): unknown {
+  if (isJsonFile(file) || (!/\.ya?ml$/i.test(file) && /^\s*\{/.test(text))) {
+    try {
+      return JSON.parse(text);
+    } catch (err) {
+      if (isJsonFile(file)) throw err;
+    }
+  }
+  const yaml = (globalThis as { Bun?: { YAML?: { parse(text: string): unknown } } }).Bun?.YAML;
+  return yaml ? yaml.parse(text) : parseFlatYaml(text);
+}
+
+/** Why an imported alias can't be added, if it can't. */
+function importProblem(alias: string, expansion: unknown, root: AnyPadroneCommand): string | undefined {
+  if (typeof expansion !== 'string') return `"${alias}" must be a string`;
+  if (!expansion.trim()) return `"${alias}" is empty`;
+  if (!ALIAS_NAME.test(alias)) return `invalid alias name "${alias}"`;
+  if (findCommandByName(alias, root.commands)) return `"${alias}" is already a command`;
+  return undefined;
+}
+
+const plural = (count: number) => `${count} alias${count === 1 ? '' : 'es'}`;
 
 // ── Expansion ────────────────────────────────────────────────────────────
 
@@ -130,8 +171,10 @@ const ALIAS_NAME = /^[^\s-][^\s]*$/;
 
 /**
  * Extension for command aliases, like `gh alias` or git aliases: the first word of the input is expanded before routing.
- * People add their own with `<program> alias set co "checkout --force"`, list them with `alias list` and remove them with
- * `alias delete co`; they're kept in `aliases.json` in the program's config directory. `$1`, `$2`, … in an alias take the
+ * People add their own with `<program> alias set co "checkout --force"`, list them with `alias list` (as YAML) and remove them
+ * with `alias delete co`; they're kept in `aliases.json` in the program's config directory. `alias import <file|->` adds the
+ * aliases in a YAML or JSON file (existing ones are kept unless `--clobber`), and `alias export [file]` writes the user's
+ * aliases as YAML (JSON with `--json` or a `.json` file), like `gh alias import`. `$1`, `$2`, … in an alias take the
  * words after it (`alias set pr "checkout pr/$1"`), and other words are appended. Only `cli()` and the REPL expand aliases.
  *
  * ```ts
@@ -155,8 +198,10 @@ export function padroneAliases(options: PadroneAliasesOptions = {}): <T extends 
       const first = tokens[0];
       // Nothing to expand: a known command, an option, or no input
       if (!first || first.startsWith('-') || findCommandByName(first, root.commands)) return next();
-      const prefix = responseFilesPrefix(root);
-      const expandWords = prefix ? (words: string[]) => expandResponseFiles(words, prefix) : undefined;
+      const responseFiles = responseFilesOptions(root);
+      const expandWords = responseFiles
+        ? (words: string[]) => expandResponseFiles(words, responseFiles.prefix, undefined, responseFiles.relativeTo)
+        : undefined;
       return readAliases(aliasFile(options, root, ctx.runtime.env())).then((userAliases) => {
         const aliases = { ...staticAliases, ...userAliases };
         // An unknown command may have meant an alias, so suggestions offers their names
@@ -205,14 +250,84 @@ export function padroneAliases(options: PadroneAliasesOptions = {}): <T extends 
         )
         .command(['list', 'ls'], (l) =>
           l
-            .configure({ description: 'List aliases' })
+            .configure({ description: 'List aliases (as YAML that `import` reads)' })
             .async()
             .action(async (_args, ctx) => {
               const aliases = { ...staticAliases, ...(await readAliases(fileFor(ctx.command, ctx.runtime.env()))) };
-              const names = Object.keys(aliases).sort();
-              if (names.length === 0) return 'No aliases';
-              const width = Math.max(...names.map((n) => n.length)) + 2;
-              return names.map((n) => `${n.padEnd(width)}${aliases[n]}`).join('\n');
+              return Object.keys(aliases).length === 0 ? 'No aliases' : toYaml(sorted(aliases));
+            }),
+        )
+        .command('import', (i) =>
+          i
+            .configure({ description: 'Add the aliases in a YAML or JSON file', mutation: true })
+            .arguments(
+              passthroughSchema({
+                file: { type: 'string', description: 'The file, or - for stdin' },
+                clobber: { type: 'boolean', description: 'Overwrite aliases that already exist' },
+              }),
+              { positional: ['file'], fields: { file: { hint: 'file' } } },
+            )
+            .async()
+            .action(async (args, ctx) => {
+              if (!args.file) throw new ActionError(`Usage: ${commandName} import <file|->`);
+              const stdin = args.file === '-';
+              const name = stdin ? 'stdin' : args.file;
+              let data: unknown;
+              try {
+                const text = stdin
+                  ? await resolveStdinAlways(ctx.runtime).text()
+                  : (await import('node:fs')).readFileSync(args.file, 'utf-8');
+                data = parseImport(text, stdin ? '' : args.file);
+              } catch (err) {
+                throw new ActionError(`Cannot import ${name}: ${fileErrorReason(err)}`, { cause: err });
+              }
+              if (!data || typeof data !== 'object' || Array.isArray(data)) {
+                throw new ActionError(`Cannot import ${name}: must be an object of alias names to commands`);
+              }
+              const root = getRootCommand(ctx.command);
+              const problems = Object.entries(data).flatMap(([alias, expansion]) => {
+                const problem = importProblem(alias, expansion, root);
+                return problem ? [problem] : [];
+              });
+              if (problems.length) throw new ActionError(`Cannot import ${name}:\n${problems.map((p) => `  - ${p}`).join('\n')}`);
+
+              const file = fileFor(ctx.command, ctx.runtime.env());
+              const aliases = await readAliases(file);
+              const imported: AliasMap = {};
+              const skipped: string[] = [];
+              for (const [alias, expansion] of Object.entries(data as AliasMap)) {
+                const exists = Object.hasOwn(aliases, alias);
+                if (exists && aliases[alias] === expansion.trim()) continue;
+                if (exists && !args.clobber) skipped.push(alias);
+                else imported[alias] = expansion.trim();
+              }
+              if (Object.keys(imported).length) await writeAliases(file, { ...aliases, ...imported });
+              const lines = [`Imported ${plural(Object.keys(imported).length)}`];
+              if (skipped.length) {
+                const exist = skipped.length === 1 ? 'that already exists' : 'that already exist';
+                lines.push(`Skipped ${plural(skipped.length)} ${exist}: ${skipped.join(', ')} (use --clobber to overwrite)`);
+              }
+              return lines.join('\n');
+            }),
+        )
+        .command('export', (e) =>
+          e
+            .configure({ description: "Print or save the user's aliases as YAML or JSON" })
+            .arguments(
+              passthroughSchema({
+                file: { type: 'string', description: 'The file to write (JSON for .json), else stdout' },
+                json: { type: 'boolean', description: 'Write JSON instead of YAML' },
+              }),
+              { positional: ['file'], fields: { file: { hint: 'file' } } },
+            )
+            .async()
+            .action(async (args, ctx) => {
+              const aliases = sorted(await readAliases(fileFor(ctx.command, ctx.runtime.env())));
+              const toFile = args.file && args.file !== '-' ? args.file : undefined;
+              const text = args.json || (toFile && isJsonFile(toFile)) ? JSON.stringify(aliases, null, 2) : toYaml(aliases);
+              if (!toFile) return text;
+              await writeText(toFile, `${text}\n`);
+              return `Exported ${plural(Object.keys(aliases).length)} to ${toFile}`;
             }),
         )
         .command(['delete', 'rm'], (d) =>

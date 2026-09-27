@@ -36,6 +36,55 @@ function entriesOf(value: unknown): [string, unknown][] | undefined {
   return Object.entries(value).filter(([, v]) => v !== undefined && typeof v !== 'function' && typeof v !== 'symbol');
 }
 
+/**
+ * Reads a flat YAML mapping of strings, like `toYaml` writes for one: `key: value` lines with plain, `'single'` or
+ * `"double"` (JSON-style) quoted keys and values, blank lines and `#` comments. Throws on anything else (nesting, lists).
+ */
+export function parseFlatYaml(text: string): Record<string, string | null> {
+  const result: Record<string, string | null> = {};
+  const lines = text.replace(/^﻿/, '').split(/\r?\n/);
+  lines.forEach((line, index) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#') || trimmed === '---' || trimmed === '{}') return;
+    const fail = (): never => {
+      throw new Error(`Line ${index + 1}: expected "key: value", got "${trimmed}"`);
+    };
+    if (/^\s/.test(line)) fail();
+    const [key, rest] = readScalar(trimmed, true) ?? fail();
+    const [value, trailing] = !rest || rest.startsWith('#') ? [null, ''] : (readScalar(rest, false) ?? fail());
+    if (trailing && !trailing.startsWith('#')) fail();
+    if (key !== '__proto__') result[key] = value;
+  });
+  return result;
+}
+
+/** A scalar at the start of `text` and what follows it (after `: ` for a key); `undefined` when there isn't one. */
+function readScalar(text: string, isKey: boolean): [string, string] | undefined {
+  const after = (rest: string): string | undefined => {
+    if (!isKey) return rest.trim();
+    const match = /^\s*:(?:\s+|$)/.exec(rest);
+    return match ? rest.slice(match[0].length) : undefined;
+  };
+  if (text.startsWith('"')) {
+    const end = /^"(?:[^"\\]|\\.)*"/.exec(text)?.[0];
+    if (!end) return undefined;
+    const rest = after(text.slice(end.length));
+    return rest === undefined ? undefined : [JSON.parse(end) as string, rest];
+  }
+  if (text.startsWith("'")) {
+    const end = /^'(?:[^']|'')*'/.exec(text)?.[0];
+    if (!end) return undefined;
+    const rest = after(text.slice(end.length));
+    return rest === undefined ? undefined : [end.slice(1, -1).replaceAll("''", "'"), rest];
+  }
+  if (isKey) {
+    const match = /:(?:\s+|$)/.exec(text);
+    return match ? [text.slice(0, match.index).trim(), text.slice(match.index + match[0].length)] : undefined;
+  }
+  const comment = text.search(/\s#/);
+  return [(comment === -1 ? text : text.slice(0, comment)).trim(), ''];
+}
+
 function yamlLines(value: unknown): string[] {
   const entries = entriesOf(value);
   if (!entries) {

@@ -12,10 +12,20 @@ import { getRootCommand } from '../util/utils.ts';
 import type { ConfigSource } from './config-command.ts';
 import { addConfigCommand } from './config-command.ts';
 import type { ConfigLayer, ConfigLoader, ConfigSearchOptions } from './config-loader.ts';
-import { applyProfile, applySections, commandChain, displayPath, getPath, loadConfigData, profileEnvVar } from './config-loader.ts';
+import {
+  applyOverrides,
+  applySections,
+  commandChain,
+  displayPath,
+  getPath,
+  loadConfigData,
+  overridePrefixes,
+  profileEnvVar,
+} from './config-loader.ts';
 import { addedPaths, frameworkFlags, isRemoteCaller, valuesForCommand, withIssueSources } from './utils.ts';
 
-export type { ConfigSearchOptions } from './config-loader.ts';
+export type { ConfigSearchOptions, PadroneConfigContext, PadroneConfigExport } from './config-loader.ts';
+export { defineConfig } from './config-loader.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -58,9 +68,23 @@ export type PadroneConfigOptions = {
   xdg?: string | boolean;
   /**
    * Also search the parent directories of cwd, nearest first, like cosmiconfig and lilconfig do
-   * (so a config at the project root applies in its subdirectories). Defaults to `false`.
+   * (so a config at the project root applies in its subdirectories):
+   * - `true` — up to the filesystem root (or `stopDir`).
+   * - `'project'` — up to the nearest directory with a `.git` or `package.json` (inclusive), like cosmiconfig's
+   *   `searchStrategy: 'project'`; outside a project only cwd is searched.
+   *
+   * Defaults to `false`.
    */
-  searchParents?: boolean;
+  searchParents?: boolean | 'project';
+  /** The last directory `searchParents` searches (inclusive), relative to cwd, like cosmiconfig's `stopDir`. */
+  stopDir?: string;
+  /**
+   * The environment name that selects per-environment overrides, like c12's `$development`/`$production`:
+   * `$<name>: { ... }` and `$env: { <name>: { ... } }` in a config (or in a profile) override its values. A string, a
+   * function of the environment variables, or `false` to ignore the overrides. Keys starting with `$` are never option
+   * values. Defaults to the `NODE_ENV` variable.
+   */
+  envName?: string | false | ((env: Record<string, string | undefined>) => string | undefined);
   /**
    * Read config from a key of `package.json` in a searched directory, after its config files:
    * `true` uses the program name (`{ "my-cli": { ... } }`), a string names the key. Defaults to `false`.
@@ -162,6 +186,7 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
   const profileFlag = profiles ? (profiles.flag ?? 'profile') : undefined;
   const sections = !!options?.sections;
   const skips = (command: AnyPadroneCommand) => !options?.builtins && isBuiltinCommand(command);
+  const envNameOption = options?.envName ?? ((env: Record<string, string | undefined>) => env.NODE_ENV);
 
   const source: ConfigSource = {
     files: configFiles ?? [],
@@ -170,7 +195,8 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
     profileFlag,
     sections,
     profileEnv: (command) => profiles?.env ?? profileEnvVar(getRootCommand(command).name),
-    locate(command: AnyPadroneCommand, env: Record<string, string | undefined>) {
+    envName: (env) => (typeof envNameOption === 'function' ? envNameOption(env) : envNameOption) || undefined,
+    locate(command, env, profile) {
       // `true` → the root command's name, string → as-is
       const programName = getRootCommand(command).name;
       const xdgAppName = typeof xdgOption === 'string' ? xdgOption : xdgOption ? programName : undefined;
@@ -180,13 +206,15 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
       const search: ConfigSearchOptions | undefined = searching
         ? {
             parents: options?.searchParents,
+            ...(options?.searchParents && options.stopDir !== undefined && { stopDir: options.stopDir }),
             packageJsonKey,
             merge: options?.merge,
             ...(options?.extends === false && { extends: false }),
             ...(xdgAppName && { env }),
           }
         : undefined;
-      return { xdgAppName, search };
+      const context = { command: command.path ?? '', env, envName: source.envName(env), profile };
+      return { xdgAppName, search, context };
     },
   };
 
@@ -211,10 +239,17 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
   };
 
   /** The file a value at `path` (in the values for `command`) comes from: the last layer that sets it, or the nearest object it's in. */
-  const sourceOf = (layers: ConfigLayer[] | undefined, command: AnyPadroneCommand, profile: string | undefined, explicit?: string) => {
+  const sourceOf = (
+    layers: ConfigLayer[] | undefined,
+    command: AnyPadroneCommand,
+    profile: string | undefined,
+    envName: string | undefined,
+    explicit?: string,
+  ) => {
     const chain = commandChain(command).map((c) => c.name);
     const sectionPaths = sections ? chain.map((_, i) => chain.slice(0, i + 1)) : [];
-    const prefixes = [[], ...sectionPaths].flatMap((section) => [section, ...(profile ? [['profiles', profile, ...section]] : [])]);
+    const scopes = overridePrefixes(profile, envName);
+    const prefixes = [[], ...sectionPaths].flatMap((section) => scopes.map((scope) => [...scope, ...section]));
     const sets = (layer: ConfigLayer, path: readonly string[]) =>
       prefixes.some((prefix) => getPath(layer.data, [...prefix, ...path]) !== undefined);
     return (path: readonly string[]) => {
@@ -267,17 +302,20 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
         if (skips(ctx.command) || (nothingToLoad && !profile)) return next();
 
         // Load config data: explicit --config flag takes priority, then auto-detect
-        const { xdgAppName, search } = source.locate(ctx.command, ctx.runtime.env());
+        const env = ctx.runtime.env();
+        const { xdgAppName, search, context } = source.locate(ctx.command, env, profile);
         const loaded = nothingToLoad
           ? {}
-          : loadConfigData(options?.loadConfig, explicitConfigPath ?? configFiles ?? [], xdgAppName, search);
+          : loadConfigData(options?.loadConfig, explicitConfigPath ?? configFiles ?? [], xdgAppName, search, context);
 
         return thenMaybe(loaded, ({ data: loadedData, layers }) => {
-          const withProfile = profileFlag && (loadedData || profile) ? applyProfile(loadedData ?? {}, profile) : loadedData;
+          const envName = source.envName(env);
+          const profiled = !!profileFlag && (!!loadedData || !!profile);
+          const withProfile = profiled || loadedData ? applyOverrides(loadedData ?? {}, envName, profiled, profile) : undefined;
           if (!withProfile) return next();
           const configData = sections ? applySections(withProfile, ctx.command) : withProfile;
           const selected = profile ?? (typeof loadedData?.profile === 'string' ? loadedData.profile : undefined);
-          const fromFile = sourceOf(layers, ctx.command, selected, explicitConfigPath);
+          const fromFile = sourceOf(layers, ctx.command, selected, envName, explicitConfigPath);
 
           const fill = (values: Record<string, unknown>) => {
             const rawArgs = applyValues(ctx.rawArgs, valuesForCommand(ctx.command, values, ctx.positionalArgs));

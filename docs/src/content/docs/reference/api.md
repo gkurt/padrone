@@ -267,9 +267,19 @@ program.extend(
 - `schema`: A Standard Schema that validates env vars and transforms them to argument names
 - `options.vars`: Map arguments to variables directly, without a schema: `padroneEnv({ vars: { port: 'APP_PORT', token: ['API_TOKEN', 'TOKEN'] } })`. The first variable that is set wins, and values are coerced by the command's schema like CLI input; a dotted key sets a nested value (`{ 'db.host': 'DB_HOST' }`). These variables are shown in help (`Env: APP_PORT`). Can be combined with a schema.
 - `options.prefix`: Read every option from a prefixed variable, like yargs' `.env('MY_APP')`: `padroneEnv({ prefix: 'MY_APP' })` reads `--dry-run` / `dryRun` from `MY_APP_DRY_RUN`, and a double underscore reaches into objects like viper and .NET (`MY_APP_DB__HOST` → `db.host`, `MY_APP_DB__MAX_CONNS` → `db.maxConns`). Variables named in `vars` take precedence. Shown in help.
+- `options.nestedSeparator`: What separates the keys of a nested value in a prefixed variable name, in place of `__` (`nestedSeparator: '.'` reads `MY_APP_DB.HOST`) (default: `'__'`)
+- `options.arraySeparator`: What splits a variable for an array option into items, like viper's string slices: `MY_APP_TAGS=a,b` gives `['a', 'b']`, `MY_APP_PORTS=80,443` gives `[80, 443]` for a number array. Items are trimmed and empty ones dropped; a value in brackets is read as a JSON array (`MY_APP_TAGS='["a,b", "c"]'`), and arrays of objects always take JSON. `false` keeps the value as one item. Applies to `vars`, `prefix` and `.env` variables named like options, not to what an env schema returns (default: `','`)
 - `options.allowEmpty`: Read variables set to an empty string (`APP_PORT=`) as empty values. By default they count as unset, like viper, so an exported but empty variable doesn't fail validation or override a config value (default: `false`)
 - `options.builtins`: Also fill the options of built-in commands (`help`, `version`, `config`, `serve`, …, anything marked `builtin: true`); by default `APP_KEY` doesn't fill `config get`'s `key` (default: `false`)
-- `options.modes`, `local`, `dir`, `override`, `base`: `.env` file loading. Later files win, then `$VAR` / `${VAR}` references expand against the merged values and the process env (which wins unless `override`); single-quoted values aren't expanded. In an unquoted value, `#` after a space or tab starts a comment, and a quote that's never closed is read as an unquoted value
+- `options.modes`, `local`, `dir`, `override`, `base`: `.env` file loading. Later files win, then `$VAR` / `${VAR}` references expand against the merged values and the process env (which wins unless `override`); single-quoted values aren't expanded. In an unquoted value, `#` after a space or tab starts a comment, and a quote that's never closed is read as an unquoted value. References take the shell's operators, like dotenv-expand:
+
+  | Syntax | Gives |
+  |--------|-------|
+  | `${VAR:-default}` / `${VAR-default}` | `default` when `VAR` is unset or empty / unset |
+  | `${VAR:+alt}` / `${VAR+alt}` | `alt` when `VAR` is set and non-empty / set, else `""` |
+  | `${VAR:?message}` / `${VAR?message}` | `VAR`, or a `ConfigError` naming the file, the variable and `message` when `VAR` is unset or empty / unset: `.env: DATABASE_URL needs DB_HOST: set it in .env.local` |
+
+  Defaults, alternatives and messages are expanded too (`${A:+--host=${HOST}}`). A value the process environment overrides isn't checked
 
 Env values are applied after CLI args and stdin, but before config file values. A validation error about a value from a variable names it: `port: Invalid input: expected number, received string (from APP_PORT)`. Can be applied at the program level (inherited by all commands) or at the command level.
 
@@ -301,6 +311,17 @@ program.extend(padroneConfig({ files: ['app.config.json', '.apprc'] }));
 
 // Look in parent directories too, and in the "myapp" key of package.json
 program.extend(padroneConfig({ files: ['.myapprc.json'], searchParents: true, packageJson: 'myapp' }));
+// ...but not above the project root (the nearest directory with .git or package.json), or above a directory
+program.extend(padroneConfig({ files: ['.myapprc.json'], searchParents: 'project' }));
+program.extend(padroneConfig({ files: ['.myapprc.json'], searchParents: true, stopDir: os.homedir() }));
+
+// A script config can export a function (sync or async) of the command, env, envName and profile
+// myapp.config.ts: export default defineConfig(({ command, envName }) => ({ port: envName === 'production' ? 80 : 3000 }));
+program.extend(padroneConfig({ files: ['myapp.config.ts', 'myapp.config.json'] }));
+
+// Per-environment overrides, like c12: { "port": 3000, "$production": { "port": 80 }, "$env": { "staging": { "port": 8080 } } }
+// apply for NODE_ENV=production / staging (or `envName`)
+program.extend(padroneConfig({ files: ['config.json'], envName: (env) => env.APP_ENV }));
 
 // Layered: ~/.config/myapp/config.json < project root config < cwd config (objects merge, arrays are replaced)
 program.extend(padroneConfig({ files: ['config.json'], xdg: true, searchParents: true, merge: true }));
@@ -328,7 +349,9 @@ program.extend(padroneConfig({ files: 'app.config.json', disabled: true }));
 | `flag` | `boolean` | Enable/disable the `--config`/`-c` flag, listed in help (default: `true`). Serve, MCP and `tool()` calls can't use it: for them it's an unknown option |
 | `inherit` | `boolean` | Whether the config interceptor inherits to subcommands (default: `true`) |
 | `xdg` | `boolean \| string` | Also search the user config directory (`~/.config/<app>`, `~/Library/Application Support/<app>`, `%APPDATA%\<app>`) after cwd. `true` uses the program name |
-| `searchParents` | `boolean` | Also search the parent directories of cwd, nearest first, like cosmiconfig (default: `false`) |
+| `searchParents` | `boolean \| 'project'` | Also search the parent directories of cwd, nearest first, like cosmiconfig: `true` up to the filesystem root (or `stopDir`), `'project'` up to the nearest directory with a `.git` (directory or file) or `package.json`, inclusive, like cosmiconfig's `searchStrategy: 'project'`; outside a project `'project'` searches only cwd (default: `false`) |
+| `stopDir` | `string` | The last directory `searchParents` searches (inclusive), relative to cwd, like cosmiconfig's `stopDir`. When cwd isn't inside it, the search goes on to the root |
+| `envName` | `string \| false \| (env) => string \| undefined` | The environment name for per-environment overrides, like c12's: `$<name>: { ... }`, then `$env: { <name>: { ... } }`, override the config's top-level values (and inside a profile, the profile's). Keys starting with `$` are never option values. `false` ignores the overrides (default: the `NODE_ENV` variable, from `.env` files too) |
 | `packageJson` | `boolean \| string` | Read config from a `package.json` key in each searched directory, after its config files. `true` uses the program name (default: `false`) |
 | `merge` | `boolean` | Merge every config found instead of using the first: the user config directory, then the searched directories from the farthest to cwd, each overriding the last. Objects merge key by key, arrays are replaced. A `--config` file is still used alone (default: `false`) |
 | `extends` | `boolean` | Follow `extends` keys (a path relative to the file, a package name, or a list) to load base configs first; only a script config (`.js`, `.ts`, …) can extend a script (default: `true`) |
@@ -336,7 +359,18 @@ program.extend(padroneConfig({ files: 'app.config.json', disabled: true }));
 | `sections` | `boolean` | Per-command sections, like viper and cobra: a key that names a subcommand (`"serve": { "port": 3000 }`, nested for deeper commands: `"db": { "migrate": { ... } }`) holds values for that command and its subcommands, overriding the ones above it. With sections on, such a key is always a section, never an option value (put a `serve` command's `db` option inside `"serve": { "db": ... }`). Profiles can hold sections too (default: `false`) |
 | `builtins` | `boolean` | Also fill the options of built-in commands (`help`, `version`, `serve`, `config`, …, anything marked `builtin: true`); by default a config `port` doesn't feed `serve --port` (default: `false`) |
 | `command` | `boolean \| string` | Add a command group that manages the user config file (`true` names it `config`). Also makes `xdg` default to `true` and `files` to `['config.json']` (default: `false`) |
-| `loadConfig` | `(files: string \| string[], xdgAppName?: string, search?: { parents?, packageJsonKey?, merge?, extends?, env? }) => Record<string, unknown> \| undefined \| Promise<...>` | Custom config loader function. Replaces the built-in JSON/YAML/TOML loader |
+| `loadConfig` | `(files: string \| string[], xdgAppName?: string, search?: { parents?, stopDir?, packageJsonKey?, merge?, extends?, env? }) => Record<string, unknown> \| undefined \| Promise<...>` | Custom config loader function. Replaces the built-in JSON/YAML/TOML loader (its data still gets `profiles`, `$<envName>` overrides and `sections` applied) |
+
+**Function configs.** A script config (`.js`, `.mjs`, `.ts`, …) may default-export a function, like vite's and c12's, called on every run with a `PadroneConfigContext` and returning the values (or a promise of them):
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `command` | `string` | The command that runs, as its path (`'db migrate'`; `''` for the program itself) |
+| `env` | `Record<string, string \| undefined>` | The environment variables, with the ones `padroneEnv()` loaded from `.env` files |
+| `envName` | `string \| undefined` | The environment name (`envName`, `NODE_ENV` by default) |
+| `profile` | `string \| undefined` | The profile given with `--profile` or its variable (with `profiles`) |
+
+`defineConfig(config)` (from `'padrone'`) types such a file and returns its argument as is: `export default defineConfig<{ port?: number }>(({ envName }) => ({ port: envName === 'production' ? 80 : 3000 }))`. A function config can `extends` other configs like an object one; a data config still can't extend a script.
 
 Config values have the lowest precedence: CLI > stdin > env > config. Numbers and booleans are coerced to the option's type like CLI input, so YAML `name: 123` gives a string option `"123"` and `verbose: 1` a boolean `true` (before the `schema` validates, too). A validation error about a value from a config file names it: `port: Invalid input: expected number, received string (from config.json)`. Built-in commands (`builtin: true`) get no config values unless `builtins: true`. Not included by default — must be explicitly applied via `.extend(padroneConfig(...))`. Can be applied at the program level (inherited by all commands) or at the command level.
 
@@ -344,7 +378,7 @@ Config values have the lowest precedence: CLI > stdin > env > config. Numbers an
 
 | Subcommand | Does |
 |------------|------|
-| `config get <key>` | Prints the effective value from the configs the program loads (with the selected profile applied), or the value in the `--local`/`--file` file. Like `unset`, it takes an option's alias or kebab-case name too |
+| `config get <key>` | Prints the effective value from the configs the program loads (with the selected profile and the `$<envName>` overrides applied), or the value in the `--local`/`--file` file. Like `unset`, it takes an option's alias or kebab-case name too |
 | `config set <key> <value>` | Writes to the user config file: the first of `files` in the user config directory, else the first JSON name in `files`. The key must be an option (name, alias or kebab-case name) of the command or one of its subcommands, or of global args, unless one of their schemas is loose; with a `schema`, the key and value must fit it instead. The value is coerced by the option's type (`[...]`/`{...}` are read as JSON) and validated. Only JSON files (JSONC and rc files included) are written, changing just that value, so comments and formatting stay; YAML, TOML and script files are refused |
 | `config unset <key>` | Removes a value from the user config file (and objects left empty), keeping comments |
 | `config list` (`ls`) | Prints every effective value as `key=value` with the file it comes from; values of `sensitive` options show as `[redacted]` |
@@ -706,8 +740,12 @@ my-cli pr 42                                    # → my-cli checkout pr/42 --fo
 my-cli alias set co checkout --force            # no quotes needed: every word after the name is the expansion
 my-cli alias set each 'run --all $@ --verbose'  # $@ takes the words no $N takes
 my-cli alias set prod 'deploy @prod.args'       # @file words expand with padroneResponseFiles()
-my-cli alias list
+my-cli alias list                               # YAML: co: checkout --force
 my-cli alias delete pr
+my-cli alias import team-aliases.yml            # add aliases from YAML or JSON (- reads stdin)
+my-cli alias import team-aliases.yml --clobber  # ...overwriting ones that already exist
+my-cli alias export > my-aliases.yml            # the user's aliases as YAML (--json, or a .json file, for JSON)
+my-cli alias export my-aliases.json
 ```
 
 **Configuration:**
@@ -715,9 +753,11 @@ my-cli alias delete pr
 |----------|------|---------|-------------|
 | `aliases` | `Record<string, string>` | none | Aliases the program defines; users' own aliases of the same name win |
 | `file` | `string` | `aliases.json` in `program.dirs.config` | Where users' aliases are kept |
-| `command` | `string \| false` | `'alias'` | Name of the management command (`set`, `list`/`ls`, `delete`/`rm`), or `false` for none |
+| `command` | `string \| false` | `'alias'` | Name of the management command (`set`, `list`/`ls`, `delete`/`rm`, `import`, `export`), or `false` for none |
 
 A command always wins over an alias of the same name, and `alias set` refuses names of existing commands. Words after the alias that no `$N` uses go where `$@` is, or are appended when the alias has no `$@`; fewer words than its `$N` placeholders take is an error (`Alias "pr" needs 1 argument`). With [`padroneResponseFiles()`](#padroneresponsefilesoptions), the alias's own `@file` words expand as response files (before its placeholders are filled; the words typed after it were already expanded). An unknown command suggests alias names too (`Did you mean "publish"?`). `alias set` takes every word after the name as the expansion, options included (`alias set co checkout --force`); given as several words, a word with spaces stays one word (`alias set co checkout "my branch"`). `alias set` and `alias delete` are mutation commands (POST-only in serve, `destructiveHint` in MCP).
+
+`alias list` prints every alias (the program's and the user's) as a YAML mapping, sorted by name, quoting expansions that YAML would read differently (`pr: "checkout pr/$1"`), so its output imports back. `alias import <file|->` like `gh alias import` reads a YAML or JSON object of names to expansions (JSON for `.json`/`.jsonc` files or text starting with `{`; under Node, without Bun's YAML parser, YAML is read as a flat `name: expansion` mapping), from stdin with `-`. Nothing is written when any entry is invalid (not a string, an invalid name, or a command's name); aliases that already exist with another expansion are skipped and listed unless `--clobber`. `alias export [file]` prints the user's own aliases as YAML, or writes them to `file` (JSON for `.json`); `--json` prints JSON. `import` is a mutation command.
 
 ---
 
@@ -737,7 +777,7 @@ my-cli @deploy.args deploy   # deploy.args: --env staging
 ```
 
 - Each line is split like a shell command line (quotes group words); blank lines and lines starting with `#` are skipped.
-- Paths are relative to the working directory. Response files can reference others, up to 10 levels deep.
+- Paths are relative to the working directory. Response files can reference others, up to 10 levels deep; with `relativeTo: 'file'`, like clap's argfiles, a path in a response file is relative to that file's directory instead (absolute paths stay as they are).
 - A missing file (or a bare `@`) is an error. Write `@@text` for an argument that starts with `@` (`@@scope/pkg` → `@scope/pkg`); arguments after `--` are never expanded.
 - Expanded in `cli()`, `eval()` and the REPL; serve, MCP and `tool()` calls never read response files.
 - The value of an option with [`fromFile`](/padrone/reference/args-meta/#values-from-files) is left to it: `--body @notes.md` (and `--body=@notes.md`) reads the file into `body`, and `--body @@x` passes `@x`. A positional `fromFile` value is still expanded as a response file; write `@@path` there, or pick another `prefix`.
@@ -746,6 +786,7 @@ my-cli @deploy.args deploy   # deploy.args: --env staging
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `prefix` | `string` | `'@'` | The character that marks a response file |
+| `relativeTo` | `'cwd' \| 'file'` | `'cwd'` | What a response file named inside another one is relative to: the working directory, or the directory of the file that names it. Response files on the command line (and in aliases) are always relative to the working directory |
 
 ---
 
@@ -1483,8 +1524,8 @@ These extensions are available as named exports from `'padrone'`:
 
 | Export | Purpose |
 |--------|---------|
-| `padroneEnv(schema?, options?)` | Parse environment variables into args (`vars` maps args to variables, `prefix` reads every option from `PREFIX_*`; both shown in help) |
-| `padroneConfig(options)` | Load args from config files (layered with `merge` and `extends`; `profiles`; a `config` command) |
+| `padroneEnv(schema?, options?)` | Parse environment variables into args (`vars` maps args to variables, `prefix` reads every option from `PREFIX_*`; both shown in help; `arraySeparator` splits array values) |
+| `padroneConfig(options)` | Load args from config files (layered with `merge` and `extends`; function configs with `defineConfig()`; `$production` overrides; `profiles`; a `config` command) |
 | `padroneProgress(config)` | Auto-managed progress indicators, and task lists with `progress.tasks()` |
 | `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable). Logs go to stderr with colored level labels; `stdout: true` sends `trace`/`debug`/`info` to stdout, and `format: 'json'` writes JSON lines (`logger.info({ userId }, 'signed in')` adds fields). `logger.child({ requestId })` adds bindings to every line; `redact: ['user.password', '*.token']` (or `{ paths, censor }`) censors logged objects; `destination` writes lines to a file path, a function or a `{ write }` stream instead. Colors follow whether stderr is a terminal |
 | `padroneJson(options?)` | `--json` flag: prints the result as JSON (iterator items one per line). `--jq <expr>` filters it (a built-in jq subset with `if`, `as $x`, arithmetic, regex `test`/`sub`/`gsub` and `@csv`/`@tsv`, or pass `jq: (input, expr) => outputs` for a full implementation; non-string outputs are compact JSON when piped, indented on a terminal) and `--template '{{.name}}'` formats it; both imply `--json`. Errors in `cli()` print as `{ "error": { ... } }` on stdout under JSON output. `fields: true` lets `--json=name,url` keep only those fields (`fields: 'required'`: also `--json name,url`, and a bare `--json` fails listing the fields); `availableFields` declares them |
@@ -1493,8 +1534,8 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneTiming(options?)` | Execution timing: `Done in 1.20s`, or `Failed after 1.20s` when the command fails, printed after its result or error. `enabled: true` turns it on without `--time`; `format: ({ elapsed, duration, failed, error }) => string \| null` changes the line |
 | `padroneUpdateCheck(config)` | Background version checking |
 | `padroneUpgrade(options?)` | `upgrade` command: self-update with the package manager the program was installed with (`--check`, `--exit-code`, `--to`, `--channel`) |
-| `padroneAliases(options?)` | User-defined command aliases (`alias set|list|delete`), expanded before routing (`$1`…`$N` and `$@` placeholders) |
-| `padroneResponseFiles(options?)` | Response files: `@file` arguments expand into the file's arguments (`@@` escapes, `prefix` option) |
+| `padroneAliases(options?)` | User-defined command aliases (`alias set|list|delete|import|export`), expanded before routing (`$1`…`$N` and `$@` placeholders) |
+| `padroneResponseFiles(options?)` | Response files: `@file` arguments expand into the file's arguments (`@@` escapes, `prefix` and `relativeTo` options) |
 
 The following extensions live in their own subpath imports to keep optional dependencies and large transitive surfaces out of the main bundle:
 

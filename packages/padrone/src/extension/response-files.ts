@@ -11,6 +11,11 @@ import { inputTokens, isRemoteCaller } from './utils.ts';
 export type PadroneResponseFilesOptions = {
   /** The character that marks a response file argument. Defaults to `'@'`. */
   prefix?: string;
+  /**
+   * What a response file named inside another one is relative to: `'cwd'` (default), or `'file'`, the directory of the
+   * file that names it, like clap's argfiles. Response files on the command line are always relative to cwd.
+   */
+  relativeTo?: 'cwd' | 'file';
 };
 
 const MAX_DEPTH = 10;
@@ -23,14 +28,24 @@ export function parseResponseFile(text: string): string[] {
   });
 }
 
+const isAbsolutePath = (file: string) => /^(?:[/\\]|[A-Za-z]:[/\\])/.test(file);
+
+/** `file` relative to the directory of `including` (no `node:path`, so it runs anywhere). */
+function besideFile(file: string, including: string): string {
+  const slash = Math.max(including.lastIndexOf('/'), including.lastIndexOf('\\'));
+  return isAbsolutePath(file) || slash === -1 ? file : `${including.slice(0, slash + 1)}${file}`;
+}
+
 /**
- * Replaces each `@file` token before `--` with the file's arguments (nested response files expand too, up to 10 levels);
- * `@@text` passes `@text`. A missing file is an error. Tokens for which `keep` (given the tokens before them) is true stay as they are.
+ * Replaces each `@file` token before `--` with the file's arguments (nested response files expand too, up to 10 levels,
+ * relative to cwd or, with `relativeTo: 'file'`, to the file that names them); `@@text` passes `@text`. A missing file is
+ * an error. Tokens for which `keep` (given the tokens before them) is true stay as they are.
  */
 export function expandResponseFiles(
   tokens: readonly string[],
   prefix = '@',
   keep?: (before: readonly string[]) => boolean,
+  relativeTo: 'cwd' | 'file' = 'cwd',
 ): string[] | Promise<string[]> {
   const out: string[] = [];
   let afterDoubleDash = false;
@@ -49,7 +64,7 @@ export function expandResponseFiles(
     }
   };
 
-  const expand = (list: readonly string[], depth: number): void | Promise<void> => {
+  const expand = (list: readonly string[], depth: number, including?: string): void | Promise<void> => {
     for (let i = 0; i < list.length; i++) {
       const token = list[i]!;
       if (afterDoubleDash || !token.startsWith(prefix) || keep?.(out)) {
@@ -61,13 +76,14 @@ export function expandResponseFiles(
         out.push(token.slice(prefix.length));
         continue;
       }
-      const file = token.slice(prefix.length);
-      if (!file) throw new PadroneError(`Expected a response file path after "${prefix}"`, { phase: 'parse' });
+      const named = token.slice(prefix.length);
+      const file = including && relativeTo === 'file' ? besideFile(named, including) : named;
+      if (!named) throw new PadroneError(`Expected a response file path after "${prefix}"`, { phase: 'parse' });
       if (depth >= MAX_DEPTH)
         throw new PadroneError(`Response files nested more than ${MAX_DEPTH} levels deep: "${file}"`, { phase: 'parse' });
       const rest = list.slice(i + 1);
-      const expanded = thenMaybe(read(file), (text) => expand(parseResponseFile(text), depth + 1));
-      if (expanded instanceof Promise) return expanded.then(() => expand(rest, depth));
+      const expanded = thenMaybe(read(file), (text) => expand(parseResponseFile(text), depth + 1, file));
+      if (expanded instanceof Promise) return expanded.then(() => expand(rest, depth, including));
     }
   };
 
@@ -87,18 +103,19 @@ function isFromFileValue(before: readonly string[], root: AnyPadroneCommand): bo
 }
 
 const RESPONSE_FILES_ID = 'padrone:response-files';
-const prefixes = new WeakMap<object, string>();
+const registeredOptions = new WeakMap<object, Required<PadroneResponseFilesOptions>>();
 
-/** The prefix of the response files extension registered on `root`, if any. */
-export function responseFilesPrefix(root: AnyPadroneCommand): string | undefined {
+/** The options of the response files extension registered on `root`, if any. */
+export function responseFilesOptions(root: AnyPadroneCommand): Required<PadroneResponseFilesOptions> | undefined {
   const registered = root.interceptors?.findLast(({ meta }) => meta.id === RESPONSE_FILES_ID);
-  return registered && !registered.meta.disabled ? prefixes.get(registered.factory) : undefined;
+  return registered && !registered.meta.disabled ? registeredOptions.get(registered.factory) : undefined;
 }
 
 /**
  * Extension for response files, like javac's or clap's argfiles: `my-cli @args.txt deploy` reads the arguments in
  * `args.txt` (one or more per line, quoted like a shell line; blank lines and `#` comments skipped) in place of `@args.txt`.
- * Paths are relative to cwd. Tokens after `--` stay as they are, and `@@text` passes `@text` literally.
+ * Paths are relative to cwd (nested ones, to the including file with `relativeTo: 'file'`). Tokens after `--` stay as they
+ * are, and `@@text` passes `@text` literally.
  * A missing file is an error. Serve, MCP and `tool()` calls never expand response files.
  *
  * ```ts
@@ -107,6 +124,7 @@ export function responseFilesPrefix(root: AnyPadroneCommand): string | undefined
  */
 export function padroneResponseFiles(options: PadroneResponseFilesOptions = {}): <T extends CommandTypesBase>(builder: T) => T {
   const prefix = options.prefix || '@';
+  const relativeTo = options.relativeTo ?? 'cwd';
   const interceptor = defineInterceptor({ id: RESPONSE_FILES_ID, name: RESPONSE_FILES_ID, order: -1600, async: true }, () => ({
     parse(ctx, next) {
       if (isRemoteCaller(ctx.caller)) return next();
@@ -114,9 +132,9 @@ export function padroneResponseFiles(options: PadroneResponseFilesOptions = {}):
       const end = tokens.indexOf('--');
       if (!(end === -1 ? tokens : tokens.slice(0, end)).some((token) => token.startsWith(prefix))) return next();
       const keep = (before: readonly string[]) => isFromFileValue(before, ctx.command);
-      return thenMaybe(expandResponseFiles(tokens, prefix, keep), (input) => next({ input }));
+      return thenMaybe(expandResponseFiles(tokens, prefix, keep, relativeTo), (input) => next({ input }));
     },
   }));
-  prefixes.set(interceptor, prefix);
+  registeredOptions.set(interceptor, { prefix, relativeTo });
   return ((builder: AnyPadroneBuilder) => builder.intercept(interceptor)) as any;
 }

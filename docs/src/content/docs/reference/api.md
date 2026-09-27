@@ -75,6 +75,23 @@ program.runtime({
 | `progress` | `(message: string, options?: PadroneProgressOptions) => PadroneProgress` | Built-in terminal spinner | Progress indicator factory. See [Progress Indicators](/padrone/guides/progress-indicators/) |
 | `terminal` | `{ columns?, rows?, isTTY? }` | From `process.stdout` | Terminal size and whether stdout is a TTY (colors, wrapping, the help pager) |
 | `setExitCode` | `(code: number) => void` | Sets `process.exitCode` | Called by `cli()` when a run ends with an error or a signal. Override to capture or ignore it |
+| `editor` | `(text, { extension? }) => Promise<string>` | `$VISUAL` / `$EDITOR` / `vi` on a temp file | Open text in the user's editor and resolve with what they saved, like `git commit` |
+| `open` | `(target: string) => Promise<void>` | `open` / `xdg-open` / `start` | Open a URL or file with the system's default app |
+| `page` | `(text, { always?, pager? }) => Promise<void>` | `$PAGER` / `less -FRX` | Show text through a pager when it's taller than the terminal (or `always`), otherwise print it with `output`. Call it as `ctx.runtime.page(text)` |
+
+In an action, use them through `ctx.runtime`:
+
+```typescript
+.command('commit', (c) =>
+  c.async().action(async (_args, ctx) => {
+    const message = await ctx.runtime.editor('# Describe your change\n', { extension: '.md' });
+    await ctx.runtime.page(renderLog());       // long output through the pager
+    await ctx.runtime.open('https://example.com/pr/1');
+  }),
+)
+```
+
+`padroneProgress()` hides its indicator while a prompt, the editor or the pager is open.
 
 Successive `.runtime()` calls merge with previous configuration.
 
@@ -602,6 +619,86 @@ program.extend(padroneUpdateCheck({
 | `updateCommand` | `string \| (packageName, latestVersion) => string` | `npm update -g <name>` | Command suggested in the notice |
 
 Non-blocking (the registry request times out after 3 seconds) and caches check timestamps. Skipped in CI, when stdout isn't a TTY, when `NO_UPDATE_NOTIFIER` or the `disableEnvVar` variable is set, and with `--no-update-check`.
+
+---
+
+### padroneUpgrade(options?)
+
+Extension that adds a self-update command (`upgrade`), like oclif's plugin-update:
+
+```typescript
+import { padroneUpdateCheck, padroneUpgrade } from 'padrone';
+
+program
+  .extend(padroneUpgrade({ packageName: '@acme/my-cli' }))
+  .extend(padroneUpdateCheck({ packageName: '@acme/my-cli', updateCommand: 'my-cli upgrade' }));
+```
+
+```bash
+my-cli upgrade              # install the latest version with the package manager it was installed with
+my-cli upgrade --check      # only report whether a newer version exists
+my-cli upgrade --to 2.1.0   # a given version (also a downgrade)
+my-cli upgrade --channel next
+my-cli upgrade --dry-run    # show the install command without running it
+```
+
+**Configuration:**
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `packageName` | `string` | program name | npm package to upgrade |
+| `registry` | `string` | `'npm'` | `'npm'` or a URL returning `{ version }` or `{ "dist-tags": { ... } }` |
+| `channel` | `string` | `'latest'` | Dist-tag to follow (`--channel` overrides it); other channels may be pre-releases |
+| `installer` | `'npm' \| 'bun' \| 'pnpm' \| 'yarn' \| 'brew' \| (plan) => string[] \| void` | detected | How the program is installed. Detected from its path (Homebrew cellar, `~/.bun`, pnpm/yarn global dirs, else npm). A function returns the command to run, or performs the upgrade itself (e.g. downloading a binary) |
+| `brewFormula` | `string` | package name | Formula for `brew upgrade` |
+| `command` | `string` | `'upgrade'` | Command name |
+| `exec` | `(command: string[]) => Promise<number>` | spawn with inherited stdio | Runs the installer command |
+
+The command is a `mutation`, so `padroneConfirm()` asks before upgrading. `--force` reinstalls when already up to date.
+
+---
+
+### padroneAliases(options?)
+
+Extension for command aliases, like `gh alias` or git aliases. The first word of the input is expanded before routing, in `cli()` and the REPL:
+
+```typescript
+import { padroneAliases } from 'padrone';
+
+program.extend(padroneAliases({ aliases: { co: 'checkout' } }));
+```
+
+```bash
+my-cli co main                                  # → my-cli checkout main
+my-cli alias set pr "checkout pr/\$1 --force"   # $1, $2, … take the words after the alias
+my-cli pr 42                                    # → my-cli checkout pr/42 --force
+my-cli alias list
+my-cli alias delete pr
+```
+
+**Configuration:**
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `aliases` | `Record<string, string>` | none | Aliases the program defines; users' own aliases of the same name win |
+| `file` | `string` | `aliases.json` in `program.dirs.config` | Where users' aliases are kept |
+| `command` | `string \| false` | `'alias'` | Name of the management command (`set`, `list`/`ls`, `delete`/`rm`), or `false` for none |
+
+A command always wins over an alias of the same name, and `alias set` refuses names of existing commands. Words after the alias that no `$N` uses are appended.
+
+---
+
+### program.dirs
+
+The standard per-user directories for the program, named after it (none are created):
+
+| Key | Linux (XDG) | macOS | Windows |
+|-----|-------------|-------|---------|
+| `config` | `~/.config/<app>` | `~/Library/Application Support/<app>` | `%APPDATA%\<app>` |
+| `cache` | `~/.cache/<app>` | `~/Library/Caches/<app>` | `%LOCALAPPDATA%\<app>\Cache` |
+| `data` | `~/.local/share/<app>` | `~/Library/Application Support/<app>` | `%LOCALAPPDATA%\<app>\Data` |
+| `state` | `~/.local/state/<app>` | `~/Library/Application Support/<app>` | `%LOCALAPPDATA%\<app>\State` |
+| `log` | `~/.local/state/<app>/log` | `~/Library/Logs/<app>` | `%LOCALAPPDATA%\<app>\Log` |
+
+`XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME` and `XDG_STATE_HOME` are honored on every platform. In an action it's `ctx.program.dirs`; `getProgramDirs(name, env, platform?)` computes them for any name.
 
 ---
 
@@ -1265,10 +1362,12 @@ const withDb = defineInterceptor({ name: 'with-db' })
 | `order` | `number` | Execution order — lower = outermost (default: `0`) |
 | `id` | `string` | Deduplication key — when multiple interceptors share an `id`, the last one wins |
 | `disabled` | `boolean` | Skip this interceptor during execution |
+| `requires` | `string[]` | Ids of interceptors this one needs; running a command without them fails with an error naming the missing one |
+| `async` | `boolean` | The interceptor may make validation async |
 
 **Chaining methods (single-arg form):**
 - `.provides<T>()` — Declare what this interceptor adds to the context (type-level only)
-- `.requires<T>()` — Declare what this interceptor expects on the context (type-level only)
+- `.requires<T>(...ids)` — Declare what this interceptor expects on the context; interceptor ids passed (`.requires<{ logger: PadroneLogger }>('padrone:logger')`) are also checked at runtime
 - `.factory(fn)` — Set the factory function
 
 **Returns:** A `PadroneInterceptor` — pass to `.intercept()` or use within an extension.
@@ -1289,6 +1388,8 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and without a terminal the command fails unless `--yes` is given. Options: `message`, `when`, `flags` |
 | `padroneTiming()` | Execution timing |
 | `padroneUpdateCheck(config)` | Background version checking |
+| `padroneUpgrade(options?)` | `upgrade` command: self-update with the package manager the program was installed with (`--check`, `--to`, `--channel`) |
+| `padroneAliases(options?)` | User-defined command aliases (`alias set|list|delete`), expanded before routing |
 
 The following extensions live in their own subpath imports to keep optional dependencies and large transitive surfaces out of the main bundle:
 
@@ -1305,11 +1406,11 @@ The following extensions are applied automatically by `createPadrone()` and can 
 
 | Export | Builtin key | Purpose |
 |--------|-------------|---------|
-| `padroneHelp(options?)` | `help` | Help command and `--help` flag. Options: `showHelpOnError` prints the full help after errors; `flags` renames the help flags (default `['help', 'h']`); `pager: true` shows help taller than the terminal through `$PAGER` or `less -FRX` in `cli()` (a string sets the fallback pager; `--no-pager` / `--pager` per run) |
+| `padroneHelp(options?)` | `help` | Help command and `--help` flag. Options: `showHelpOnError` prints the full help after errors; `flags` renames the help flags (default `['help', 'h']`); `pager: true` shows help taller than the terminal through `$PAGER` or `less -FRX` in `cli()` (a string sets the fallback pager; `--no-pager` / `--pager` per run); `pickSubcommand: true` asks which subcommand to run (a select prompt) when a group command runs without one in `cli()`/REPL |
 | `padroneVersion(options?)` | `version` | Version command and `--version` flag (on any command; single-character flags on the root only). `version --verbose` adds the runtime, platform, architecture and shell (an object under `--json`). Options: `flags` renames the version flags (default `['version', 'v', 'V']`); `info` adds fields to `--verbose` |
 | `padroneRepl()` | `repl` | REPL command and `--repl` flag |
 | `padroneColor()` | `color` | `--color`/`--no-color` support |
-| `padroneSuggestions()` | `suggestions` | "Did you mean?" suggestions |
+| `padroneSuggestions(options?)` | `suggestions` | "Did you mean?" suggestions. `run: 'prompt'` asks whether to run the closest command after an unknown one in `cli()`/REPL |
 | `padroneSignalHandling()` | `signal` | Signal handling and AbortSignal |
 | `padroneAutoOutput(options?)` | `autoOutput` | Auto-print results and errors. `errorStack: true` (or the `DEBUG` env variable) prints stack traces with their `cause` chain |
 | `padroneStdin()` | `stdin` | Stdin piping support |

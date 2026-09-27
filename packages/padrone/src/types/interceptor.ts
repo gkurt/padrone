@@ -179,6 +179,11 @@ export type InterceptorMeta = {
    */
   async?: boolean;
   /**
+   * Ids of interceptors this one needs (e.g. `['padrone:logger']`). When one isn't registered (or is disabled) on the command
+   * or its parents, running the command fails with an error naming it. Also set by `.requires<T>('padrone:logger')`.
+   */
+  requires?: readonly string[];
+  /**
    * Options this interceptor reads from `rawArgs` that aren't part of the command's schema (e.g. `--help`, `--config`),
    * keyed by long name or single-character flag. Tells the parser whether each one takes a value, so that
    * `--help build` keeps `build` as a command. The command's own schema takes precedence on conflicts.
@@ -248,16 +253,18 @@ export type InterceptorFactory<TArgs = unknown, TResult = unknown, TContext = ob
  * Call `.provides<T>()` to brand it as a context-providing interceptor.
  */
 export type PadroneInterceptorFn<TArgs = unknown, TResult = unknown, TContext = object> = InterceptorFactory<TArgs, TResult, TContext> &
-  InterceptorMeta & {
+  Omit<InterceptorMeta, 'requires'> & {
     /** Brand this interceptor as providing additional context of type `TProvides`. No-op at runtime; purely a type-level cast. */
     provides: <TProvides>() => PadroneContextInterceptor<TProvides, TArgs, TResult, TContext>;
     /**
      * Brand this interceptor as requiring context of type `TRequires` to be available.
      * `.intercept()` will produce a compile error if the required context is not satisfied.
      * Use optional properties for soft requirements: `.requires<{ db: DB; logger?: Logger }>()`.
-     * No-op at runtime; purely a type-level cast.
+     * Pass interceptor ids to also check at runtime that they're registered: `.requires<{ logger: PadroneLogger }>('padrone:logger')`.
      */
-    requires: <TRequires>() => PadroneInterceptorFn<TArgs, TResult, TContext> & InterceptorRequiresBrand<TRequires>;
+    requires: <TRequires = unknown>(
+      ...ids: string[]
+    ) => PadroneInterceptorFn<TArgs, TResult, TContext> & InterceptorRequiresBrand<TRequires>;
   };
 
 /**
@@ -284,7 +291,9 @@ export type PadroneContextInterceptor<TProvides = unknown, TArgs = unknown, TRes
     /** Phantom brand — declares the context type this interceptor provides. */
     '~context': TProvides;
     /** Like `.requires()` on `PadroneInterceptorFn` but preserves the `'~context'` brand. */
-    requires: <TRequires>() => PadroneContextInterceptor<TProvides, TArgs, TResult, TContext> & InterceptorRequiresBrand<TRequires>;
+    requires: <TRequires = unknown>(
+      ...ids: string[]
+    ) => PadroneContextInterceptor<TProvides, TArgs, TResult, TContext> & InterceptorRequiresBrand<TRequires>;
   };
 
 /**
@@ -321,8 +330,11 @@ export type InterceptorRequiresError = {
  * Call `.requires<T>()` to declare (and type) the context dependency, then `.factory()` to provide the phase handlers.
  */
 export type InterceptorDefBuilder<TContext = unknown, TBrand = unknown> = {
-  /** Declare the context type this interceptor requires. Sets `TContext` for phase handler typing. */
-  requires: <TRequires>() => InterceptorDefBuilder<TRequires, InterceptorRequiresBrand<TRequires>>;
+  /**
+   * Declare the context type this interceptor requires. Sets `TContext` for phase handler typing.
+   * Interceptor ids passed here are checked at runtime: `.requires<{ logger: PadroneLogger }>('padrone:logger')`.
+   */
+  requires: <TRequires>(...ids: string[]) => InterceptorDefBuilder<TRequires, InterceptorRequiresBrand<TRequires>>;
   /** Provide the interceptor factory. Phase handlers receive the typed `TContext` from `.requires()`. */
   factory: <TArgs = unknown, TResult = unknown>(
     factory: InterceptorFactory<TArgs, TResult, TContext>,

@@ -72,27 +72,48 @@ export function parseInterval(interval: string): number {
 
 /**
  * Compares two semver version strings.
- * Returns true if `latest` is newer than `current`.
+ * Returns true if `latest` is newer than `current`. Pre-releases only count as newer when `current` is one too,
+ * or with `prerelease: true` (e.g. following a `next` channel).
  */
-export function isNewerVersion(current: string, latest: string): boolean {
+export function isNewerVersion(current: string, latest: string, options?: { prerelease?: boolean }): boolean {
   const parse = (v: string) => {
     const cleaned = v.replace(/^v/, '');
-    const parts = cleaned.split('-');
-    const nums = parts[0]!.split('.').map(Number);
-    return { major: nums[0] ?? 0, minor: nums[1] ?? 0, patch: nums[2] ?? 0, prerelease: parts[1] };
+    const dash = cleaned.indexOf('-');
+    const nums = (dash === -1 ? cleaned : cleaned.slice(0, dash)).split('.').map(Number);
+    return { major: nums[0] ?? 0, minor: nums[1] ?? 0, patch: nums[2] ?? 0, prerelease: dash === -1 ? undefined : cleaned.slice(dash + 1) };
   };
 
   const c = parse(current);
   const l = parse(latest);
 
   // Don't notify about pre-release versions unless user is already on a pre-release
-  if (l.prerelease && !c.prerelease) return false;
+  if (l.prerelease && !c.prerelease && !options?.prerelease) return false;
 
   if (l.major !== c.major) return l.major > c.major;
   if (l.minor !== c.minor) return l.minor > c.minor;
   if (l.patch !== c.patch) return l.patch > c.patch;
   // The release is newer than its own pre-releases
-  return !!c.prerelease && !l.prerelease;
+  if (!c.prerelease || !l.prerelease) return !!c.prerelease && !l.prerelease;
+  return comparePrerelease(l.prerelease, c.prerelease) > 0;
+}
+
+/** Semver pre-release precedence: dot-separated identifiers, numeric ones compared as numbers (`beta.10` > `beta.2`). */
+function comparePrerelease(a: string, b: string): number {
+  const as = a.split('.');
+  const bs = b.split('.');
+  for (let i = 0; i < Math.max(as.length, bs.length); i++) {
+    const x = as[i];
+    const y = bs[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    if (x === y) continue;
+    const xn = /^\d+$/.test(x);
+    const yn = /^\d+$/.test(y);
+    if (xn && yn) return Number(x) - Number(y);
+    if (xn !== yn) return xn ? -1 : 1;
+    return x < y ? -1 : 1;
+  }
+  return 0;
 }
 
 /**
@@ -144,10 +165,14 @@ async function resolveCachePath(cachePath: string): Promise<string> {
 const FETCH_TIMEOUT_MS = 3000;
 
 /**
- * Fetches the latest version from the registry.
+ * Fetches the version a dist-tag (`latest` by default, or e.g. `next`) points to on the registry.
+ * Resolves `undefined` when the registry can't be reached or doesn't know the package.
  */
-async function fetchLatestVersion(packageName: string, registry: string): Promise<string | undefined> {
-  const url = registry === 'npm' ? `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest` : registry;
+export async function fetchLatestVersion(packageName: string, registry: string, tag = 'latest'): Promise<string | undefined> {
+  const url =
+    registry === 'npm'
+      ? `https://registry.npmjs.org/${encodeURIComponent(packageName).replace('%40', '@')}/${encodeURIComponent(tag)}`
+      : registry;
 
   try {
     // A slow registry must not keep the CLI from exiting
@@ -155,12 +180,12 @@ async function fetchLatestVersion(packageName: string, registry: string): Promis
     if (!response.ok) return undefined;
     const data = (await response.json()) as Record<string, unknown>;
 
+    // Custom endpoint may return { "dist-tags": { latest: "x.y.z", next: "..." } }
+    const distTags = data['dist-tags'] as Record<string, string> | undefined;
+    if (distTags?.[tag]) return distTags[tag];
+
     // npm registry returns { version: "x.y.z" }
     if (typeof data.version === 'string') return data.version;
-
-    // Custom endpoint may return { "dist-tags": { latest: "x.y.z" } }
-    const distTags = data['dist-tags'] as Record<string, string> | undefined;
-    if (distTags?.latest) return distTags.latest;
   } catch {
     // Network errors are expected (offline, firewall, etc.)
   }

@@ -39,3 +39,32 @@ export async function pageText(text: string, pager: string, env: Record<string, 
     child.stdin?.end(text);
   });
 }
+
+/** Options for `runtime.page()`. */
+export type PadronePageOptions = {
+  /** Page even when the text fits the terminal. */
+  always?: boolean;
+  /** The pager command when `$PAGER` isn't set. Defaults to `less -FRX` (none on Windows). */
+  pager?: string;
+};
+
+type PageRuntime = {
+  output: (...args: unknown[]) => void;
+  env: () => Record<string, string | undefined>;
+  format?: string;
+  terminal?: { rows?: number; isTTY?: boolean };
+};
+
+/**
+ * Shows `text` through the pager when it doesn't fit the terminal (or `always`), like `git log`; otherwise, and without
+ * a terminal or a pager, it's written with `runtime.output`. Resolves once the pager exits.
+ */
+export async function pageWithRuntime(runtime: PageRuntime, text: string, options: PadronePageOptions = {}): Promise<void> {
+  const rows = runtime.terminal?.rows;
+  const fits = !rows || text.split('\n').length < rows;
+  const usable = runtime.terminal?.isTTY === true && runtime.format !== 'json' && (options.always || !fits);
+  const env = runtime.env();
+  const command = usable ? resolvePager(env, options.pager) : undefined;
+  if (command && (await pageText(text, command, env))) return;
+  runtime.output(text);
+}

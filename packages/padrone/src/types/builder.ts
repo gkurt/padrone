@@ -8,6 +8,7 @@ import type { PadroneMcpPreferences } from '../feature/mcp.ts';
 import type { PadroneServePreferences } from '../feature/serve.ts';
 import type { WrapConfig, WrapResult } from '../feature/wrap.ts';
 import type { HelpPreferences } from '../output/help.ts';
+import type { PadroneDirs } from '../util/dirs.ts';
 import type {
   FindDirectChild,
   FlattenCommands,
@@ -1002,6 +1003,13 @@ export type PadroneProgram<
 
   /** Read-only metadata about the program (name, version, description, commands, etc.). @category Utility */
   info: PadroneProgramMeta<TProgramName>;
+
+  /**
+   * The standard per-user directories for this program (`config`, `cache`, `data`, `state`, `log`), following
+   * XDG on Linux and platform conventions on macOS and Windows. Named after the program; the directories aren't created.
+   * @category Utility
+   */
+  dirs: PadroneDirs;
 };
 
 export type AnyPadroneProgram = PadroneProgram<string, string, string, any, any, [...AnyPadroneCommand[]]>;

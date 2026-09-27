@@ -7,6 +7,7 @@ import { padroneInteractive } from '../extension/interactive.ts';
 import { padroneRepl } from '../extension/repl.ts';
 import { padroneSignalHandling } from '../extension/signal.ts';
 import { padroneStdin } from '../extension/stdin.ts';
+import type { PadroneSuggestionsOptions } from '../extension/suggestions.ts';
 import { padroneSuggestions } from '../extension/suggestions.ts';
 import type { PadroneVersionOptions, VersionCommand } from '../extension/version.ts';
 import { padroneVersion } from '../extension/version.ts';
@@ -28,9 +29,11 @@ import type {
   PadroneSchema,
   RegisteredInterceptor,
 } from '../types/index.ts';
+import { getProgramDirs } from '../util/dirs.ts';
 import {
   commandSymbol,
   findCommandByName,
+  getCommandRuntime,
   getGlobalArgs,
   lazyResolver,
   mergeCommands,
@@ -60,8 +63,8 @@ export type PadroneBuiltins = {
   repl?: boolean;
   /** Enable `--color` / `--no-color` flag support. Defaults to `true`. */
   color?: boolean;
-  /** Enable "Did you mean?" suggestions for unknown commands and options. Defaults to `true`. */
-  suggestions?: boolean;
+  /** Enable "Did you mean?" suggestions for unknown commands and options. Defaults to `true`. Pass `{ run: 'prompt' }` to offer running the closest command. */
+  suggestions?: boolean | PadroneSuggestionsOptions;
   /** Enable signal handling (SIGINT, SIGTERM, SIGHUP). Defaults to `true`. */
   signal?: boolean;
   /** Enable automatic result and error output for `cli()`. Defaults to `true`. Pass options to configure it (e.g. `{ errorStack: true }`). */
@@ -90,7 +93,8 @@ export function createPadrone<TProgramName extends string, const TBuiltins exten
   if (b?.version !== false) builder = builder.extend(padroneVersion(typeof b?.version === 'object' ? b.version : undefined));
   if (b?.repl !== false) builder = builder.extend(padroneRepl());
   if (b?.color !== false) builder = builder.extend(padroneColor());
-  if (b?.suggestions !== false) builder = builder.extend(padroneSuggestions());
+  if (b?.suggestions !== false)
+    builder = builder.extend(padroneSuggestions(typeof b?.suggestions === 'object' ? b.suggestions : undefined));
   if (b?.signal !== false) builder = builder.extend(padroneSignalHandling());
   if (b?.autoOutput !== false) builder = builder.extend(padroneAutoOutput(typeof b?.autoOutput === 'object' ? b.autoOutput : undefined));
   if (b?.stdin !== false) builder = builder.extend(padroneStdin());
@@ -271,6 +275,10 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
     },
 
     ...programMethods,
+
+    get dirs() {
+      return getProgramDirs(existingCommand.name, getCommandRuntime(existingCommand).env());
+    },
 
     get info() {
       return {

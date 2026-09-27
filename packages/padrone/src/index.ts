@@ -25,11 +25,13 @@ export { REPL_SIGINT } from './core/runtime.ts';
 export type {
   ConfigSearchOptions,
   HelpCommand,
+  PadroneAliasesOptions,
   PadroneAutoOutputOptions,
   PadroneConfigOptions,
   PadroneConfirmOptions,
   PadroneEnvOptions,
   PadroneHelpOptions,
+  PadroneInstaller,
   PadroneJqFunction,
   PadroneJsonOptions,
   PadroneLogger,
@@ -41,6 +43,7 @@ export type {
   PadroneProgressMessage,
   PadroneProgressMessages,
   PadroneProgressRenderer,
+  PadroneSuggestionsOptions,
   PadroneTask,
   PadroneTaskContext,
   PadroneTaskListRenderer,
@@ -49,6 +52,8 @@ export type {
   PadroneTasksFn,
   PadroneTasksOptions,
   PadroneTimingOptions,
+  PadroneUpgradeOptions,
+  PadroneUpgradePlan,
   PadroneVersionInfo,
   PadroneVersionOptions,
   VersionCommand,
@@ -62,7 +67,9 @@ export type {
 export {
   createTerminalProgress,
   createTerminalTaskList,
+  detectInstaller,
   markErrorReported,
+  padroneAliases,
   padroneAutoOutput,
   padroneColor,
   padroneConfig,
@@ -79,8 +86,11 @@ export {
   padroneSuggestions,
   padroneTiming,
   padroneUpdateCheck,
+  padroneUpgrade,
   padroneVersion,
 } from './extension/index.ts';
+export type { PadronePageOptions } from './feature/pager.ts';
+export type { PadroneEditorOptions } from './feature/system.ts';
 export type { UpdateCheckConfig } from './feature/update-check.ts';
 export type { WrapConfig, WrapResult } from './feature/wrap.ts';
 export type { AnsiStyle, ColorConfig, ColorTheme } from './output/colorizer.ts';
@@ -135,6 +145,8 @@ export type {
   PadroneSchema,
   RegisteredInterceptor,
 } from './types/index.ts';
+export type { PadroneDirs } from './util/dirs.ts';
+export { getProgramDirs } from './util/dirs.ts';
 export type { AsyncStreamMeta } from './util/stream.ts';
 export { asyncStream } from './util/stream.ts';
 export type {

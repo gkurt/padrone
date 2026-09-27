@@ -16,7 +16,7 @@ import { findCommandByName, getCommandRuntime, resolveAllCommands, serializeArgs
 import { RoutingError } from './errors.ts';
 import type { ExecContext } from './exec.ts';
 import { collectInterceptors, errorResultWithSignal, execCommand } from './exec.ts';
-import { resolveRegisteredInterceptors, runInterceptorChain } from './interceptors.ts';
+import { checkInterceptorRequirements, resolveRegisteredInterceptors, runInterceptorChain } from './interceptors.ts';
 import { errorResult, makeThenable, thenMaybe, warnIfUnexpectedAsync, withDrain, withPromiseDrain } from './results.ts';
 import { coreValidateForParse, takeDryRunFlag } from './validate.ts';
 
@@ -139,7 +139,9 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
         return { result };
       };
 
-      const commandInterceptors = resolveRegisteredInterceptors(collectInterceptors(commandObj, rootCommand), new Map());
+      const registered = collectInterceptors(commandObj, rootCommand);
+      checkInterceptorRequirements(registered);
+      const commandInterceptors = resolveRegisteredInterceptors(registered, new Map());
       const executedOrPromise = runInterceptorChain('execute', commandInterceptors, executeCtx, coreExecute);
 
       const toResult = (e: InterceptorExecuteResult) => withDrain({ command: commandObj as any, args: args as any, result: e.result });

@@ -98,6 +98,9 @@ function mergeFieldRules(own: FieldRules, globals: FieldRules, globalOnly: (key:
     variadic: new Set([...own.variadic, ...[...globals.variadic].filter(globalOnly)]),
     conflicts: { ...pick(globals.conflicts), ...own.conflicts },
     implies: { ...pick(globals.implies), ...own.implies },
+    // A global group applies when the command overrides none of its fields
+    exactlyOne: [...own.exactlyOne, ...globals.exactlyOne.filter((group) => group.every(globalOnly))],
+    atLeastOne: [...own.atLeastOne, ...globals.atLeastOne.filter((group) => group.every(globalOnly))],
   };
 }
 

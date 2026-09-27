@@ -1,3 +1,5 @@
+import { type PadronePageOptions, pageWithRuntime } from '../feature/pager.ts';
+import { openInEditor, openWithSystem, type PadroneEditorOptions } from '../feature/system.ts';
 import { readStreamAsText } from '../util/stream.ts';
 import type {
   InteractiveMode,
@@ -198,7 +200,23 @@ export function createDefaultRuntime(): ResolvedPadroneRuntime {
     terminal: getTerminalInfo(),
     exit: defaultExit,
     setExitCode: defaultSetExitCode,
+    editor: defaultEditor,
+    open: openWithSystem,
+    page: defaultPage,
   };
+}
+
+/** Uses the environment of the runtime it's called on (`ctx.runtime.editor(...)`). */
+function defaultEditor(this: Partial<ResolvedPadroneRuntime> | undefined, text: string, options?: PadroneEditorOptions): Promise<string> {
+  const env = typeof this?.env === 'function' ? this.env() : (process.env as Record<string, string | undefined>);
+  return openInEditor(text, env, options);
+}
+
+/** Pages with the runtime it's called on (`ctx.runtime.page(...)`), so its `output`, `env` and `terminal` apply. */
+function defaultPage(this: Partial<ResolvedPadroneRuntime> | undefined, text: string, options?: PadronePageOptions): Promise<void> {
+  const runtime =
+    typeof this?.output === 'function' && typeof this.env === 'function' ? (this as ResolvedPadroneRuntime) : createDefaultRuntime();
+  return pageWithRuntime(runtime, text, options);
 }
 
 /**
@@ -244,5 +262,8 @@ export function resolveRuntime(partial?: PadroneRuntime): ResolvedPadroneRuntime
     terminal: partial.terminal ?? defaults.terminal,
     exit: partial.exit ?? defaults.exit,
     setExitCode: partial.setExitCode ?? defaults.setExitCode,
+    editor: partial.editor ?? defaults.editor,
+    open: partial.open ?? defaults.open,
+    page: partial.page ?? defaults.page,
   };
 }

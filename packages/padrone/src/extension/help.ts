@@ -50,6 +50,12 @@ export type PadroneHelpOptions = {
    * `--no-pager` prints the help directly, and `--pager` pages it even when it fits. Defaults to `false`.
    */
   pager?: boolean | string;
+  /**
+   * When a command that only groups subcommands runs without one (`my-cli db`), ask which subcommand to run
+   * with a select prompt instead of showing help, like `gh`. Only in `cli()` and the REPL, when the runtime can prompt;
+   * `--help` still shows help. Defaults to `false`.
+   */
+  pickSubcommand?: boolean;
 };
 
 const DEFAULT_HELP_FLAGS = ['help', 'h'] as const;
@@ -156,7 +162,34 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
 
       return {
         parse(ctx, next) {
-          const handle = (res: InterceptorParseResult, reverseHelp = false) => {
+          /** `pickSubcommand`: asks which subcommand of `command` to run, then parses again with it appended to the input. */
+          const pick = (command: AnyPadroneCommand, input: PadroneInput | undefined) => {
+            const choices = (command.commands ?? [])
+              .map((c) => resolveCommand(c))
+              .filter((c) => !c.hidden && c.name)
+              .map((c) => ({ label: c.description ? `${c.name} — ${c.title ?? c.description}` : c.name, value: c.name }));
+            const label = command.path || command.name;
+            return ctx.runtime.prompt!({ name: 'command', message: `Which "${label}" command?`, type: 'select', choices }).then(
+              (picked) => {
+                const name = String(picked);
+                const withPicked = Array.isArray(input) ? [...input, name] : input ? `${input} ${name}` : [name];
+                return thenMaybe(next({ input: withPicked }), (res) => handle(res, false, withPicked));
+              },
+            );
+          };
+          const canPick = (command: AnyPadroneCommand) =>
+            !!options.pickSubcommand &&
+            (ctx.caller === 'cli' || ctx.caller === 'repl') &&
+            !!ctx.runtime.prompt &&
+            ctx.runtime.interactive !== 'unsupported' &&
+            ctx.runtime.interactive !== 'disabled' &&
+            (command.commands ?? []).some((c) => !c.hidden && c.name);
+
+          const handle = (
+            res: InterceptorParseResult,
+            reverseHelp = false,
+            input = ctx.input,
+          ): InterceptorParseResult | Promise<InterceptorParseResult> => {
             const flags = frameworkFlags(res.rawArgs, res.command);
             if (options.pager && flags.has('pager')) {
               pagerFlag = flags.flag('pager');
@@ -183,6 +216,7 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
               const hasSchema = command.argsSchema != null;
               const hasUnmatchedTerms = res.positionalArgs?.length > 0 && !command.meta?.positional?.length;
               if (!command.action && (hasSubcommands || !hasSchema) && !hasUnmatchedTerms) {
+                if (canPick(command)) return pick(command, input);
                 showDefaultHelp = true;
               }
             }

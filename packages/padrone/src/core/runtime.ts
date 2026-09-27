@@ -1,3 +1,5 @@
+import type { PadronePageOptions } from '../feature/pager.ts';
+import type { PadroneEditorOptions } from '../feature/system.ts';
 import type { ColorConfig, ColorTheme } from '../output/colorizer.ts';
 import type { HelpFormat } from '../output/formatter.ts';
 
@@ -238,6 +240,19 @@ export type PadroneRuntime = {
    * The default runtime sets `process.exitCode`; custom runtimes can capture it or no-op.
    */
   setExitCode?: (code: number) => void;
+
+  /**
+   * Open `text` in the user's editor and resolve with the saved text, like `git commit` (`ctx.runtime.editor(template, { extension: '.md' })`).
+   * The default runtime uses `$VISUAL`, `$EDITOR`, then `vi` (`notepad` on Windows), with a temporary file.
+   */
+  editor?: (text: string, options?: PadroneEditorOptions) => Promise<string>;
+  /** Open a URL or file with the system's default app. The default runtime uses `open`, `xdg-open` or `start`. */
+  open?: (target: string) => Promise<void>;
+  /**
+   * Show long text through a pager (`$PAGER`, else `less -FRX`) when it doesn't fit the terminal, like `git log`;
+   * otherwise write it with `output`. Call it as a method (`ctx.runtime.page(text)`) so it uses this runtime's output.
+   */
+  page?: (text: string, options?: PadronePageOptions) => Promise<void>;
 };
 
 /**

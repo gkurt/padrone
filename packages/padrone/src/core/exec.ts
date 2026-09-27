@@ -18,7 +18,13 @@ import type {
 } from '../types/index.ts';
 import { getCommandRuntime } from './commands.ts';
 import { RoutingError, SignalError, ValidationError } from './errors.ts';
-import { resolveRegisteredInterceptors, runInterceptorChain, wrapWithCommandLifecycle, wrapWithLifecycle } from './interceptors.ts';
+import {
+  checkInterceptorRequirements,
+  resolveRegisteredInterceptors,
+  runInterceptorChain,
+  wrapWithCommandLifecycle,
+  wrapWithLifecycle,
+} from './interceptors.ts';
 import { errorResult, noop, thenMaybe, warnIfUnexpectedAsync, withDrain } from './results.ts';
 import { buildCommandArgs, formatIssueMessages, getDeprecationWarnings, takeDryRunFlag, validateCommandArgs } from './validate.ts';
 
@@ -193,7 +199,9 @@ export function execCommand(
       pipelineState.phase = 'parse';
       pipelineState.rawArgs = parsed.rawArgs;
       pipelineState.positionalArgs = parsed.positionalArgs;
-      const commandInterceptors = resolveRegisteredInterceptors(collectInterceptorsFn(command), factoryCache);
+      const registered = collectInterceptorsFn(command);
+      checkInterceptorRequirements(registered);
+      const commandInterceptors = resolveRegisteredInterceptors(registered, factoryCache);
       const commandOnlyInterceptors = commandInterceptors.filter((i) => !rootInterceptorSet.has(i));
       const context = resolveContext(command, pipelineContext);
 

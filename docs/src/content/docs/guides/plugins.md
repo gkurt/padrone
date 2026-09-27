@@ -46,6 +46,8 @@ Additional opt-in extensions are available for advanced features:
 | `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`) before `mutation: true` commands |
 | `padroneTiming()` | `'padrone'` | Execution timing (`--time`) |
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking |
+| `padroneUpgrade(options?)` | `'padrone'` | Self-update command (`upgrade`, `--check`, `--to`, `--channel`) using the package manager the program was installed with |
+| `padroneAliases(options?)` | `'padrone'` | User-defined command aliases (`alias set co "checkout --force"`), expanded before routing |
 | `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support; `remote: 'exit'` returns an app's last frame to serve, MCP and `tool()` calls |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
@@ -551,7 +553,7 @@ This is how the built-in signal extension propagates the `AbortSignal` — it cr
 
 ### Context-Providing Interceptors
 
-Interceptors can declare what they add to the context using `.provides()` and what they require with `.requires()`. These are type-level only (no runtime effect) but enable typed `ctx.context` access:
+Interceptors can declare what they add to the context using `.provides()` and what they require with `.requires()`. The types have no runtime effect but enable typed `ctx.context` access:
 
 ```typescript
 const withDb = defineInterceptor({ name: 'with-db' })
@@ -567,6 +569,19 @@ const withDb = defineInterceptor({ name: 'with-db' })
 ```
 
 The `padroneProgress()` extension uses this pattern — it declares `.provides<{ progress: PadroneProgress }>()` so `ctx.context.progress` is fully typed when the extension is applied.
+
+Pass interceptor ids to `.requires()` (or `requires` in the meta) to also check at runtime that they're registered on the command or a parent. A command that runs without one fails with `Interceptor "audit" requires "padrone:logger", which isn't registered on this command or its parents`:
+
+```typescript
+const audit = defineInterceptor({ name: 'audit' })
+  .requires<{ logger: PadroneLogger }>('padrone:logger')
+  .factory(() => ({
+    execute: (ctx, next) => {
+      ctx.context.logger.info(`running ${ctx.command.path}`);
+      return next();
+    },
+  }));
+```
 
 ### Sync Preservation
 
@@ -614,7 +629,7 @@ Understanding how built-in features are implemented helps illustrate the interce
 
 **Interactive prompting** (`padroneInteractive`, order: -999) — In the validate phase, prompts for missing field values via `runtime.prompt()` and injects responses into `rawArgs` before validation.
 
-**Suggestions** (`padroneSuggestions`, order: -500) — In parse and validate error paths, enriches error messages with fuzzy-matched "Did you mean?" suggestions.
+**Suggestions** (`padroneSuggestions`, order: -500) — In parse and validate error paths, enriches error messages with fuzzy-matched "Did you mean?" suggestions. With `builtins: { suggestions: { run: 'prompt' } }`, an unknown command in `cli()` or the REPL asks "Run "deploy" instead?" and, if accepted, parses again with the correction.
 
 ## Disabling and Overriding Built-in Extensions
 
@@ -636,7 +651,7 @@ const program = createPadrone('myapp', {
 });
 ```
 
-`help` also accepts options instead of `false`: `builtins: { help: { showHelpOnError: true } }` prints the full help after a routing or validation error, instead of the default one-line `--help` hint. `builtins: { help: { pager: true } }` shows help taller than the terminal through a pager, like git (`$PAGER`, or `less -FRX`; only in `cli()` on a terminal; `--no-pager` prints it directly).
+`help` also accepts options instead of `false`: `builtins: { help: { showHelpOnError: true } }` prints the full help after a routing or validation error, instead of the default one-line `--help` hint. `builtins: { help: { pager: true } }` shows help taller than the terminal through a pager, like git (`$PAGER`, or `less -FRX`; only in `cli()` on a terminal; `--no-pager` prints it directly). For other long output, call `ctx.runtime.page(text)` from an action. `builtins: { help: { pickSubcommand: true } }` asks which subcommand to run, with a select prompt, when a command that only groups subcommands runs without one (like `gh`); `--help` still shows help.
 
 ### Overriding via Deduplication
 

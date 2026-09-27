@@ -254,7 +254,7 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
         const { runtime } = ctx;
         const originalOutput = runtime.output;
         const originalError = runtime.error;
-        const originalPrompt = runtime.prompt;
+        const originals = { prompt: runtime.prompt, editor: runtime.editor, page: runtime.page };
         // While a task list is drawn, output pauses the list instead of the (already hidden) indicator
         const drawn = () => activeTaskList ?? active;
         runtime.output = (...args: unknown[]) => {
@@ -269,22 +269,25 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
           originalError(text);
           current.resume();
         };
-        // Prompts (e.g. `padroneConfirm()`) are drawn with the indicator hidden
-        if (originalPrompt) {
-          runtime.prompt = async (config) => {
+        // Prompts (e.g. `padroneConfirm()`), the editor and the pager take over the terminal: the indicator is hidden meanwhile
+        const hiddenDuring =
+          <TArgs extends unknown[], TResult>(fn: (...args: TArgs) => Promise<TResult>) =>
+          async (...args: TArgs): Promise<TResult> => {
             const current = drawn();
             current.pause();
             try {
-              return await originalPrompt(config);
+              return await fn.apply(runtime, args);
             } finally {
               current.resume();
             }
           };
-        }
+        if (originals.prompt) runtime.prompt = hiddenDuring(originals.prompt);
+        runtime.editor = hiddenDuring(originals.editor);
+        runtime.page = hiddenDuring(originals.page);
         restoreOutput = () => {
           runtime.output = originalOutput;
           runtime.error = originalError;
-          runtime.prompt = originalPrompt;
+          Object.assign(runtime, originals);
         };
       };
 

@@ -140,6 +140,8 @@ type ArgsMeta = {
     variadic?: boolean;               // array: --tag a b c (up to the next option or --)
     conflicts?: string | string[];    // options that can't be combined with this one
     implies?: Record<string, unknown>; // values for other options when this one is used
+    exactlyOne?: string[];             // this option + these: exactly one must be given
+    atLeastOne?: string[];             // this option + these: at least one must be given
   }>;
 };
 ```
@@ -339,6 +341,9 @@ Custom I/O adapter for non-terminal environments.
   prompt?: (config) => Promise<unknown>,
   readLine?: (prompt: string) => Promise<string | null>,
   setExitCode?: (code: number) => void,  // cli() calls it on error; default sets process.exitCode
+  editor?: (text, { extension? }) => Promise<string>,  // $VISUAL/$EDITOR on a temp file
+  open?: (target: string) => Promise<void>,            // system default app
+  page?: (text, { always?, pager? }) => Promise<void>, // $PAGER when taller than the terminal
 })
 ```
 
@@ -542,7 +547,7 @@ const withDb = defineInterceptor({ name: 'with-db' })
 
 **Metadata:** `name` (string), `order` (number, lower = outermost, default: 0), `id` (string, deduplication key — last wins), `disabled` (boolean).
 
-**Chaining:** `.provides<T>()` and `.requires<T>()` for typed context (type-level only), `.factory(fn)` to set the factory.
+**Chaining:** `.provides<T>()` and `.requires<T>(...ids)` for typed context (ids are checked at runtime), `.factory(fn)` to set the factory.
 
 ### PadroneInterceptor Type
 

@@ -139,6 +139,8 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.extend(extension)` | Apply a build-time extension (bundle of config, commands, interceptors) |
 | `.runtime(runtime)` | Custom I/O (for non-terminal use) |
 | `.extend(padroneUpdateCheck(config?))` | Background version check (extension) |
+| `.extend(padroneUpgrade(options?))` | `upgrade` self-update command (extension) |
+| `.extend(padroneAliases(options?))` | User-defined command aliases (extension) |
 | `.async()` | Mark as async validation |
 
 ### Program (run commands)

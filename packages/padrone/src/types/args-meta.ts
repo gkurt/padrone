@@ -68,6 +68,14 @@ export interface PadroneFieldMeta {
    */
   implies?: Record<string, unknown>;
   /**
+   * This option and the listed ones (by field name) form a group of which exactly one must be provided,
+   * like oclif's `exactlyOne`: `fields: { file: { exactlyOne: ['url'] } }` requires `--file` or `--url`, not both.
+   * Only values the user provided count (config and env included, schema defaults don't).
+   */
+  exactlyOne?: readonly string[];
+  /** This option and the listed ones (by field name) form a group of which at least one must be provided. */
+  atLeastOne?: readonly string[];
+  /**
    * Values shell completion offers for this option or positional (needs `padroneCompletion()`),
    * e.g. branch names read at completion time. Enum values are offered without it.
    */

@@ -14,6 +14,7 @@ import type {
   RegisteredInterceptor,
   ResolvedInterceptor,
 } from '../types/index.ts';
+import { PadroneError } from './errors.ts';
 import { thenMaybe } from './results.ts';
 import type { ResolvedPadroneRuntime } from './runtime.ts';
 
@@ -21,16 +22,19 @@ import type { ResolvedPadroneRuntime } from './runtime.ts';
 // defineInterceptor — creates a single-value distributable interceptor
 // ---------------------------------------------------------------------------
 
+/** Meta fields stored as own properties of an interceptor function (`name` is the function's name). */
+const META_KEYS = ['id', 'order', 'disabled', 'inherit', 'options', 'env', 'async'] as const;
+
 function buildInterceptorFn(meta: InterceptorMeta, factory: InterceptorFactory<any, any, any>): PadroneInterceptorFn<any, any, any> {
   Object.defineProperty(factory, 'name', { value: meta.name, configurable: true });
-  if (meta.id !== undefined) (factory as any).id = meta.id;
-  if (meta.order !== undefined) (factory as any).order = meta.order;
-  if (meta.disabled !== undefined) (factory as any).disabled = meta.disabled;
-  if (meta.inherit !== undefined) (factory as any).inherit = meta.inherit;
-  if (meta.options !== undefined) (factory as any).options = meta.options;
-  if (meta.env !== undefined) (factory as any).env = meta.env;
+  for (const key of META_KEYS) if (meta[key] !== undefined) (factory as any)[key] = meta[key];
   (factory as any).provides = () => factory;
-  (factory as any).requires = () => factory;
+  // `.requires<T>('padrone:logger')`: the ids are checked when the command runs
+  (factory as any).requires = (...ids: string[]) => {
+    if (ids.length > 0) (factory as any)['~requires'] = [...((factory as any)['~requires'] ?? []), ...ids];
+    return factory;
+  };
+  if (meta.requires) (factory as any)['~requires'] = [...meta.requires];
   return factory as PadroneInterceptorFn<any, any, any>;
 }
 
@@ -70,9 +74,13 @@ export function defineInterceptor(
   factory?: InterceptorFactory<any, any, any>,
 ): PadroneInterceptorFn<any, any, any> | InterceptorDefBuilder {
   if (factory) return buildInterceptorFn(meta, factory);
+  let requires = meta.requires;
   const builder: InterceptorDefBuilder = {
-    requires: () => builder as any,
-    factory: (f) => buildInterceptorFn(meta, f) as any,
+    requires: (...ids: string[]) => {
+      if (ids.length > 0) requires = [...(requires ?? []), ...ids];
+      return builder as any;
+    },
+    factory: (f) => buildInterceptorFn({ ...meta, requires }, f) as any,
   };
   return builder;
 }
@@ -100,6 +108,8 @@ export function toRegisteredInterceptor(
         inherit: metaOrFn.inherit,
         options: metaOrFn.options,
         env: metaOrFn.env,
+        async: metaOrFn.async,
+        requires: (metaOrFn as { '~requires'?: string[] })['~requires'],
       },
       factory: metaOrFn,
     };
@@ -413,4 +423,21 @@ export function wrapWithCommandLifecycle<T>(
   }
 
   return handleSuccess(result);
+}
+
+/**
+ * Checks the `requires` ids of the interceptors that apply to a command against the ones registered (and enabled) on its chain.
+ * Throws a `PadroneError` naming the first missing one.
+ */
+export function checkInterceptorRequirements(registered: readonly RegisteredInterceptor[]): void {
+  const lastById = new Map<string, InterceptorMeta>();
+  for (const { meta } of registered) if (meta.id) lastById.set(meta.id, meta);
+  const active = (meta: InterceptorMeta) => !meta.disabled && (!meta.id || lastById.get(meta.id) === meta);
+  const available = new Set([...lastById.values()].filter((meta) => !meta.disabled).map((meta) => meta.id!));
+  for (const { meta } of registered) {
+    if (!meta.requires?.length || !active(meta)) continue;
+    const missing = meta.requires.find((id) => !available.has(id));
+    if (missing)
+      throw new PadroneError(`Interceptor "${meta.name}" requires "${missing}", which isn't registered on this command or its parents`);
+  }
 }

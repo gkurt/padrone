@@ -1,5 +1,6 @@
 import { ConfigError } from '../core/errors.ts';
 import { thenMaybe } from '../core/results.ts';
+import { getProgramDirs } from '../util/dirs.ts';
 
 type ConfigData = Record<string, unknown>;
 type MaybePromise<T> = T | Promise<T>;
@@ -37,24 +38,11 @@ try {
 
 type NodeModules = { fs: typeof import('node:fs'); path: typeof import('node:path') };
 
-function getUserConfigDir(path: typeof import('node:path'), appName: string): string | undefined {
-  const platform = process.platform;
-
-  // Respect XDG_CONFIG_HOME on all platforms when explicitly set
-  const xdgHome = process.env.XDG_CONFIG_HOME;
-  if (xdgHome) return path.join(xdgHome, appName);
-
-  const home = process.env.HOME || process.env.USERPROFILE;
-  if (!home) return undefined;
-
-  if (platform === 'win32') {
-    const appData = process.env.APPDATA;
-    return appData ? path.join(appData, appName) : path.join(home, 'AppData', 'Roaming', appName);
-  }
-  if (platform === 'darwin') return path.join(home, 'Library', 'Application Support', appName);
-
-  // Linux and other Unix — default XDG path
-  return path.join(home, '.config', appName);
+/** The user config directory (`program.dirs.config`); `XDG_CONFIG_HOME` is honored on every platform. */
+function getUserConfigDir(appName: string): string | undefined {
+  const env = process.env;
+  if (!env.XDG_CONFIG_HOME && !env.HOME && !env.USERPROFILE) return undefined;
+  return getProgramDirs(appName, env).config;
 }
 
 // ── Finding config files ────────────────────────────────────────────────
@@ -117,7 +105,7 @@ function findConfigs(
     found.push(config);
     if (!search?.merge) return found;
   }
-  const userDir = xdgAppName ? getUserConfigDir(path, xdgAppName) : undefined;
+  const userDir = xdgAppName ? getUserConfigDir(xdgAppName) : undefined;
   const userConfig = userDir ? inDir(userDir) : undefined;
   if (userConfig && !found.some((f) => f.file === userConfig.file)) found.push(userConfig);
 

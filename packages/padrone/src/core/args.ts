@@ -170,13 +170,26 @@ export interface FieldRules {
   conflicts: Record<string, string[]>;
   /** Field → the values it implies for other fields. */
   implies: Record<string, Record<string, unknown>>;
+  /** Groups of fields of which exactly one must be provided. */
+  exactlyOne: string[][];
+  /** Groups of fields of which at least one must be provided. */
+  atLeastOne: string[][];
 }
 
 export function extractFieldRules(
   schema: StandardJSONSchemaV1 | undefined,
   fields?: Record<string, PadroneFieldMeta | undefined>,
 ): FieldRules {
-  const rules: FieldRules = { counts: new Set(), variadic: new Set(), conflicts: {}, implies: {} };
+  const rules: FieldRules = { counts: new Set(), variadic: new Set(), conflicts: {}, implies: {}, exactlyOne: [], atLeastOne: [] };
+  const seenGroups = new Set<string>();
+  const addGroup = (kind: 'exactlyOne' | 'atLeastOne', key: string, others: unknown) => {
+    if (!Array.isArray(others)) return;
+    const group = [...new Set([key, ...others.map(String)])].sort();
+    const id = `${kind}:${group.join('\0')}`;
+    if (group.length < 2 || seenGroups.has(id)) return;
+    seenGroups.add(id);
+    rules[kind].push(group);
+  };
   let properties: Record<string, any> = {};
   if (schema) {
     try {
@@ -194,12 +207,14 @@ export function extractFieldRules(
     if (conflicts) rules.conflicts[key] = typeof conflicts === 'string' ? [conflicts] : [...conflicts];
     const implies = meta?.implies ?? prop?.implies;
     if (implies && typeof implies === 'object') rules.implies[key] = implies;
+    addGroup('exactlyOne', key, meta?.exactlyOne ?? prop?.exactlyOne);
+    addGroup('atLeastOne', key, meta?.atLeastOne ?? prop?.atLeastOne);
   }
   return rules;
 }
 
 /**
- * Applies `implies` and checks `conflicts` on the args the user provided (before defaults).
+ * Applies `implies` and checks `conflicts`, `exactlyOne` and `atLeastOne` on the args the user provided (before defaults).
  * Conflicts are checked first, so implied values never conflict.
  */
 export function applyFieldRules(data: Record<string, unknown>, rules: FieldRules): { args: Record<string, unknown>; issues: string[] } {
@@ -215,6 +230,16 @@ export function applyFieldRules(data: Record<string, unknown>, rules: FieldRules
       reported.add(pair);
       issues.push(`Option "--${optionDisplayName(key)}" cannot be used with "--${optionDisplayName(other)}"`);
     }
+  }
+
+  const list = (group: string[]) => group.map((key) => `"--${optionDisplayName(key)}"`).join(', ');
+  for (const group of rules.exactlyOne) {
+    const given = group.filter(provided);
+    if (given.length === 0) issues.push(`Exactly one of ${list(group)} is required`);
+    else if (given.length > 1) issues.push(`Only one of ${list(given)} can be used`);
+  }
+  for (const group of rules.atLeastOne) {
+    if (!group.some(provided)) issues.push(`At least one of ${list(group)} is required`);
   }
 
   const args = { ...data };

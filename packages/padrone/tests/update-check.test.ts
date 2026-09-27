@@ -74,7 +74,8 @@ describe('update-check', () => {
     });
 
     it('should notify about pre-release if current is also pre-release', () => {
-      expect(isNewerVersion('1.0.0-alpha.1', '1.0.0-beta.1')).toBe(false); // same major.minor.patch
+      expect(isNewerVersion('1.0.0-alpha.1', '1.0.0-beta.1')).toBe(true);
+      expect(isNewerVersion('1.0.0-beta.10', '1.0.0-beta.2')).toBe(false);
       expect(isNewerVersion('1.0.0-alpha.1', '1.1.0-beta.1')).toBe(true);
     });
   });

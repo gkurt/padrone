@@ -112,6 +112,7 @@ The second parameter to `.arguments()` configures positional args, interactive p
     old: { deprecated: 'Use --new instead', group: 'Legacy' },
     level: { flags: 'v', count: true },   // -vvv → 3
     json: { conflicts: 'table', implies: { color: false } },
+    // file: { exactlyOne: ['url'] } — exactly one of --file/--url; atLeastOne: [...] — one or more
   },
 })
 ```
@@ -150,7 +151,7 @@ const timer = defineInterceptor({ name: 'timer', order: -10 }, () => {
 program.intercept(timer);
 ```
 
-`defineInterceptor()` returns a factory — each execution gets fresh closure state. Supports `.provides<T>()` and `.requires<T>()` for typed context (type-level only).
+`defineInterceptor()` returns a factory — each execution gets fresh closure state. Supports `.provides<T>()` and `.requires<T>()` for typed context; `.requires<T>('padrone:logger')` also checks at runtime that the interceptor with that id is registered.
 
 ## Extension-First Architecture
 
@@ -168,9 +169,9 @@ Padrone's core is minimal — most features are implemented as extensions compos
 | `interactive` | -999 | `--interactive` flag, auto-prompting |
 | `suggestions` | -500 | "Did you mean?" for unknown commands/options |
 
-Each can be disabled: `createPadrone('myapp', { builtins: { help: false } })`. `help` also takes options: `{ help: { showHelpOnError: true } }` prints full help after errors (default: a one-line `--help` hint on stderr); `{ help: { pager: true } }` pages long help through `$PAGER`/`less -FRX` in `cli()` (`--no-pager` skips); `{ help: { flags: ['help', '?'] } }` and `{ version: { flags: ['version'] } }` rename the flags. Customize help per command with `.configure({ help: { usage, before, after } })`, or with a function `(info, ctx) => info | string` that also applies to subcommands.
+Each can be disabled: `createPadrone('myapp', { builtins: { help: false } })`. `help` also takes options: `{ help: { showHelpOnError: true } }` prints full help after errors (default: a one-line `--help` hint on stderr); `{ help: { pager: true } }` pages long help through `$PAGER`/`less -FRX` in `cli()` (`--no-pager` skips); `{ help: { pickSubcommand: true } }` prompts for a subcommand when a group command runs without one; `{ suggestions: { run: 'prompt' } }` offers to run the closest command after a typo; `{ help: { flags: ['help', '?'] } }` and `{ version: { flags: ['version'] } }` rename the flags. Customize help per command with `.configure({ help: { usage, before, after } })`, or with a function `(info, ctx) => info | string` that also applies to subcommands.
 
-Advanced opt-in extensions imported from `'padrone'`: `padroneLogger()` (logs to stderr; `format: 'json'` for JSON lines, `stdout: true` for info on stdout), `padroneTiming()`, `padroneProgress()`, `padroneUpdateCheck()`, `padroneEnv()`, `padroneConfig()` (`merge: true` layers configs, `extends` keys pull in base configs; only keys a command has options for are applied), `padroneJson()` (`--json` output; `--jq '<expr>'` and `--template '{{.name}}'`), `padroneConfirm()` (confirm `mutation: true` commands, `--yes` skips). Optional integrations live behind subpath imports to keep their dependencies out of the main bundle: `padroneInk` from `'padrone/ink'` (`remote: 'exit'` returns an app's last frame to serve/MCP/tool calls), `padroneMcp` from `'padrone/mcp'`, `padroneServe` from `'padrone/serve'`, `padroneTracing` from `'padrone/tracing'`, `padroneCompletion` from `'padrone/completion'` (dynamic completion; `fields: { x: { complete: () => [...] } }` supplies values), `padroneMan` from `'padrone/man'`.
+Advanced opt-in extensions imported from `'padrone'`: `padroneLogger()` (logs to stderr; `format: 'json'` for JSON lines, `stdout: true` for info on stdout), `padroneTiming()`, `padroneProgress()`, `padroneUpdateCheck()`, `padroneEnv()`, `padroneConfig()` (`merge: true` layers configs, `extends` keys pull in base configs; only keys a command has options for are applied), `padroneJson()` (`--json` output; `--jq '<expr>'` and `--template '{{.name}}'`), `padroneConfirm()` (confirm `mutation: true` commands, `--yes` skips), `padroneUpgrade()` (`upgrade` self-update command: `--check`, `--to`, `--channel`), `padroneAliases()` (user aliases: `alias set co "checkout --force"`). Actions also get `ctx.runtime.editor(text)`, `ctx.runtime.open(url)`, `ctx.runtime.page(text)` and `ctx.program.dirs` (`config`, `cache`, `data`, `state`, `log`). Optional integrations live behind subpath imports to keep their dependencies out of the main bundle: `padroneInk` from `'padrone/ink'` (`remote: 'exit'` returns an app's last frame to serve/MCP/tool calls), `padroneMcp` from `'padrone/mcp'`, `padroneServe` from `'padrone/serve'`, `padroneTracing` from `'padrone/tracing'`, `padroneCompletion` from `'padrone/completion'` (dynamic completion; `fields: { x: { complete: () => [...] } }` supplies values), `padroneMan` from `'padrone/man'`.
 
 ## Testing
 

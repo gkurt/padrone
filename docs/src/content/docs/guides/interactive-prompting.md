@@ -153,6 +153,23 @@ The prompt message is derived from (in order of priority):
 )
 ```
 
+## Other Prompts
+
+A few built-ins also ask through `runtime.prompt`, in `cli()` and the REPL, when the runtime can prompt:
+
+```typescript
+createPadrone('my-cli', {
+  builtins: {
+    // `my-cli db` asks "Which "db" command?" instead of showing help
+    help: { pickSubcommand: true },
+    // `my-cli dpeloy` asks "Unknown command "dpeloy". Run "deploy" instead?"
+    suggestions: { run: 'prompt' },
+  },
+});
+```
+
+`padroneConfirm()` asks before `mutation: true` commands. For free-form text, `ctx.runtime.editor(template)` opens the user's editor and resolves with what they saved.
+
 ## Non-Interactive Runtimes
 
 When `runtime.interactive` is `false` (the default) or `prompt` is not available, interactive prompting is silently skipped. Missing required fields will cause validation errors as usual.

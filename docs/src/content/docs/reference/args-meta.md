@@ -36,6 +36,8 @@ z.object({
 | `variadic` | `boolean` | Array option that takes every following value up to the next option (`--tag a b c`) |
 | `conflicts` | `string \| string[]` | Options that can't be used together with this one |
 | `implies` | `Record<string, unknown>` | Values for other options when this one is used |
+| `exactlyOne` | `string[]` | This option and the listed ones form a group of which exactly one must be given |
+| `atLeastOne` | `string[]` | This option and the listed ones form a group of which at least one must be given |
 | `complete` | `(ctx) => string[] \| Promise<string[]>` | Values shell completion offers for this option or positional (`fields` config only; needs `padroneCompletion()`) |
 
 :::note
@@ -104,7 +106,7 @@ Per-argument configuration that supplements or overrides `.meta()`:
 }
 ```
 
-This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `variadic`, `conflicts`, `implies` — plus `complete`, which only works here since functions don't survive `.meta()`.
+This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `variadic`, `conflicts`, `implies`, `exactlyOne`, `atLeastOne` — plus `complete`, which only works here since functions don't survive `.meta()`.
 
 ### autoAlias
 
@@ -541,6 +543,20 @@ z.object({
 - Only options the user provided count: from the command line, stdin, env or config — not schema defaults or implied values.
 
 Help shows `(conflicts with --table)` and `(implies --no-color)`.
+
+### Option groups
+
+`exactlyOne` and `atLeastOne` make a group of this option and the listed ones (declare it on any member):
+
+```typescript
+.arguments(z.object({ file: z.string().optional(), url: z.string().optional(), stdin: z.boolean().optional() }), {
+  fields: { file: { exactlyOne: ['url', 'stdin'] } },
+})
+```
+
+- No option given fails with `Exactly one of "--file", "--url", "--stdin" is required`, two with `Only one of "--file", "--url" can be used`.
+- `atLeastOne` only requires one of them: `At least one of "--email", "--slack" is required`.
+- Like `conflicts`, only options the user provided count (command line, stdin, env, config), not schema defaults.
 
 ## Completion Values
 

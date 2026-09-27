@@ -441,12 +441,14 @@ for await (const result of program.repl({
   outputPrefix: '  ',
   completion: true,
   context: { db },          // the context each command receives
+  historyFile: true,        // keep history in program.dirs.state/repl_history (or a path)
+  historySize: 1000,        // most entries kept
 })) {
   // handle each result
 }
 ```
 
-REPL built-in commands: `.help`, `.exit`, `.quit`, `.scope <cmd>`, `.scope ..`
+REPL built-in commands: `.help`, `.exit`, `.quit`, `.history`, `.scope <cmd>`, `.scope ..`. A mistyped `.scope` gets "Did you mean", and `help <cmd>` inside a scope is relative to it.
 
 ### `.help(command?, prefs?)`
 
@@ -467,6 +469,10 @@ program.completion('zsh');
 program.completion('fish');
 program.completion('powershell');
 ```
+
+With `padroneCompletion()`, `<program> completion <shell> --instructions` prints install instructions instead of the script. Completion offers kebab-case option names (as help shows them), short flags for `-`, and leaves out hidden and deprecated commands and options (deprecated ones still complete when nothing else matches).
+
+`help --search <term>` (`-s`) lists commands (by name, aliases, description) and help topics matching every word. Man pages (`generateDocs(program, { format: 'man', date? })`) put the date (`date`, `SOURCE_DATE_EPOCH`, or today) and `<program> <version>` in `.TH`, and link parent/subcommand pages under SEE ALSO.
 
 ### `.find(command)`
 

@@ -197,7 +197,7 @@ describe('docs', () => {
     });
 
     it('man snapshot for show command', () => {
-      const result = generateDocs(program, { format: 'man' });
+      const result = generateDocs(program, { format: 'man', date: '2026-01-01' });
       const showPage = result.pages.find((p) => p.command === 'show');
       expect(showPage!.content).toMatchSnapshot();
     });

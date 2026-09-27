@@ -3,7 +3,7 @@ import { findCommandByName, getGlobalArgs, resolveCommand } from '../core/comman
 import { getDryRunFlagKeys, getInterceptorOptions, parseCommand } from '../core/validate.ts';
 import { getHelpTopics } from '../output/help.ts';
 import type { AnyPadroneCommand, PadroneCompletionItem, PadroneFieldMeta, PadroneSchema, PadroneValueHint } from '../types/index.ts';
-import type { ShellType } from '../util/shell-utils.ts';
+import { camelToKebab, type ShellType } from '../util/shell-utils.ts';
 
 /** The hidden subcommand for completion: `<program> __complete <words typed after the program name>` prints one candidate per line. */
 export const COMPLETE_COMMAND = '__complete';
@@ -26,6 +26,8 @@ type CompletionField = {
   name: string;
   /** Long names the option is typed as: its name and aliases. */
   longNames: string[];
+  /** Long names offered as candidates (see `offeredLongNames`). */
+  offeredNames: string[];
   shortFlags: string[];
   takesValue: boolean;
   /** Takes every following word up to the next option or `--` (`variadic: true` arrays). */
@@ -34,7 +36,20 @@ type CompletionField = {
   values?: PadroneCompletionItem[];
   hint?: PadroneValueHint;
   meta?: PadroneFieldMeta;
+  /** Hidden options are never offered, deprecated ones only for a prefix nothing else matches. */
+  hidden: boolean;
+  deprecated: boolean;
 };
+
+/** A candidate; deprecated ones are only offered when no other candidate matches what's typed. */
+type Candidate = PadroneCompletionItem & { deprecated?: boolean };
+
+/** The long names an option is offered as, like help shows them: the kebab-case alias in place of a camelCase name, then the other aliases. */
+export function offeredLongNames(name: string, aliases: readonly string[]): string[] {
+  const kebab = camelToKebab(name);
+  const primary = kebab && aliases.includes(kebab) ? kebab : name;
+  return [primary, ...aliases.filter((alias) => alias !== primary)];
+}
 
 /** Enum values, or the constants of a union of literals (`anyOf: [{ const, description }]`) with their descriptions. */
 function enumItems(prop: Record<string, any> | undefined): PadroneCompletionItem[] | undefined {
@@ -58,9 +73,11 @@ function schemaFields(
     return Object.entries(jsonSchema.properties as Record<string, any>).map(([name, prop]): CompletionField => {
       const meta = fieldsMeta?.[name];
       const arity = getOptionArity(prop);
+      const optionAliases = Object.keys(aliases).filter((alias) => aliases[alias] === name);
       return {
         name,
-        longNames: [name, ...Object.keys(aliases).filter((alias) => aliases[alias] === name)],
+        longNames: [name, ...optionAliases],
+        offeredNames: offeredLongNames(name, optionAliases),
         shortFlags: Object.keys(flags).filter((flag) => flags[flag] === name),
         takesValue: arity !== 'flag' && !(meta?.count ?? prop?.count),
         variadic: arity === 'array' && !!(meta?.variadic ?? prop?.variadic),
@@ -68,6 +85,8 @@ function schemaFields(
         values: enumItems(prop),
         hint: meta?.hint ?? prop?.hint,
         meta,
+        hidden: !!(meta?.hidden ?? prop?.hidden),
+        deprecated: !!(meta?.deprecated ?? prop?.deprecated),
       };
     });
   } catch {
@@ -137,12 +156,15 @@ export function hintDirective(hint: PadroneValueHint | undefined, hasValues = fa
 
 const fieldDirective = (field: CompletionField | undefined) => hintDirective(field?.hint, !!(field?.values || field?.meta?.complete));
 
-/** Long flags of a built-in `help` / `version` command (`--help`, or the names given with `flags`); none when it's turned off. */
-export function builtinLongFlags(rootCommand: AnyPadroneCommand, name: 'help' | 'version'): string[] {
+/** Flags of a built-in `help` / `version` command as typed (`--help`, `-h`, or the names given with `flags`); none when it's turned off. */
+export function builtinFlags(rootCommand: AnyPadroneCommand, name: 'help' | 'version', short = false): string[] {
   const found = rootCommand.commands?.find((c) => c.name === name);
   const command = found && resolveCommand(found);
-  return (command?.flagNames ?? []).filter((flag) => flag.length > 1).map((flag) => `--${flag}`);
+  return (command?.flagNames ?? []).filter((flag) => (flag.length === 1) === short).map((flag) => (short ? `-${flag}` : `--${flag}`));
 }
+
+/** Shells that can't pass an empty argument (Windows PowerShell 5.1) pass `""` for the word being typed. */
+const unquoteEmpty = (word: string) => (word === '""' || word === "''" ? '' : word);
 
 /** Joins the words bash splits at `=` (`--env`, `=`, `prod` → `--env=prod`); a trailing `=` stays, as the word being typed follows it. */
 function joinSplitValues(words: readonly string[]): string[] {
@@ -161,7 +183,7 @@ function joinSplitValues(words: readonly string[]): string[] {
  * enum values, a field's `complete` callback, and its `hint`.
  */
 export async function getCompletionResult(rootCommand: AnyPadroneCommand, words: readonly string[]): Promise<CompletionResult> {
-  const current = words.at(-1) ?? '';
+  const current = unquoteEmpty(words.at(-1) ?? '');
   const typed = joinSplitValues(words.slice(0, -1));
 
   // Bash splits `--opt=val` into `--opt`, `=`, `val`: complete `val` (or the word after a bare `=`) as the option's value
@@ -216,9 +238,14 @@ export async function getCompletionResult(rootCommand: AnyPadroneCommand, words:
   } catch {
     // Completion works on partial input: keep going without the typed args
   }
-  const filter = (items: PadroneCompletionItem[], prefix = current) => {
+  const filter = (items: Candidate[], prefix = current): PadroneCompletionItem[] => {
     const seen = new Set<string>();
-    return items.filter((i) => typeof i?.value === 'string' && i.value.startsWith(prefix) && !seen.has(i.value) && seen.add(i.value));
+    const matches = items.filter(
+      (i) => typeof i?.value === 'string' && i.value.startsWith(prefix) && !seen.has(i.value) && seen.add(i.value),
+    );
+    const active = matches.filter((i) => !i.deprecated);
+    const typed = prefix.replace(/^--?/, '') !== '';
+    return (active.length > 0 || !typed ? active : matches).map(({ deprecated: _, ...item }) => item);
   };
 
   if (splitOption?.startsWith('-') && !afterDoubleDash) {
@@ -239,20 +266,27 @@ export async function getCompletionResult(rootCommand: AnyPadroneCommand, words:
       const values = await fieldValues(option, current.slice(eq + 1), rawArgs, command);
       return { items: filter(values.map((v) => ({ ...v, value: `${name}=${v.value}` }))), directive: fieldDirective(option) };
     }
+    // `-` and `-x` also get short flags, like cobra and clap
+    const short = !current.startsWith('--');
     const names = fields
-      .filter((f) => !f.meta?.hidden)
-      .flatMap((f) => f.longNames.map((n) => ({ value: `--${n}`, description: f.description })));
-    const dryRun = getDryRunFlagKeys(command).includes('dry-run')
-      ? [{ value: '--dry-run', description: 'Show what would change without changing anything' }]
-      : [];
-    const help = builtinLongFlags(rootCommand, 'help').map((value) => ({ value, description: 'Show help information' }));
+      .filter((f) => !f.hidden)
+      .flatMap((f) =>
+        [...(short ? f.shortFlags.map((s) => `-${s}`) : []), ...f.offeredNames.map((n) => `--${n}`)].map(
+          (value): Candidate => ({ value, description: f.description, deprecated: f.deprecated }),
+        ),
+      );
+    const dryRunKeys = getDryRunFlagKeys(command);
+    const dryRunFlags = [...(short && dryRunKeys.includes('n') ? ['-n'] : []), ...(dryRunKeys.includes('dry-run') ? ['--dry-run'] : [])];
+    const dryRun = dryRunFlags.map((value) => ({ value, description: 'Show what would change without changing anything' }));
+    const helpFlags = [...(short ? builtinFlags(rootCommand, 'help', true) : []), ...builtinFlags(rootCommand, 'help')];
+    const help = helpFlags.map((value) => ({ value, description: 'Show help information' }));
     return { items: filter([...names, ...dryRun, ...help]), directive: 'nofiles' };
   }
 
-  const visibleCommands = (cmd: AnyPadroneCommand): PadroneCompletionItem[] =>
+  const visibleCommands = (cmd: AnyPadroneCommand): Candidate[] =>
     (cmd.commands ?? [])
       .filter((c) => !c.hidden && c.name && c.name !== COMPLETE_COMMAND)
-      .map((c) => ({ value: c.name, description: c.title ?? c.description }));
+      .map((c) => ({ value: c.name, description: c.title ?? c.description, deprecated: !!c.deprecated }));
   const subcommands = positionals === 0 && !afterDoubleDash ? visibleCommands(command) : [];
   // `help <word>...`: the built-in help command takes a command path (`help db migrate`) or a help topic
   const helpWord = !afterDoubleDash && !!command.flagNames && command.name === 'help' && !!command.parent && !command.parent.parent;
@@ -293,19 +327,30 @@ export function formatCompletionResult({ items, directive }: CompletionResult): 
 
 // ── Shell fallbacks, shared with the static scripts in completion.ts ─────────
 
-/** Bash: fills `COMPREPLY` for `$directive` from `$cur` (needs `IFS=$'\n'`); `:files` leaves it to `complete -o default`. */
+/**
+ * Bash: appends each output line of `command` to the array `target`, using the caller's `line` variable. Unlike
+ * `target=($(command))`, candidates aren't split at spaces or expanded as globs (`src/*`).
+ */
+export const bashReadLines = (command: string, target = 'COMPREPLY') =>
+  `while IFS= read -r line; do ${target}+=("$line"); done < <(${command})`;
+
+/** Bash: fills `COMPREPLY` for `$directive` from `$cur` (with a local `line`); `:files` leaves it to `complete -o default`. */
 export const bashFallback = `case "$directive" in
   :nofiles) compopt +o default +o bashdefault 2>/dev/null ;;
-  :commands) compopt +o default +o bashdefault 2>/dev/null; COMPREPLY=($(compgen -c -- "$cur")) ;;
-  :dirs) compopt +o default +o bashdefault -o filenames 2>/dev/null; COMPREPLY=($(compgen -d -- "$cur")) ;;
+  :commands)
+    compopt +o default +o bashdefault 2>/dev/null
+    ${bashReadLines('compgen -c -- "$cur"')} ;;
+  :dirs)
+    compopt +o default +o bashdefault -o filenames 2>/dev/null
+    ${bashReadLines('compgen -d -- "$cur"')} ;;
   :ext:*)
     compopt +o default +o bashdefault -o filenames 2>/dev/null
-    COMPREPLY=($(compgen -d -- "$cur"))
+    ${bashReadLines('compgen -d -- "$cur"')}
     local ext rest="\${directive#:ext:},"
     while [[ -n "$rest" ]]; do
       ext="\${rest%%,*}"
       rest="\${rest#*,}"
-      COMPREPLY+=($(compgen -f -X "!*.$ext" -- "$cur"))
+      ${bashReadLines('compgen -f -X "!*.$ext" -- "$cur"')}
     done ;;
 esac`;
 
@@ -376,8 +421,8 @@ ${fn}() {
     fi
   done
   local cur="\${words[\${#words[@]} - 1]}"
-  local IFS=$'\\n'
-  local lines=($(${programName} ${COMPLETE_DESCRIBED_COMMAND} "\${words[@]:1}" 2>/dev/null))
+  local lines=() line
+  ${bashReadLines(`${programName} ${COMPLETE_DESCRIBED_COMMAND} "\${words[@]:1}" 2>/dev/null`, 'lines')}
   # The last line says what to complete when nothing matches (\`:files\`, \`:dirs\`, \`:ext:json,yaml\`, \`:commands\`, \`:nofiles\`)
   local directive=":files" n=\${#lines[@]}
   if [[ $n -gt 0 && "\${lines[n - 1]}" == :* ]]; then
@@ -388,7 +433,6 @@ ${fn}() {
   local colon_prefix=""
   [[ "$cur" == *:* ]] && colon_prefix="\${cur%"\${cur##*:}"}"
   COMPREPLY=()
-  local line
   for line in "\${lines[@]}"; do
     line="\${line%%$'\\t'*}"
     COMPREPLY+=("$(printf '%q' "\${line#"$colon_prefix"}")")
@@ -481,7 +525,8 @@ ${end}`;
 Register-ArgumentCompleter -Native -CommandName ${programName} -ScriptBlock {
   param($wordToComplete, $commandAst, $cursorPosition)
   $words = @($commandAst.CommandElements | Select-Object -Skip 1 | Where-Object { $_.Extent.EndOffset -le $cursorPosition } | ForEach-Object { $_.ToString() })
-  if ($wordToComplete -eq '') { $words += '' }
+  # Windows PowerShell 5.1 drops empty arguments to native commands: pass "" for the word being typed (the program takes it as empty)
+  if ($wordToComplete -eq '') { $words += '""' }
   $lines = @(& ${programName} ${COMPLETE_DESCRIBED_COMMAND} @words 2>$null)
   # The last line says what to complete when nothing matches (:files, :dirs, :ext:json,yaml, :commands, :nofiles)
   $directive = ':files'

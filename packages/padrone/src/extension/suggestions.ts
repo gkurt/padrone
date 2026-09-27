@@ -1,5 +1,5 @@
 import { getJsonSchema } from '../core/args.ts';
-import { findCommandByName, getGlobalArgs, resolveCommand, suggestSimilar } from '../core/commands.ts';
+import { findCommandByName, formatSuggestions, getGlobalArgs, resolveCommand, subcommandNames, suggestSimilar } from '../core/commands.ts';
 import { RoutingError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { parseCliInputToParts, tokenizeInput } from '../core/parse.ts';
@@ -19,13 +19,6 @@ import { camelToKebab } from '../util/shell-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
 import { isTopicLookupError } from './help.ts';
 import { quoteToken, rawInputFlag, toFlag } from './utils.ts';
-
-function formatSuggestions(names: string[], prefix = ''): string {
-  if (names.length === 0) return '';
-  const quoted = names.map((n) => `"${prefix}${n}"`);
-  if (quoted.length === 1) return `Did you mean ${quoted[0]}?`;
-  return `Did you mean ${quoted.slice(0, -1).join(', ')} or ${quoted.at(-1)}?`;
-}
 
 function findSourceCommand(commandPath: string | undefined, root: AnyPadroneCommand): AnyPadroneCommand {
   if (!commandPath || commandPath === root.name || commandPath === root.path) return root;
@@ -55,19 +48,7 @@ function similarCommands(
   if (!term) return undefined;
 
   const sourceCmd = findSourceCommand(err.command, rootCommand);
-
-  const candidateNames: string[] = [...extraCandidates];
-  if (sourceCmd.commands) {
-    for (const cmd of sourceCmd.commands) {
-      resolveCommand(cmd);
-      if (!cmd.hidden) {
-        candidateNames.push(cmd.name);
-        if (cmd.aliases) candidateNames.push(...cmd.aliases);
-      }
-    }
-  }
-
-  return { term, similar: suggestSimilar(term, candidateNames) };
+  return { term, similar: suggestSimilar(term, [...extraCandidates, ...subcommandNames(sourceCmd)]) };
 }
 
 function enrichRoutingError(err: unknown, rootCommand: AnyPadroneCommand): unknown {

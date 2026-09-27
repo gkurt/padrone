@@ -32,6 +32,8 @@ export type DocsOptions = {
   overwrite?: boolean;
   /** Print what would be written without writing. */
   dryRun?: boolean;
+  /** The date in man pages' `.TH` line. Defaults to `SOURCE_DATE_EPOCH` when set (reproducible builds), else today. */
+  date?: string | Date;
 };
 
 export type DocsPage = {
@@ -431,12 +433,49 @@ function manCommandName(info: HelpInfo, programName: string): string {
   return info.name.startsWith(`${programName} `) ? info.name : `${programName} ${info.name}`;
 }
 
-function generateManPage(info: HelpInfo, _depth: number, programName: string): string {
+const manPageName = (info: HelpInfo, programName: string) => manCommandName(info, programName).replace(/\s+/g, '-');
+
+type ManPageContext = {
+  programName: string;
+  /** The `.TH` date. */
+  date: string;
+  /** The `.TH` source: the program and its version. */
+  source: string;
+  /** Every page generated, to link the parent and subcommand pages. */
+  infos: HelpInfo[];
+};
+
+/** The `.TH` date: the `date` option, else `SOURCE_DATE_EPOCH` (for reproducible builds), else today, as `YYYY-MM-DD`. */
+function manDate(date: string | Date | undefined, env: Record<string, string | undefined>): string {
+  if (typeof date === 'string') return date;
+  const epoch = Number(env.SOURCE_DATE_EPOCH);
+  const value = date ?? (env.SOURCE_DATE_EPOCH && Number.isFinite(epoch) ? new Date(epoch * 1000) : new Date());
+  return value.toISOString().slice(0, 10);
+}
+
+function manPageContext(cmd: AnyPadroneCommand, infos: HelpInfo[], date: string | Date | undefined): ManPageContext {
+  const programName = cmd.name || 'program';
+  const source = cmd.version ? `${programName} ${cmd.version}` : '';
+  return { programName, date: manDate(date, getCommandRuntime(cmd).env()), source, infos };
+}
+
+/** The pages of the parent command and the direct subcommands (the first info is the program's), like cobra's SEE ALSO. */
+function manSeeAlso(info: HelpInfo, { infos, programName }: ManPageContext): string[] {
+  const pathOf = (other: HelpInfo) => (other === infos[0] ? [] : other.name.split(' '));
+  const path = pathOf(info);
+  const isPrefix = (short: string[], long: string[]) => long.length === short.length + 1 && short.every((part, i) => part === long[i]);
+  return infos
+    .filter((other) => isPrefix(pathOf(other), path) || isPrefix(path, pathOf(other)))
+    .map((other) => manPageName(other, programName));
+}
+
+function generateManPage(info: HelpInfo, context: ManPageContext): string {
+  const { programName } = context;
   const commandName = manCommandName(info, programName);
   const manName = commandName.replace(/\s+/g, '-');
   const lines: string[] = [];
 
-  lines.push(`.TH "${escapeMan(manName.toUpperCase())}" "1" "" "" ""`);
+  lines.push(`.TH "${escapeMan(manName.toUpperCase())}" "1" "${escapeMan(context.date)}" "${escapeMan(context.source)}" ""`);
 
   // NAME
   lines.push('.SH NAME');
@@ -523,6 +562,12 @@ function generateManPage(info: HelpInfo, _depth: number, programName: string): s
     }
   }
 
+  const related = manSeeAlso(info, context);
+  if (related.length > 0) {
+    lines.push('.SH SEE ALSO');
+    lines.push(related.map((name) => `\\fB${escapeMan(name)}\\fR(1)`).join(', '));
+  }
+
   return `${lines.join('\n')}\n`;
 }
 
@@ -593,6 +638,7 @@ export function generateDocs(program: object, options: DocsOptions = {}): DocsRe
   const allInfos = collectAllHelpInfo(cmd, includeHidden);
   const rootInfo = allInfos[0]!;
   const programName = cmd.name || 'program';
+  const manContext = format === 'man' ? manPageContext(cmd, allInfos, options.date) : undefined;
 
   const pages: DocsPage[] = [];
 
@@ -613,7 +659,7 @@ export function generateDocs(program: object, options: DocsOptions = {}): DocsRe
         content = generateHtmlPage(info, depth);
         break;
       case 'man':
-        content = generateManPage(info, depth, programName);
+        content = generateManPage(info, manContext!);
         break;
       case 'json':
         content = `${JSON.stringify(info, null, 2)}\n`;
@@ -723,7 +769,7 @@ function manPageFilename(commandName: string, section = 1): string {
 export async function setupManPages(program: object): Promise<SetupManPagesResult> {
   const cmd = getCommand(program);
   const allInfos = collectAllHelpInfo(cmd, false);
-  const programName = cmd.name || 'program';
+  const context = manPageContext(cmd, allInfos, undefined);
   const manDir = await getManPageDir(1);
 
   mkdirSync(manDir, { recursive: true });
@@ -731,16 +777,13 @@ export async function setupManPages(program: object): Promise<SetupManPagesResul
   const written: string[] = [];
   let updated = false;
 
-  for (let i = 0; i < allInfos.length; i++) {
-    const info = allInfos[i]!;
-    const depth = i === 0 ? 0 : info.name.split(/\s+/).length;
-    const commandName = manCommandName(info, programName);
-    const filename = manPageFilename(commandName);
+  for (const info of allInfos) {
+    const filename = manPageFilename(manCommandName(info, context.programName));
     const fullPath = join(manDir, filename);
 
     if (existsSync(fullPath)) updated = true;
 
-    const content = generateManPage(info, depth, programName);
+    const content = generateManPage(info, context);
     writeFileSync(fullPath, content, 'utf-8');
     written.push(filename);
   }

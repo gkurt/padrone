@@ -465,6 +465,8 @@ createPadrone('app', {
 
 `app help environment` prints the topic's content as is (through the pager when it's on), or `{ topic, title, content }` under JSON output. The program's help lists topics under "Additional help topics", `help <typo>` suggests topic names, and shell completion offers them after `help`. A command of the same name takes precedence. `generateDocs()` writes each topic to `topics/<name>.md` in Markdown output.
 
+`app help --search <term>` (or `-s`) searches the whole tree, like `npm help-search`: it lists the commands whose name, aliases or description contain every word of the term (ignoring case), then the matching topics (by name, title, description or text), or `{ commands, topics }` under JSON output.
+
 ## Dry Runs
 
 Commands that change things can offer a dry run with `.dryRun()`. The command then accepts `--dry-run` (or `-n`), and under that flag the dry-run handler runs instead of the action: arguments are parsed and validated as usual, but the action is never called.

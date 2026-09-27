@@ -312,6 +312,22 @@ export function suggestSimilar(input: string, candidates: string[]): string[] {
   return matches.slice(0, 3).map((m) => m.candidate);
 }
 
+/** `Did you mean "a", "b" or "c"?` for the given names (each after `prefix`, like `--`); `''` for none. */
+export function formatSuggestions(names: string[], prefix = ''): string {
+  if (names.length === 0) return '';
+  const quoted = names.map((n) => `"${prefix}${n}"`);
+  if (quoted.length === 1) return `Did you mean ${quoted[0]}?`;
+  return `Did you mean ${quoted.slice(0, -1).join(', ')} or ${quoted.at(-1)}?`;
+}
+
+/** The names and aliases of a command's visible subcommands, the candidates for a mistyped one. */
+export function subcommandNames(command: AnyPadroneCommand): string[] {
+  return (command.commands ?? []).flatMap((cmd) => {
+    resolveCommand(cmd);
+    return cmd.hidden ? [] : [cmd.name, ...(cmd.aliases ?? [])];
+  });
+}
+
 export function findCommandByName(name: string, commands?: AnyPadroneCommand[]): AnyPadroneCommand | undefined {
   if (!commands) return undefined;
 

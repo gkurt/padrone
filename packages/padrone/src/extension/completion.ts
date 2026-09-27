@@ -11,7 +11,7 @@ import { passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-type CompletionArgs = { shell?: string; setup?: boolean };
+type CompletionArgs = { shell?: string; setup?: boolean; instructions?: boolean };
 
 type CompletionCommand = PadroneCommand<'completion', '', PadroneSchema<CompletionArgs>, string, [], [], true>;
 
@@ -67,6 +67,7 @@ export function padroneCompletion(): <T extends CommandTypesBase>(builder: T) =>
                 enum: ['bash', 'zsh', 'fish', 'powershell'],
               },
               setup: { type: 'boolean', description: "Install the script into the shell's config file" },
+              instructions: { type: 'boolean', description: 'Print how to install the script instead of the script' },
             }),
             { positional: ['shell'] },
           )
@@ -74,9 +75,12 @@ export function padroneCompletion(): <T extends CommandTypesBase>(builder: T) =>
           .action(async (args, ctx) => {
             const rootCommand = getRootCommand(ctx.command);
             resolveAllCommands(rootCommand);
-            const { detectShellFromEnv, generateCompletionOutput, setupCompletions } = await import('../feature/completion.ts');
+            const { detectShellFromEnv, generateCompletionOutput, getCompletionInstallInstructions, setupCompletions } = await import(
+              '../feature/completion.ts'
+            );
             const shell = args.shell as ShellType;
             const env = ctx.runtime.env();
+            if (args.instructions) return getCompletionInstallInstructions(rootCommand.name, shell ?? (await detectShellFromEnv(env)));
             if (args.setup) {
               const resolvedShell = shell ?? (await detectShellFromEnv(env));
               if (!resolvedShell) throw new Error('Could not detect shell. Specify one: completion bash --setup');

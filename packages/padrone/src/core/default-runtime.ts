@@ -43,7 +43,8 @@ export function createTerminalReplSession(config: ReplSessionConfig) {
   // History accumulates across per-call interfaces, giving us
   // up/down arrow navigation without a persistent stdin listener
   // that would conflict with Enquirer or other stdin consumers.
-  let history: string[] = config.history ? [...config.history] : [];
+  // Readline keeps the most recent entry first
+  let history: string[] = config.history ? [...config.history].reverse() : [];
   let currentCompleter = config.completer;
 
   return {
@@ -58,7 +59,7 @@ export function createTerminalReplSession(config: ReplSessionConfig) {
         output: process.stdout,
         terminal: true,
         history: [...history],
-        historySize: Math.max(history.length, 1000),
+        historySize: config.historySize ?? 1000,
       };
       if (currentCompleter) {
         opts.completer = currentCompleter;

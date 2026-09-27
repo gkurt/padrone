@@ -56,7 +56,7 @@ All REPL built-in commands use a dot prefix to avoid collisions with user-define
 | `.exit` | Exit the REPL |
 | `.quit` | Exit the REPL (alias) |
 | `.clear` | Clear the screen |
-| `.history` | Show command history for the session |
+| `.history` | Show command history (with the saved history, when `historyFile` is set) |
 | `.scope <cmd>` | Scope the session to a subcommand subtree |
 | `.scope ..` or `..` | Go up one scope level |
 | `.` | Execute the current scoped command |
@@ -102,6 +102,8 @@ myapp/db/migrate ❯
 
 The `scope` option is strongly typed to valid command paths in your program.
 
+A mistyped `.scope` target gets a suggestion (`Unknown command: dbb` / `Did you mean "db"?`), and inside a scope `help <command>` shows help for the scope's commands (`help migrate` in `db` is `help db migrate`), with the same suggestions for a typo.
+
 ## Tab Completion
 
 The REPL provides tab completion for:
@@ -121,6 +123,12 @@ for await (const result of program.repl({
 })) {
   // Up arrow cycles through history
 }
+```
+
+`historyFile` keeps history between sessions: `true` stores it in `repl_history` under the program's state directory (`program.dirs.state`, e.g. `~/.local/state/myapp` on Linux), or pass a path. Entries are saved as they're entered, one per line, and `.history` lists the saved ones too. `historySize` caps how many are kept (default 1000):
+
+```typescript
+program.repl({ historyFile: true, historySize: 500 });
 ```
 
 ## Customizing the REPL
@@ -197,6 +205,8 @@ This adds `| ` before each line of output, creating a visual distinction.
 | `greeting` | `string \| false` | Program name + version | Welcome message |
 | `hint` | `string \| false` | Help/exit instructions | Hint shown below greeting |
 | `history` | `string[]` | `[]` | Initial history entries |
+| `historyFile` | `boolean \| string` | none | File that keeps history between sessions (`true`: `repl_history` in `program.dirs.state`) |
+| `historySize` | `number` | `1000` | Most history entries kept |
 | `completion` | `boolean` | `true` | Enable tab completion |
 | `spacing` | `PadroneReplSpacing \| { before?, after? }` | none | Output separators |
 | `outputPrefix` | `string` | none | Prefix for output lines |

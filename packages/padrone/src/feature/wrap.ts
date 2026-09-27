@@ -33,7 +33,17 @@ export type WrapConfig<TCommandArgs extends PadroneSchema = PadroneSchema, TWrap
    * If not provided, command arguments are passed through as-is.
    */
   schema?: TWrapArgs | ((commandArguments: TCommandArgs) => TWrapArgs);
+  /**
+   * `'--'` puts the positional values after a `--`, so a value starting with `-` can't be read as an option
+   * by the wrapped tool (`rm -- -file`). Defaults to `false`: positionals follow the options directly.
+   */
+  separator?: '--' | false;
+  /** How options with a value are passed: `'separate'` (default) as `--key value`, `'equals'` as `--key=value`. */
+  flagStyle?: 'separate' | 'equals';
 };
+
+/** How `wrap()` turns arguments into the wrapped command's argv (see `WrapConfig`). */
+export type WrapArgvOptions = Pick<WrapConfig, 'separator' | 'flagStyle'>;
 
 /**
  * Result from executing a wrapped CLI tool.
@@ -58,9 +68,14 @@ export type WrapResult = {
 };
 
 /**
- * Converts parsed arguments to CLI arguments for an external command.
+ * Converts parsed arguments to CLI arguments for an external command: options first (`--key value`, booleans as bare
+ * flags, arrays repeated), then the positionals in order.
  */
-function argsToCliArgs(input: Record<string, unknown> | undefined, positional: readonly string[] = []): string[] {
+export function argsToCliArgs(
+  input: Record<string, unknown> | undefined,
+  positional: readonly string[] = [],
+  { separator = false, flagStyle = 'separate' }: WrapArgvOptions = {},
+): string[] {
   const args: string[] = [];
 
   // Handle undefined or null input
@@ -84,18 +99,22 @@ function argsToCliArgs(input: Record<string, unknown> | undefined, positional: r
 
     // Use the key as-is with -- prefix
     const flag = `--${key}`;
+    const option = (item: unknown) => {
+      if (flagStyle === 'equals') args.push(`${flag}=${String(item)}`);
+      else args.push(flag, String(item));
+    };
 
     if (typeof value === 'boolean') {
       if (value) args.push(flag);
     } else if (Array.isArray(value)) {
       // For arrays, add the flag multiple times
-      for (const item of value) {
-        args.push(flag, String(item));
-      }
+      for (const item of value) option(item);
     } else {
-      args.push(flag, String(value));
+      option(value);
     }
   }
+
+  const positionalArgs: string[] = [];
 
   // Add positional arguments in the specified order
   for (const posKey of positional) {
@@ -106,13 +125,14 @@ function argsToCliArgs(input: Record<string, unknown> | undefined, positional: r
     if (value === undefined || value === null) continue;
 
     if (isVariadic && Array.isArray(value)) {
-      args.push(...value.map(String));
+      positionalArgs.push(...value.map(String));
     } else {
-      args.push(String(value));
+      positionalArgs.push(String(value));
     }
   }
 
-  return args;
+  if (separator && positionalArgs.length > 0) args.push(separator);
+  return [...args, ...positionalArgs];
 }
 
 /**
@@ -128,6 +148,7 @@ export function createWrapHandler<TCommandArgs extends PadroneSchema, TWrapArgs 
 ): (args: StandardSchemaV1.InferOutput<TCommandArgs>) => Promise<WrapResult> {
   return async (args: StandardSchemaV1.InferOutput<TCommandArgs>): Promise<WrapResult> => {
     const { command, args: fixedArgs = [], inheritStdio = true, positional = commandPositional, schema: wrapSchema } = config;
+    const argvOptions: WrapArgvOptions = { separator: config.separator, flagStyle: config.flagStyle };
 
     // Get the wrap schema (handle function or direct schema)
     const schema = wrapSchema ? (typeof wrapSchema === 'function' ? wrapSchema(commandArguments) : wrapSchema) : commandArguments;
@@ -146,7 +167,7 @@ export function createWrapHandler<TCommandArgs extends PadroneSchema, TWrapArgs 
       validationResult instanceof Promise ? await validationResult.then(processResult) : processResult(validationResult);
 
     // Convert arguments to CLI arguments
-    const regularArgs = argsToCliArgs(externalArguments as Record<string, unknown>, positional);
+    const regularArgs = argsToCliArgs(externalArguments as Record<string, unknown>, positional, argvOptions);
 
     // Combine fixed args and regular args
     const allArgs = [...fixedArgs, ...regularArgs];

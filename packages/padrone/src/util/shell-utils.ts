@@ -55,7 +55,11 @@ export async function detectShell(): Promise<ShellType | undefined> {
   return undefined;
 }
 
-export async function getRcFile(shell: ShellType, home?: string): Promise<string | null> {
+export async function getRcFile(
+  shell: ShellType,
+  home?: string,
+  env: Record<string, string | undefined> | undefined = globalThis.process?.env,
+): Promise<string | null> {
   const { homedir } = await import('node:os');
   const { join } = await import('node:path');
   const h = home ?? homedir();
@@ -67,10 +71,7 @@ export async function getRcFile(shell: ShellType, home?: string): Promise<string
     case 'fish':
       return join(h, '.config', 'fish', 'config.fish');
     case 'powershell':
-      return (
-        (typeof process !== 'undefined' ? process.env.PROFILE : undefined) ||
-        join(h, 'Documents', 'PowerShell', 'Microsoft.PowerShell_profile.ps1')
-      );
+      return env?.PROFILE || join(h, 'Documents', 'PowerShell', 'Microsoft.PowerShell_profile.ps1');
     default:
       return null;
   }

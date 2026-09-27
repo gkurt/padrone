@@ -1,7 +1,9 @@
 export type {
   PadroneArgsSchemaMeta,
   PadroneCompleteContext,
+  PadroneCompletionDirective,
   PadroneCompletionItem,
+  PadroneCompletionResult,
   PadroneFieldGroups,
   PadroneFieldMeta,
   PadroneGlobalArgsMeta,
@@ -27,6 +29,7 @@ export type {
   PadroneActionContext,
   PadroneCaller,
   PadroneCommand,
+  PadroneCommandComplete,
   PadroneCommandConfig,
   PadroneProgramMeta,
 } from './command.ts';

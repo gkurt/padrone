@@ -3,7 +3,7 @@ import type { PadroneRuntime, ResolvedPadroneRuntime } from '../core/runtime.ts'
 import type { PadroneHelpTopic } from '../extension/help.ts';
 import type { PadroneHelpConfig, PadroneHelpTransform } from '../output/formatter.ts';
 import type { FullCommandName } from '../util/type-utils.ts';
-import type { PadroneArgsSchemaMeta, PadroneGlobalArgsMeta } from './args-meta.ts';
+import type { PadroneArgsSchemaMeta, PadroneCompleteContext, PadroneCompletionResult, PadroneGlobalArgsMeta } from './args-meta.ts';
 import type { AnyPadroneProgram } from './builder.ts';
 import type { PadroneEmit, RegisteredInterceptor } from './interceptor.ts';
 import type { PadroneSchema } from './schema.ts';
@@ -109,7 +109,16 @@ export type PadroneCommandConfig<TArgs = any> = {
    * receiving the generated help info that returns modified info or the final string (this command and its subcommands).
    */
   help?: PadroneHelpConfig | PadroneHelpTransform;
+  /**
+   * Shell completion for this command's positional values (needs `padroneCompletion()`), like cobra's `ValidArgsFunction`:
+   * called for each positional word with its `position`, `field` and the words before it. A positional field's own
+   * `complete` wins over it. Subcommand names are still offered next to its values.
+   */
+  complete?: PadroneCommandComplete;
 };
+
+/** A command's positional completion hook, set by `.configure({ complete })`. */
+export type PadroneCommandComplete = (ctx: PadroneCompleteContext) => PadroneCompletionResult | Promise<PadroneCompletionResult>;
 
 export type PadroneCommand<
   TName extends string = string,
@@ -145,6 +154,8 @@ export type PadroneCommand<
   examples?: string[];
   /** Help customization, set by `.configure({ help })`. */
   help?: PadroneHelpConfig | PadroneHelpTransform;
+  /** Positional shell completion, set by `.configure({ complete })`. */
+  complete?: PadroneCommandComplete;
   /** @internal Flags that invoke this built-in command (e.g. `['help', 'h']` for `--help`/`-h`). */
   flagNames?: readonly string[];
   /** @internal Topics shown by the built-in help command (`help <topic>`), from `padroneHelp({ topics })`. */

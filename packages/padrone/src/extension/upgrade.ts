@@ -19,6 +19,8 @@ export type PadroneUpgradePlan = {
   /** The version being installed. */
   version: string;
   runtime: ResolvedPadroneRuntime;
+  /** The package manager command about to run (`['npm', 'install', '-g', 'my-cli@2.0.0']`); unset for a custom `installer` function. */
+  command?: readonly string[];
 };
 
 export type PadroneUpgradeOptions = {
@@ -40,9 +42,38 @@ export type PadroneUpgradeOptions = {
   command?: string;
   /** Runs an installer command and resolves with its exit code. Defaults to spawning it with inherited stdio. */
   exec?: (command: readonly string[]) => Promise<number>;
+  /**
+   * Checks the release before anything is installed (after `padroneConfirm()` asks, not on `--dry-run`), e.g. its
+   * signature or provenance. Resolving `false` or throwing refuses the upgrade. A custom `installer` that downloads a
+   * binary can check the bytes itself with `verifySha256()`.
+   */
+  verify?: (plan: PadroneUpgradePlan) => boolean | void | Promise<boolean | void>;
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Whether `data` has the SHA-256 checksum `expected`: a hex digest, or a `SHA256SUMS` file (`<digest>  <file>` lines,
+ * as `sha256sum` writes them) in which the line for `fileName` is used. Use it in a custom `padroneUpgrade()` installer
+ * to refuse a download that doesn't match its published checksum.
+ *
+ * ```ts
+ * const binary = new Uint8Array(await (await fetch(`${base}/my-cli-linux-x64`)).arrayBuffer());
+ * const sums = await (await fetch(`${base}/SHA256SUMS`)).text();
+ * if (!(await verifySha256(binary, sums, 'my-cli-linux-x64'))) throw new Error('Checksum mismatch');
+ * ```
+ */
+export async function verifySha256(data: Uint8Array | ArrayBuffer | string, expected: string, fileName?: string): Promise<boolean> {
+  const entries = expected
+    .split(/\r?\n/)
+    .map((line) => line.trim().match(/^([0-9a-f]{64})(?:\s+\*?(?:\.\/)?(.+))?$/i))
+    .filter((match) => !!match);
+  const entry = fileName ? entries.find((match) => match[2] === fileName) : entries.length === 1 ? entries[0] : undefined;
+  if (!entry) return false;
+  const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data instanceof Uint8Array ? data : new Uint8Array(data);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('') === entry[1]!.toLowerCase();
+}
 
 function installerFromPath(path: string): PadroneInstaller | undefined {
   const p = path.replace(/\\/g, '/').toLowerCase();
@@ -151,6 +182,7 @@ const UPDATE_AVAILABLE_EXIT_CODE = 1;
  *   `--force` reinstalls when up to date
  * - `--dry-run` shows the command without running it; the command is a `mutation`, so `padroneConfirm()` asks first,
  *   once the registry says there's something to install
+ * - `verify` checks the release before installing it, and refuses the upgrade when it resolves `false`
  *
  * `padroneUpdateCheck()` suggests running it in its notice.
  *
@@ -246,8 +278,18 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
           if (message !== undefined) return message;
 
           const planned = await describe(options.installer, p);
+          const target: PadroneUpgradePlan = {
+            packageName: p.packageName,
+            current: p.current,
+            version: p.version,
+            runtime: p.runtime,
+            command: planned,
+          };
+          if (options.verify && (await options.verify(target)) === false) {
+            throw new ActionError(`Couldn't verify ${p.packageName} ${p.version}; nothing was installed`);
+          }
           ctx.runtime.error(`Upgrading ${p.packageName} ${p.current} → ${p.version}…`);
-          const command = typeof options.installer === 'function' ? await options.installer(p) : planned;
+          const command = typeof options.installer === 'function' ? await options.installer(target) : planned;
           if (command?.length) {
             const code = await exec(command);
             if (code !== 0) throw new ActionError(`"${command.join(' ')}" failed with exit code ${code}`, { exitCode: code });

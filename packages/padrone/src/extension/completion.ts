@@ -11,7 +11,18 @@ import { localOnlyInterceptor, passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
-type CompletionArgs = { shell?: string; setup?: boolean; instructions?: boolean };
+type CompletionArgs = { shell?: string; setup?: boolean; instructions?: boolean; static?: boolean; descriptions?: boolean };
+
+export type PadroneCompletionOptions = {
+  /**
+   * The scripts `completion <shell>` prints: `'dynamic'` (default) ask the program on each tab press (`__complete2`),
+   * so `complete` callbacks and per-command values work; `'static'` list the commands, options and enum values up front,
+   * without running the program. `completion <shell> --static` / `--no-static` override it.
+   */
+  mode?: 'dynamic' | 'static';
+  /** Show descriptions next to candidates where the shell supports it. Defaults to `true`; `--no-descriptions` overrides it. */
+  descriptions?: boolean;
+};
 
 type CompletionCommand = PadroneCommand<'completion', '', PadroneSchema<CompletionArgs>, string, [], [], true>;
 
@@ -31,7 +42,7 @@ const completeInterceptor = defineInterceptor({ id: 'padrone:completion', name: 
     if (!described && words?.[0] !== COMPLETE_COMMAND) return next();
 
     resolveAllCommands(ctx.command);
-    return getCompletionResult(ctx.command, words!.slice(1)).then((completion) => {
+    return getCompletionResult(ctx.command, words!.slice(1), { runtime: ctx.runtime, context: ctx.context }).then((completion) => {
       const values = completion.items.map((item) => item.value);
       if (described) ctx.runtime.output(formatCompletionResult(completion));
       else if (values.length > 0) ctx.runtime.output(values.join('\n'));
@@ -53,7 +64,7 @@ const completeInterceptor = defineInterceptor({ id: 'padrone:completion', name: 
  * createPadrone('my-cli').extend(padroneCompletion())
  * ```
  */
-export function padroneCompletion(): <T extends CommandTypesBase>(builder: T) => WithCompletion<T> {
+export function padroneCompletion(options: PadroneCompletionOptions = {}): <T extends CommandTypesBase>(builder: T) => WithCompletion<T> {
   return ((builder: AnyPadroneBuilder) =>
     builder
       .command('completion', (c) =>
@@ -69,6 +80,8 @@ export function padroneCompletion(): <T extends CommandTypesBase>(builder: T) =>
               },
               setup: { type: 'boolean', description: "Install the script into the shell's config file" },
               instructions: { type: 'boolean', description: 'Print how to install the script instead of the script' },
+              static: { type: 'boolean', description: 'Print a script that lists the candidates up front instead of asking the program' },
+              descriptions: { type: 'boolean', description: 'Show descriptions next to candidates (--no-descriptions to leave them out)' },
             }),
             { positional: ['shell'] },
           )
@@ -81,14 +94,21 @@ export function padroneCompletion(): <T extends CommandTypesBase>(builder: T) =>
             );
             const shell = args.shell as ShellType;
             const env = ctx.runtime.env();
+            const script = {
+              mode: args.static === undefined ? options.mode : args.static ? 'static' : 'dynamic',
+              descriptions: args.descriptions ?? options.descriptions,
+            } as const;
             if (args.instructions) return getCompletionInstallInstructions(rootCommand.name, shell ?? (await detectShellFromEnv(env)));
             if (args.setup) {
               const resolvedShell = shell ?? (await detectShellFromEnv(env));
               if (!resolvedShell) throw new Error('Could not detect shell. Specify one: completion bash --setup');
-              const setupResult = await setupCompletions(rootCommand.name, resolvedShell);
+              // The installed snippet runs `completion <shell>` with the flags given here, so they stick
+              const flags = [...(args.static === undefined ? [] : [args.static ? '--static' : '--no-static'])];
+              if (args.descriptions !== undefined) flags.push(args.descriptions ? '--descriptions' : '--no-descriptions');
+              const setupResult = await setupCompletions(rootCommand.name, resolvedShell, { env, flags });
               return `${setupResult.updated ? 'Updated' : 'Added'} ${rootCommand.name} completions in ${setupResult.file}`;
             }
-            return generateCompletionOutput(rootCommand, shell, env);
+            return generateCompletionOutput(rootCommand, shell, env, script);
           }),
       )
       .intercept(completeInterceptor)) as any;

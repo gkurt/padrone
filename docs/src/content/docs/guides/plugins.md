@@ -47,15 +47,15 @@ Additional opt-in extensions are available for advanced features:
 | `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`, or `<PROGRAM>_YES=1`) before `mutation: true` commands |
 | `padroneTiming()` | `'padrone'` | Execution timing (`--time`; `Done in …` / `Failed after …`, `format` option) |
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking (notice from the cached latest version; a stale cache refreshes in a detached process, so exit is never delayed) |
-| `padroneUpgrade(options?)` | `'padrone'` | Self-update command (`upgrade`, `--check`, `--exit-code`, `--to`, `--channel`; asks `padroneConfirm()` only when there is something to install) using the package manager the program was installed with |
+| `padroneUpgrade(options?)` | `'padrone'` | Self-update command (`upgrade`, `--check`, `--exit-code`, `--to`, `--channel`; asks `padroneConfirm()` only when there is something to install; `verify` checks the release first) using the package manager the program was installed with |
 | `padroneAliases(options?)` | `'padrone'` | User-defined command aliases (`alias set co checkout --force`, `$1`/`$@` placeholders), expanded before routing |
 | `padroneResponseFiles(options?)` | `'padrone'` | Response files: `my-cli @args.txt` reads arguments from `args.txt` (`@@` escapes a leading `@`) |
 | `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support; `remote: 'exit'` returns an app's last frame to serve, MCP and `tool()` calls |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
 | `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing (pass `api: { context, trace }` for span parenting); spans are named `<caller> <command>`, with a server kind for serve and MCP |
-| `padroneCompletion()` | `'padrone/completion'` | Shell completion generation (dynamic, with descriptions, field `complete` callbacks and `hint`s) |
-| `padroneMan()` | `'padrone/man'` | Man page generation: the version and date (`SOURCE_DATE_EPOCH` when set) in `.TH`, parent and subcommand pages under SEE ALSO |
+| `padroneCompletion(options?)` | `'padrone/completion'` | Shell completion generation (dynamic, with descriptions, field `complete` callbacks, `.configure({ complete })` hooks and `hint`s; `mode: 'static'`, `descriptions: false`) |
+| `padroneMan(options?)` | `'padrone/man'` | Man page generation: the version and date (`SOURCE_DATE_EPOCH` when set) in `.TH`, parent and subcommand pages under SEE ALSO; `section` and install `dir` |
 
 ## Extensions
 

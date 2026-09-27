@@ -48,6 +48,7 @@ program.configure({
 | `outputSchema` | `PadroneSchema` | Schema of the object the action returns: MCP's tool `outputSchema` (object schemas only) and the OpenAPI `result`. Not validated at runtime |
 | `builtin` | `boolean` | Mark a command an extension adds for the program itself (like the built-in `help`, `config` or `serve`): `padroneConfig()` and `padroneEnv()` don't fill its options or its subcommands' unless their `builtins: true` |
 | `help` | `PadroneHelpConfig \| PadroneHelpTransform` | `{ usage?, before?, after? }` for this command, or `(info, ctx) => HelpInfo \| string` for this command and its subcommands. See [Customizing Help](/padrone/guides/commands-arguments/#customizing-help) |
+| `complete` | `(ctx) => values \| { values, directive? }` (or a Promise) | Shell completion for the command's positionals (needs `padroneCompletion()`): called with `position`, `field`, `positionals`, `prefix`, `args`, `runtime` and `context`. A positional field's own `complete` wins. See [Command-level completion](/padrone/reference/args-meta/#command-level-completion) |
 
 ---
 
@@ -508,9 +509,9 @@ The `.wrap()` method maintains full type safety:
 
 2. **Arguments → CLI Arguments**: Padrone converts transformed arguments to CLI arguments:
    - Boolean arguments: `{ verbose: true }` → `--verbose`
-   - String/Number arguments: `{ port: 3000 }` → `--port 3000`
+   - String/Number arguments: `{ port: 3000 }` → `--port 3000` (`--port=3000` with `flagStyle: 'equals'`)
    - Array arguments: `{ files: ['a', 'b'] }` → `--files a --files b`
-   - Positional arguments: Follow the order specified in `config.positional`
+   - Positional arguments: Follow the order specified in `config.positional`, after a `--` with `separator: '--'` (so a value like `-rf` can't be read as an option)
    - Argument keys are used as-is with `--` prefix
 
 3. **Process Execution**: Uses `spawn` to execute the external command with the generated arguments
@@ -648,6 +649,8 @@ program.extend(padroneUpdateCheck({
 | `cache` | `string` | `update-check.json` in `program.dirs.cache` | Path to cache file for last check timestamp. The `~/.config/<name>-update-check.json` older versions wrote is moved there |
 | `disableEnvVar` | `string` | auto | Env var name that disables update checking |
 | `updateCommand` | `string \| (packageName, latestVersion) => string` | `<name> upgrade` with `padroneUpgrade()`, else `npm update -g <name>` | Command suggested in the notice |
+| `shouldNotify` | `(info) => boolean` | always | Called when a newer version is known (after the built-in rules below); `false` suppresses the notice, e.g. `({ runtime }) => !runtime.env().npm_lifecycle_event` inside npm scripts |
+| `format` | `(info) => string` | `Update available: …` | The notice text, also used by `version --check`. `info` is `{ packageName, current, latest, updateCommand, runtime }` |
 
 Needs the program's version: `.configure({ version })`, or the version of the package its script belongs to (see `version`); without one nothing is checked. `packageName` and `registry` default to `padroneUpgrade()`'s when it's registered. Runtimes that can't spawn a script (Deno, Node single-executable apps) refresh in-process instead, with a 3-second timeout. Skipped in CI (`CI` set to anything but `0`/`false`), when stdout isn't a TTY, when `NO_UPDATE_NOTIFIER` or the `disableEnvVar` variable is set, with `--no-update-check`, and for the `padroneUpgrade()` command.
 
@@ -684,6 +687,23 @@ my-cli upgrade --dry-run    # show the install command without running it
 | `brewFormula` | `string` | package name | Formula for `brew upgrade`. Homebrew only upgrades to the formula's latest version, so `--to` and `--channel` fail |
 | `command` | `string` | `'upgrade'` | Command name |
 | `exec` | `(command: string[]) => Promise<number>` | spawn with inherited stdio | Runs the installer command |
+| `verify` | `(plan) => boolean \| void \| Promise<boolean \| void>` | — | Checks the release before installing it (after confirmation, not on `--dry-run`): resolving `false` or throwing refuses the upgrade. `plan.command` is the package manager command about to run |
+
+A custom `installer` that downloads a standalone binary can check it with `verifySha256(data, expected, fileName?)` (from `'padrone'`): `expected` is a hex digest, or a `SHA256SUMS` file whose line for `fileName` is used:
+
+```typescript
+import { padroneUpgrade, verifySha256 } from 'padrone';
+
+padroneUpgrade({
+  installer: async ({ version }) => {
+    const base = `https://github.com/acme/my-cli/releases/download/v${version}`;
+    const binary = new Uint8Array(await (await fetch(`${base}/my-cli-linux-x64`)).arrayBuffer());
+    const sums = await (await fetch(`${base}/SHA256SUMS`)).text();
+    if (!(await verifySha256(binary, sums, 'my-cli-linux-x64'))) throw new Error('Checksum mismatch; not installing');
+    // ...replace the binary
+  },
+});
+```
 
 The command asks the registry first: when already up to date (or with `--check`) it says so and stops. Otherwise, since it's a `mutation`, `padroneConfirm()` asks before installing. `--force` reinstalls when already up to date. `--exit-code` (which implies `--check`) sets the result's `exitCode` to 1 when a newer version exists, which `cli()` exits with. The running version is the configured `version`, or that of the package the program's script belongs to.
 
@@ -1178,21 +1198,24 @@ if (cmd) {
 
 ---
 
-### .completion(shell?)
+### .completion(shell?, options?)
 
 Generate shell completion script.
 
 ```typescript
 const script = program.completion('bash');
 // Or: 'zsh', 'fish', 'powershell'
+program.completion('zsh', { mode: 'static', descriptions: false });
 ```
 
 **Parameters:**
 - `shell` (optional): Target shell. Auto-detected if omitted.
+- `options.mode` (optional): `'dynamic'` or `'static'` (see below).
+- `options.descriptions` (optional): `false` leaves descriptions out.
 
 **Returns:** Shell completion script string
 
-With the `padroneCompletion()` extension (`padrone/completion`) the scripts are dynamic: they call `<program> __complete2 <words>` for per-command subcommands, options and values with descriptions, including `complete` callbacks and `hint`s on fields (see [Completion Values](/padrone/reference/args-meta/#completion-values)). Without it, they're static lists of every command and option, following `hint`s for option values. The extension's `completion` command also takes `--setup` (installs the script in the shell's config file) and `--instructions` (prints how to install it for the named or detected shell).
+With the `padroneCompletion()` extension (`padrone/completion`) the scripts are dynamic: they call `<program> __complete2 <words>` for per-command subcommands, options and values with descriptions, including `complete` callbacks and `hint`s on fields (see [Completion Values](/padrone/reference/args-meta/#completion-values)). Without it, they're static lists of every command and option, following `hint`s for option values. `padroneCompletion({ mode: 'static' })` (or `completion <shell> --static`) prints the static script even with the extension, which runs nothing on tab; `--no-static` asks for the dynamic one. `padroneCompletion({ descriptions: false })` (or `--no-descriptions`, like cobra's) leaves descriptions out of either script. The extension's `completion` command also takes `--setup` (installs the script in the shell's config file under the runtime's `HOME`, keeping `--static`/`--no-descriptions`) and `--instructions` (prints how to install it for the named or detected shell).
 
 ---
 
@@ -1492,7 +1515,7 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and so does `<PROGRAM>_YES=1` in the environment (`env` renames the variable, `false` turns it off). Without a terminal (CI, piped stdin or stdout, `--no-interactive`) the command fails unless one of those is given. Options: `message`, `when`, `flags`, `env` |
 | `padroneTiming(options?)` | Execution timing: `Done in 1.20s`, or `Failed after 1.20s` when the command fails, printed after its result or error. `enabled: true` turns it on without `--time`; `format: ({ elapsed, duration, failed, error }) => string \| null` changes the line |
 | `padroneUpdateCheck(config)` | Background version checking |
-| `padroneUpgrade(options?)` | `upgrade` command: self-update with the package manager the program was installed with (`--check`, `--exit-code`, `--to`, `--channel`) |
+| `padroneUpgrade(options?)` | `upgrade` command: self-update with the package manager the program was installed with (`--check`, `--exit-code`, `--to`, `--channel`; `verify` checks the release first) |
 | `padroneAliases(options?)` | User-defined command aliases (`alias set|list|delete`), expanded before routing (`$1`…`$N` and `$@` placeholders) |
 | `padroneResponseFiles(options?)` | Response files: `@file` arguments expand into the file's arguments (`@@` escapes, `prefix` option) |
 
@@ -1504,8 +1527,8 @@ The following extensions live in their own subpath imports to keep optional depe
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
 | `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing. Pass `api: { context, trace }` from `@opentelemetry/api` to parent child spans to the command's span. The span is named `<caller> <command>` (`cli deploy`, `serve users list`), is a server span for serve and MCP calls (internal otherwise), has `padrone.command` and `padrone.caller` attributes (never args), and failures set its status message to the error's |
-| `padroneCompletion()` | `'padrone/completion'` | Shell completion generation, with dynamic per-command completion (`__complete2`), descriptions, and field `complete` callbacks and `hint`s |
-| `padroneMan()` | `'padrone/man'` | Man page generation: the version and date (`SOURCE_DATE_EPOCH` when set) in `.TH`, parent and subcommand pages under SEE ALSO |
+| `padroneCompletion(options?)` | `'padrone/completion'` | Shell completion generation, with dynamic per-command completion (`__complete2`), descriptions, field `complete` callbacks, `.configure({ complete })` hooks and `hint`s; `mode: 'static'` / `--static`, `descriptions: false` / `--no-descriptions` |
+| `padroneMan(options?)` | `'padrone/man'` | Man page generation: the version and date (`SOURCE_DATE_EPOCH` when set) in `.TH`, parent and subcommand pages under SEE ALSO. `section` (default `1`) sets the man section; `dir` where `man --setup`/`--remove` install (default `man<section>` under `$XDG_DATA_HOME/man`, from the runtime env) |
 
 The following extensions are applied automatically by `createPadrone()` and can be disabled via `builtins`:
 

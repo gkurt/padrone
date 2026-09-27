@@ -1,3 +1,5 @@
+import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
+
 type Letter =
   | 'a'
   | 'b'
@@ -88,10 +90,9 @@ export interface PadroneFieldMeta {
    * Values shell completion offers for this option or positional (needs `padroneCompletion()`),
    * e.g. branch names read at completion time. Enum values are offered without it.
    * Items may carry a description, which zsh, fish and PowerShell show next to the value.
+   * Return `{ values, directive }` to also say what the shell falls back to when none match (see `PadroneCompletionDirective`).
    */
-  complete?: (
-    ctx: PadroneCompleteContext,
-  ) => readonly (string | PadroneCompletionItem)[] | Promise<readonly (string | PadroneCompletionItem)[]>;
+  complete?: (ctx: PadroneCompleteContext) => PadroneCompletionResult | Promise<PadroneCompletionResult>;
   /**
    * What shell completion falls back to for the value when there are no candidates: `'file'` (the default without
    * enum values or `complete`), `'dir'`, `{ ext: ['json', 'yaml'] }` (files with these extensions), `'command'`
@@ -108,7 +109,21 @@ export type PadroneCompletionItem = { value: string; description?: string };
 /** What kind of value an option or positional takes, for shell completion. */
 export type PadroneValueHint = 'file' | 'dir' | 'url' | 'command' | 'none' | { ext: readonly string[] };
 
-/** Passed to a field's `complete` callback. */
+/**
+ * What the shell completes when no candidate matches: file names, directories, files with the given extensions
+ * (`ext:json,yaml`), program names, or nothing.
+ */
+export type PadroneCompletionDirective = 'files' | 'dirs' | 'commands' | 'nofiles' | `ext:${string}`;
+
+/**
+ * Candidates returned by a `complete` callback: values (plain or with a description), or `{ values, directive }`
+ * to also set the fallback. Without a directive, the field's `hint` decides it, else there's no file fallback.
+ */
+export type PadroneCompletionResult =
+  | readonly (string | PadroneCompletionItem)[]
+  | { values: readonly (string | PadroneCompletionItem)[]; directive?: PadroneCompletionDirective };
+
+/** Passed to a field's `complete` callback and to a command's `.configure({ complete })` hook. */
 export type PadroneCompleteContext = {
   /** The part of the word typed so far. Candidates needn't be filtered by it; the shell does that. */
   prefix: string;
@@ -116,6 +131,16 @@ export type PadroneCompleteContext = {
   args: Record<string, unknown>;
   /** The command being completed, as a space-separated path (`''` for the program itself). */
   command: string;
+  /** The field being completed: the option, or the positional at `position` (unset for a positional past the configured ones). */
+  field?: string;
+  /** For a positional word: its index among the command's positionals (0-based). */
+  position?: number;
+  /** For a positional word: the positional words typed before it. */
+  positionals?: readonly string[];
+  /** The runtime completion runs with (`runtime.env()`, `runtime.cwd()`, ...). */
+  runtime: ResolvedPadroneRuntime;
+  /** The context passed to `cli()`/`eval()`, with the command chain's `.context()` transforms applied. */
+  context: unknown;
 };
 
 type PositionalArgs<TObj> =

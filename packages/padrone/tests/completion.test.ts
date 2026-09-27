@@ -191,7 +191,7 @@ describe('Dynamic completion (__complete)', () => {
     const { candidates, output } = await complete('checkout', '--force', 'fe');
     expect(candidates).toEqual(['feature/fe']);
     expect(output).toEqual(['feature/fe']);
-    expect(branches).toHaveBeenLastCalledWith({ prefix: 'fe', args: { force: true }, command: 'checkout' });
+    expect(branches).toHaveBeenLastCalledWith(expect.objectContaining({ prefix: 'fe', args: { force: true }, command: 'checkout' }));
   });
 
   it('offers nothing after the positionals are filled', async () => {

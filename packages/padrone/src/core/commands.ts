@@ -54,6 +54,7 @@ export const configKeys = [
   'needsApproval',
   'outputSchema',
   'help',
+  'complete',
   'flagNames',
 ] as const;
 
@@ -119,6 +120,15 @@ export function getGlobalArgs(command: AnyPadroneCommand): { schema: PadroneSche
  * Resolves the runtime for a command by walking up the parent chain.
  * Returns a fully resolved runtime with all defaults filled in.
  */
+/** Resolves the context for `command` by applying the `.context()` transforms from the root down to it. */
+export function resolveContext(command: AnyPadroneCommand, initialContext: unknown): unknown {
+  const chain: AnyPadroneCommand[] = [];
+  for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) chain.unshift(current);
+  let resolved = initialContext;
+  for (const cmd of chain) if (cmd.contextTransform) resolved = cmd.contextTransform(resolved);
+  return resolved;
+}
+
 export function getCommandRuntime(cmd: AnyPadroneCommand): ResolvedPadroneRuntime {
   let current: AnyPadroneCommand | undefined = cmd;
   while (current) {

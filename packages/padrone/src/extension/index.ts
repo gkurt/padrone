@@ -54,7 +54,7 @@ export type { PadroneTimingInfo, PadroneTimingOptions } from './timing.ts';
 export { padroneTiming } from './timing.ts';
 export { padroneUpdateCheck } from './update-check.ts';
 export type { PadroneInstaller, PadroneUpgradeOptions, PadroneUpgradePlan } from './upgrade.ts';
-export { detectInstaller, padroneUpgrade } from './upgrade.ts';
+export { detectInstaller, padroneUpgrade, verifySha256 } from './upgrade.ts';
 export { markErrorReported, redactArgs } from './utils.ts';
 export type { PadroneVersionCheck, PadroneVersionInfo, PadroneVersionOptions, VersionCommand, WithVersion } from './version.ts';
 export { padroneVersion } from './version.ts';

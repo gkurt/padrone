@@ -228,6 +228,26 @@ program
 // Executes: git commit --amend "Initial commit"
 ```
 
+## Separator and Flag Style
+
+By default options come first as `--key value`, then the positionals. Two options change that:
+
+```typescript
+program
+  .command('remove', (c) =>
+    c
+      .arguments(z.object({ files: z.string().array(), force: z.boolean().optional() }), { positional: ['...files'] })
+      .wrap({
+        command: 'rm',
+        separator: '--', // positionals after `--`: `rm --force -- -weird-name`
+        flagStyle: 'equals', // `--key=value` instead of `--key value`
+      })
+  );
+```
+
+- `separator: '--'` puts the positional values after a `--`, so a value starting with `-` can't be read as an option by the wrapped tool. Nothing is added when there are no positionals.
+- `flagStyle: 'equals'` emits `--key=value` (arrays as `--key=a --key=b`); booleans stay bare flags.
+
 ## Capturing Output
 
 By default, the wrapped command inherits stdio from the parent process (output goes directly to the terminal). Set `inheritStdio: false` to capture stdout and stderr:

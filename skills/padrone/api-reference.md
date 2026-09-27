@@ -146,7 +146,7 @@ type ArgsMeta = {
     requiredIf?: Record<string, unknown> | Record<string, unknown>[]; // required when others have these values
     requiredUnless?: string | string[]; // required unless one of these is provided
     sensitive?: boolean;              // secret: masked prompt, hidden help default, writeOnly in tool schemas
-    complete?: (ctx) => (string | { value: string; description?: string })[]; // shell completion values (padroneCompletion)
+    complete?: (ctx) => (string | { value: string; description?: string })[] | { values, directive? }; // shell completion values (padroneCompletion); ctx: { prefix, args, command, field, runtime, context }
     hint?: 'file' | 'dir' | 'url' | 'command' | 'none' | { ext: string[] }; // what completion falls back to
     valueName?: string;               // help placeholder: --out <DIR>
   }>;
@@ -267,6 +267,9 @@ Re-paths all nested commands. Drops the mounted program's version. Preserves int
   // tool() approval; a function gets the validated args (typed when .configure() comes after .arguments())
   needsApproval?: boolean | ((args) => boolean | Promise<boolean>),
   outputSchema?: PadroneSchema,       // result object schema: MCP outputSchema, OpenAPI result (not validated)
+  // Positional shell completion (padroneCompletion), like cobra's ValidArgsFunction; a positional field's own `complete` wins
+  complete?: (ctx: { prefix, args, command, position, field?, positionals, runtime, context }) =>
+    (string | { value, description? })[] | { values, directive?: 'files' | 'dirs' | 'commands' | 'nofiles' | `ext:${string}` },
   // This command only: replace the usage line, add text before/after
   help?: { usage?: string; before?: string; after?: string }
     // Or a function for this command and its subcommands (nearest wins); return HelpInfo or the final string
@@ -343,6 +346,8 @@ Wraps an external CLI tool.
   positional?: string[],    // positional arg names for the external tool
   inheritStdio?: boolean,   // default: true
   schema?: Schema | (argsSchema) => Schema,  // transform args to external format
+  separator?: '--' | false, // '--': positionals after `--` (default false)
+  flagStyle?: 'separate' | 'equals', // `--key value` (default) or `--key=value`
 })
 ```
 
@@ -384,6 +389,8 @@ import { padroneUpdateCheck } from 'padrone';
   cache?: string,           // cache file path (default: update-check.json in program.dirs.cache)
   disableEnvVar?: string,   // env var to disable (default: <NAME>_NO_UPDATE_CHECK)
   updateCommand?: string | ((packageName, latestVersion) => string), // default: `<name> upgrade` with padroneUpgrade(), else `npm update -g <name>`
+  shouldNotify?: (info) => boolean, // false suppresses the notice; info: { packageName, current, latest, updateCommand, runtime }
+  format?: (info) => string,        // the notice text (also for `version --check`)
 }))
 ```
 
@@ -482,9 +489,9 @@ program.completion('fish');
 program.completion('powershell');
 ```
 
-With `padroneCompletion()`, `<program> completion <shell> --instructions` prints install instructions instead of the script. Completion offers kebab-case option names (as help shows them), short flags for `-`, and leaves out hidden and deprecated commands and options (deprecated ones still complete when nothing else matches).
+With `padroneCompletion()`, `<program> completion <shell> --instructions` prints install instructions instead of the script; `--static` prints the static script (default with `padroneCompletion({ mode: 'static' })`, `--no-static` overrides), `--no-descriptions` leaves descriptions out (`padroneCompletion({ descriptions: false })`), and `--setup` keeps both flags in the installed snippet. `program.completion(shell, { mode, descriptions })` does the same. Completion offers kebab-case option names (as help shows them), short flags for `-`, and leaves out hidden and deprecated commands and options (deprecated ones still complete when nothing else matches).
 
-`help --search <term>` (`-s`) lists commands (by name, aliases, description) and help topics matching every word. Man pages (`generateDocs(program, { format: 'man', date? })`) put the date (`date`, `SOURCE_DATE_EPOCH`, or today) and `<program> <version>` in `.TH`, and link parent/subcommand pages under SEE ALSO.
+`help --search <term>` (`-s`) lists commands (by name, aliases, description) and help topics matching every word. Man pages (`generateDocs(program, { format: 'man', date?, section? })`; `padroneMan({ section, dir })` for `man` and `man --setup`, which installs under `$XDG_DATA_HOME/man/man<section>` from the runtime env by default) put the date (`date`, `SOURCE_DATE_EPOCH`, or today) and `<program> <version>` in `.TH`, and link parent/subcommand pages under SEE ALSO.
 
 ### `.find(command)`
 

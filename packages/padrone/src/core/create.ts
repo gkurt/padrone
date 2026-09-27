@@ -84,7 +84,8 @@ type BuiltinCommands<B> = [...(B extends { help: false } ? [] : [HelpCommand]), 
 
 export function createPadrone<TProgramName extends string, const TBuiltins extends PadroneBuiltins = DefaultBuiltins>(
   name: TProgramName,
-  options?: { builtins?: TBuiltins },
+  // `& PadroneBuiltins` keeps function options (e.g. help topics' `content`) contextually typed
+  options?: { builtins?: TBuiltins & PadroneBuiltins },
 ): PadroneProgram<TProgramName, '', '', PadroneSchema<void>, void, BuiltinCommands<TBuiltins>> {
   let builder: any = createPadroneBuilder({ name, path: '', commands: [] } as any);
 

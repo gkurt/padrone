@@ -132,6 +132,8 @@ export type HelpInfo = {
   arguments?: HelpArgumentInfo[];
   /** Built-in commands and flags (shown only for root command) */
   builtins?: HelpBuiltinInfo[];
+  /** Topics `help <topic>` shows, listed under "Additional help topics" (root command only) */
+  topics?: { name: string; title?: string; description?: string }[];
   /** Command-level usage examples (shown in help output) */
   examples?: string[];
   /** Full help info for nested commands (used in 'full' detail mode) */
@@ -492,6 +494,18 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
     return lines;
   }
 
+  function formatTopicsSection(info: HelpInfo): string[] {
+    const topics = info.topics!;
+    const width = Math.max(...topics.map((t) => t.name.length)) + 2;
+    const lines = [styler.section('Additional help topics:')];
+    for (const topic of topics) {
+      const text = topic.description ?? topic.title;
+      const padding = text ? ' '.repeat(width - topic.name.length) : '';
+      lines.push(indent(1) + styler.command(topic.name) + padding + (text ? styler.description(text) : ''));
+    }
+    return lines;
+  }
+
   function formatBuiltinsSection(info: HelpInfo): string[] {
     const lines: string[] = [];
     const builtins = info.builtins!;
@@ -607,6 +621,11 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
 
       if (info.arguments && info.arguments.length > 0) {
         lines.push(...formatArgumentsSection(info));
+        lines.push('');
+      }
+
+      if (info.topics && info.topics.length > 0) {
+        lines.push(...formatTopicsSection(info));
         lines.push('');
       }
 

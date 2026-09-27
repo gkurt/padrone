@@ -42,6 +42,7 @@ import type {
   InterceptorRequiresCheck,
   InterceptorRequiresError,
   PadroneContextInterceptor,
+  PadroneEmit,
   PadroneInterceptorFn,
 } from './interceptor.ts';
 import type { PadroneCliPreferences, PadroneEvalPreferences, PadroneReplPreferences } from './preferences.ts';
@@ -927,6 +928,12 @@ export type PadroneProgram<
     >,
     prefs?: ContextParam<TContext> & { signal?: AbortSignal },
   ) => PadroneCommandResult<PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>;
+
+  /**
+   * Emit a custom event (see `defineEvent()`) to the root's interceptors, outside any execution; handlers get `caller: 'run'`.
+   * Inside an action or interceptor, use `ctx.emit()` to reach the interceptors on the running command's chain. @category Execution
+   */
+  emit: PadroneEmit;
 
   /**
    * Parse and execute input through the full interceptor pipeline. A string is tokenized (honoring quotes);

@@ -15,6 +15,7 @@ import { outputValueToText } from '../util/json.ts';
 import { parsePositionalConfig } from './args.ts';
 import { findCommandByName, getCommandRuntime, resolveAllCommands, serializeArgsToFlags } from './commands.ts';
 import { RoutingError } from './errors.ts';
+import { withEmit } from './events.ts';
 import type { ExecContext } from './exec.ts';
 import { collectInterceptors, errorResultWithSignal, execCommand } from './exec.ts';
 import { checkInterceptorRequirements, resolveRegisteredInterceptors, runInterceptorChain } from './interceptors.ts';
@@ -114,7 +115,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
 
       const resolvedCtx = resolveContext(commandObj, prefs?.context);
       const commandRuntime = getCommandRuntime(commandObj);
-      const executeCtx: InterceptorExecuteContext = {
+      const executeCtx: InterceptorExecuteContext = withEmit({
         command: commandObj,
         input: undefined,
         rawArgs: {},
@@ -125,17 +126,17 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
         runtime: commandRuntime,
         program: ctx.builder as any,
         caller: 'run',
-      };
+      });
 
       const coreExecute = (executeCtx: InterceptorExecuteContext): InterceptorExecuteResult => {
-        const actionCtx: PadroneActionContext = {
+        const actionCtx: PadroneActionContext = withEmit({
           runtime: executeCtx.runtime,
           command: executeCtx.command,
           program: ctx.builder as any,
           signal: executeCtx.signal,
           context: executeCtx.context,
           caller: 'run',
-        };
+        });
         const result = commandObj.action!(executeCtx.args as any, actionCtx);
         return { result };
       };
@@ -155,6 +156,17 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
       return errorResult(err) as any;
     }
   };
+
+  /** Outside an execution: the root's interceptors handle the event, as for `run()` on the root. */
+  const emit: AnyPadroneProgram['emit'] = (event, ...payload) =>
+    withEmit({
+      command: rootCommand,
+      signal: inertSignal,
+      context: resolveContext(rootCommand, undefined) as object,
+      runtime: getCommandRuntime(rootCommand),
+      program: ctx.builder,
+      caller: 'run',
+    }).emit(event, ...payload);
 
   const tool: AnyPadroneProgram['tool'] = () => {
     resolveAllCommands(rootCommand);
@@ -310,6 +322,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
     parse,
     stringify,
     run,
+    emit,
     eval: evalCommand,
     cli,
     tool,

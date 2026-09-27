@@ -554,9 +554,19 @@ const withDb = defineInterceptor({ name: 'with-db' })
   }));
 ```
 
-**Metadata:** `name` (string), `order` (number, lower = outermost, default: 0), `id` (string, deduplication key — last wins), `disabled` (boolean).
+**Metadata:** `name` (string), `order` (number, lower = outermost, default: 0), `id` (string, deduplication key — last wins), `disabled` (boolean), `callers` (callers it runs for, e.g. `LOCAL_CALLERS`/`REMOTE_CALLERS`; still counts for `requires`), `on` (event handlers keyed by event id).
 
-**Chaining:** `.provides<T>()` and `.requires<T>(...ids)` for typed context (ids are checked at runtime), `.factory(fn)` to set the factory.
+**Chaining:** `.provides<T>()` and `.requires<T>(...ids)` for typed context (ids are checked at runtime), `.factory(fn)` to set the factory, `.on(event, handler)` for a typed custom event handler.
+
+### Custom events
+
+```ts
+const deployed = defineEvent<{ env: string; version: string }>('myapp:deployed');
+const slack = defineInterceptor({ name: 'slack' }, () => ({})).on(deployed, (payload, ctx) => notify(payload));
+// in an action or interceptor phase: runs the handlers on the command chain, in interceptor order
+await ctx.emit(deployed, { env, version });
+await program.emit(deployed, { env, version }); // outside an execution: root handlers, caller 'run'
+```
 
 ### PadroneInterceptor Type
 
@@ -587,6 +597,7 @@ All handlers can return Promises for async behavior.
 - `signal`: `AbortSignal` for cancellation (provided by the signal extension)
 - `runtime`: The resolved runtime
 - `caller`: Invocation method (`'cli'`, `'eval'`, `'run'`, `'repl'`, `'serve'`, `'mcp'`, `'tool'`)
+- `emit`: Emit a custom event to the command chain's handlers
 
 **Phase-specific fields:**
 

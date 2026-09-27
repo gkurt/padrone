@@ -3,7 +3,7 @@ import type { OptionArity } from '../core/parse.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import type { HelpArgumentInfo } from '../output/formatter.ts';
 import type { AnyPadroneProgram } from './builder.ts';
-import type { AnyPadroneCommand, PadroneActionContext } from './command.ts';
+import type { AnyPadroneCommand, PadroneCaller } from './command.ts';
 
 // ---------------------------------------------------------------------------
 // Interceptor system
@@ -30,8 +30,39 @@ export type InterceptorBaseContext<TContext = object> = {
   /** The program instance. Available for extensions that need program-level methods. */
   program: AnyPadroneProgram;
   /** The invocation method that triggered this execution (e.g. 'cli', 'eval', 'run'). */
-  caller: PadroneActionContext['caller'];
+  caller: PadroneCaller;
+  /** Emits a custom event to the handlers of the interceptors on this command's chain (see `defineEvent()`). */
+  emit: PadroneEmit;
 };
+
+// ---------------------------------------------------------------------------
+// Custom events
+// ---------------------------------------------------------------------------
+
+/** A custom event, created by `defineEvent<TPayload>(id)`. Carries its payload type for `emit()` and `.on()`. */
+export type PadroneEvent<TPayload = void> = {
+  readonly id: string;
+  /** Phantom payload type. */
+  readonly '~payload'?: TPayload;
+};
+
+/** What an event handler receives besides the payload: the execution the event was emitted from. */
+export type PadroneEventContext = Pick<
+  InterceptorBaseContext,
+  'command' | 'signal' | 'context' | 'runtime' | 'program' | 'caller' | 'emit'
+>;
+
+/** Handles one custom event. Handlers run one after another, in interceptor order; `emit()` waits for them. */
+export type PadroneEventHandler<TPayload = unknown> = (payload: TPayload, ctx: PadroneEventContext) => unknown;
+
+/**
+ * Runs the handlers for `event` of the interceptors that apply to the command (enabled, and not filtered out by `callers`),
+ * one at a time in interceptor order. Resolves once they've all run; a handler's error rejects it.
+ */
+export type PadroneEmit = <TPayload>(
+  event: PadroneEvent<TPayload>,
+  ...payload: [TPayload] extends [void] ? [payload?: TPayload] : [payload: TPayload]
+) => Promise<void>;
 
 /** Context for the parse phase. */
 export type InterceptorParseContext<TContext = object> = InterceptorBaseContext<TContext>;
@@ -200,6 +231,15 @@ export type InterceptorMeta = {
    * or a function from the command to them.
    */
   helpOptions?: readonly HelpArgumentInfo[] | ((command: AnyPadroneCommand) => readonly HelpArgumentInfo[]);
+  /**
+   * The callers this interceptor runs for (e.g. `LOCAL_CALLERS`, or `['cli', 'repl']`); it's skipped for the others,
+   * like `disabled`, and gets no events from them. It still counts as registered for `requires`. Defaults to all callers.
+   */
+  callers?: readonly PadroneCaller[];
+  /**
+   * Custom event handlers keyed by event id. `.on(event, handler)` on the interceptor adds one with the payload typed.
+   */
+  on?: Readonly<Record<string, PadroneEventHandler<any>>>;
 };
 
 /**
@@ -259,7 +299,9 @@ export type InterceptorFactory<TArgs = unknown, TResult = unknown, TContext = ob
  * Call `.provides<T>()` to brand it as a context-providing interceptor.
  */
 export type PadroneInterceptorFn<TArgs = unknown, TResult = unknown, TContext = object> = InterceptorFactory<TArgs, TResult, TContext> &
-  Omit<InterceptorMeta, 'requires'> & {
+  Omit<InterceptorMeta, 'requires' | 'on'> & {
+    /** Handle a custom event (see `defineEvent()`) emitted during executions this interceptor applies to. */
+    on: <TPayload, TSelf>(this: TSelf, event: PadroneEvent<TPayload>, handler: PadroneEventHandler<TPayload>) => TSelf;
     /** Brand this interceptor as providing additional context of type `TProvides`. No-op at runtime; purely a type-level cast. */
     provides: <TProvides>() => PadroneContextInterceptor<TProvides, TArgs, TResult, TContext>;
     /**

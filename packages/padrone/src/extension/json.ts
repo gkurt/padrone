@@ -16,7 +16,7 @@ export type PadroneJqFunction = (input: unknown, expression: string) => unknown[
 export type PadroneJsonOptions = {
   /**
    * Add `--jq <expression>` to filter the JSON result, like `gh --jq`: each output is printed on its own line,
-   * strings raw. The built-in engine supports a subset of jq (paths, `[]`, pipes, `select`, `map`, object
+   * strings raw, other values as compact JSON (indented when stdout is a terminal). The built-in engine supports a subset of jq (paths, `[]`, pipes, `select`, `map`, object
    * construction, common builtins); pass a function to plug in a full implementation. Defaults to `true`.
    */
   jq?: boolean | PadroneJqFunction;
@@ -99,17 +99,15 @@ function createJsonInterceptor(options: PadroneJsonOptions) {
     ...(templateEnabled && { template: 'value' as const }),
   };
 
-  /** Compiled up front, so a bad expression fails before the command runs. */
-  const outputFilter = (jq: unknown, template: unknown): JsonOutputFilter | undefined => {
+  /** Compiled up front, so a bad expression fails before the command runs. `--jq` outputs are indented on a terminal, one line each otherwise. */
+  const outputFilter = (jq: unknown, template: unknown, runtime: ResolvedPadroneRuntime): JsonOutputFilter | undefined => {
     try {
       if (typeof jq === 'string') {
-        if (typeof options.jq === 'function') {
-          const run = options.jq;
-          return (value) => run(JSON.parse(safeJsonStringify(value) ?? 'null'), jq).map((v) => formatJqOutput(v, 2));
-        }
-        const filter = compileJq(jq);
+        const space = runtime.terminal?.isTTY === true ? 2 : undefined;
+        const run = typeof options.jq === 'function' ? options.jq : undefined;
+        const filter = run ? (input: unknown) => run(input, jq) : compileJq(jq);
         // The filter sees the value as JSON (bigints as strings, no functions)
-        return (value) => filter(JSON.parse(safeJsonStringify(value) ?? 'null')).map((v) => formatJqOutput(v, 2));
+        return (value) => filter(JSON.parse(safeJsonStringify(value) ?? 'null')).map((v) => formatJqOutput(v, space));
       }
       if (typeof template === 'string') {
         const render = compileTemplate(template);
@@ -168,7 +166,7 @@ function createJsonInterceptor(options: PadroneJsonOptions) {
       // JSON first, so an invalid expression or field is reported as JSON too
       if (fields || toFlag(rawJson) || typeof jq === 'string' || typeof template === 'string') runtime.format = 'json';
       if (fields && available) checkFields(fields, available, command);
-      const filter = outputFilter(jq, template);
+      const filter = outputFilter(jq, template, runtime);
       if (fields) setJsonOutputFilter(runtime, withFields(filter, fields, !!available, command));
       else if (filter) setJsonOutputFilter(runtime, filter);
     };

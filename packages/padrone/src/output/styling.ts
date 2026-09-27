@@ -1,4 +1,5 @@
 import type { PadroneActionContext } from '../types/index.ts';
+import { isCI } from '../util/utils.ts';
 import { type ColorConfig, type ColorTheme, createColorizer } from './colorizer.ts';
 
 export const DEFAULT_TERMINAL_WIDTH = 80;
@@ -154,14 +155,17 @@ export function createHtmlLayout(): LayoutConfig {
 
 // ── Format Detection ────────────────────────────────────────────────────
 
-export function shouldUseAnsi(env?: Record<string, string | undefined>, isTTY?: boolean): boolean {
-  const force = env?.FORCE_COLOR;
+/**
+ * Whether to color output, in order: `FORCE_COLOR` (on unless `0`/`false`), `NO_COLOR` (off), `CLICOLOR_FORCE`
+ * (on unless `0`), `CLICOLOR=0` (off), `TERM=dumb` (off), CI (off), then whether stdout is a terminal.
+ */
+export function shouldUseAnsi(env: Record<string, string | undefined> = {}, isTTY?: boolean): boolean {
+  const force = env.FORCE_COLOR;
   if (force !== undefined) return force !== '0' && force !== 'false';
-  if (env?.NO_COLOR) return false;
-  if (env?.TERM === 'dumb') return false;
-  if (env?.CI) return false;
-  if (typeof isTTY === 'boolean') return isTTY;
-  return false;
+  if (env.NO_COLOR) return false;
+  if (env.CLICOLOR_FORCE && env.CLICOLOR_FORCE !== '0') return true;
+  if (env.CLICOLOR === '0' || env.TERM === 'dumb' || isCI(env)) return false;
+  return isTTY === true;
 }
 
 // ── Output Context ──────────────────────────────────────────────────────

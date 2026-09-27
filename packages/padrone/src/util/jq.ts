@@ -1,215 +1,53 @@
 /**
  * A dependency-free subset of jq for `--jq` and `--template`:
  * - paths: `.`, `.a.b`, `."a-b"`, `.["a"]`, `.[0]`, `.[-1]`, `.[2:4]`, `.[]`, `.a[]`, optional `?`
- * - pipes `|`, comma `,`, alternative `//`, `and` / `or`, comparisons `== != < <= > >=`
+ * - pipes `|`, comma `,`, alternative `//`, `and` / `or`, comparisons `== != < <= > >=`, arithmetic `+ - * / %`
+ * - `if … then … elif … else … end`, variables (`. as $x | …`, `$x`, `{$x}`)
  * - literals, arrays `[...]`, objects `{a, b: .c, "d": 1, (.k): .v}`, parentheses
- * - builtins: `select(f)`, `map(f)`, `sort_by(f)`, `has(k)`, `join(s)`, `test(re)`, `startswith(s)`, `endswith(s)`,
- *   `keys`, `length`, `not`, `empty`, `type`, `tostring`, `tonumber`, `first`, `last`, `add`, `sort`, `reverse`,
- *   `unique`, `to_entries`, `from_entries`, `ascii_downcase`, `ascii_upcase`
+ * - builtins: `select(f)`, `map(f)`, `sort_by(f)`, `group_by(f)`, `unique_by(f)`, `min_by(f)`, `max_by(f)`, `has(k)`,
+ *   `join(s)`, `split(s)`, `ltrimstr(s)`, `rtrimstr(s)`, `startswith(s)`, `endswith(s)`, `test(re; flags)`,
+ *   `sub(re; str; flags)`, `gsub(re; str; flags)`, `keys`, `length`, `not`, `empty`, `type`, `tostring`, `tonumber`,
+ *   `tojson`, `fromjson`, `first`, `last`, `add`, `sort`, `reverse`, `unique`, `min`, `max`, `to_entries`,
+ *   `from_entries`, `ascii_downcase`, `ascii_upcase`
+ * - formats: `@text`, `@json`, `@csv`, `@tsv`, `@html`, `@uri`, `@base64`
  */
 
-/** A compiled filter: every output it produces for an input. */
-export type JqFilter = (input: unknown) => unknown[];
+import type { JqFilter } from './jq-builtins.ts';
+import {
+  arithmetic,
+  BUILTINS,
+  compareValues,
+  describe,
+  FORMATS,
+  index,
+  iterate,
+  JqError,
+  product,
+  slice,
+  truthy,
+  typeOf,
+} from './jq-builtins.ts';
 
-export class JqError extends Error {
-  override name = 'JqError';
-}
-
-// ── Values ──────────────────────────────────────────────────────────────
-
-type JqType = 'null' | 'boolean' | 'number' | 'string' | 'array' | 'object';
-
-function typeOf(value: unknown): JqType {
-  if (value === null || value === undefined) return 'null';
-  if (Array.isArray(value)) return 'array';
-  const type = typeof value;
-  if (type === 'boolean' || type === 'number' || type === 'string') return type;
-  return 'object';
-}
-
-const truthy = (value: unknown) => value !== false && value !== null && value !== undefined;
-
-const TYPE_ORDER: JqType[] = ['null', 'boolean', 'number', 'string', 'array', 'object'];
-
-/** jq's total order: null < false < true < numbers < strings < arrays < objects. */
-function compareValues(a: unknown, b: unknown): number {
-  const ta = typeOf(a);
-  const tb = typeOf(b);
-  if (ta !== tb) return TYPE_ORDER.indexOf(ta) - TYPE_ORDER.indexOf(tb);
-  if (ta === 'null') return 0;
-  if (ta === 'boolean' || ta === 'number') return Number(a) - Number(b);
-  if (ta === 'string') return (a as string) < (b as string) ? -1 : (a as string) > (b as string) ? 1 : 0;
-  if (ta === 'array') {
-    const x = a as unknown[];
-    const y = b as unknown[];
-    for (let i = 0; i < Math.min(x.length, y.length); i++) {
-      const c = compareValues(x[i], y[i]);
-      if (c !== 0) return c;
-    }
-    return x.length - y.length;
-  }
-  const x = a as Record<string, unknown>;
-  const y = b as Record<string, unknown>;
-  const keys = compareValues(Object.keys(x).sort(), Object.keys(y).sort());
-  if (keys !== 0) return keys;
-  for (const key of Object.keys(x).sort()) {
-    const c = compareValues(x[key], y[key]);
-    if (c !== 0) return c;
-  }
-  return 0;
-}
-
-function index(value: unknown, key: unknown): unknown {
-  if (value === null || value === undefined) return null;
-  if (typeof key === 'number' && Array.isArray(value)) {
-    const i = Math.floor(key);
-    return value[i < 0 ? value.length + i : i] ?? null;
-  }
-  if (typeof key === 'string' && typeOf(value) === 'object') {
-    return Object.hasOwn(value as object, key) ? ((value as Record<string, unknown>)[key] ?? null) : null;
-  }
-  throw new JqError(`Cannot index ${typeOf(value)} with ${JSON.stringify(key)}`);
-}
-
-function iterate(value: unknown): unknown[] {
-  if (Array.isArray(value)) return value;
-  if (typeOf(value) === 'object') return Object.values(value as object);
-  throw new JqError(`Cannot iterate over ${typeOf(value)}`);
-}
-
-function slice(value: unknown, from: unknown, to: unknown): unknown {
-  if (value === null || value === undefined) return null;
-  if (typeof value !== 'string' && !Array.isArray(value)) throw new JqError(`Cannot slice ${typeOf(value)}`);
-  const start = from === null || from === undefined ? undefined : Number(from);
-  const end = to === null || to === undefined ? undefined : Number(to);
-  // Strings by code point, as `length` counts them
-  return typeof value === 'string' ? [...value].slice(start, end).join('') : value.slice(start, end);
-}
-
-function length(value: unknown): number {
-  const type = typeOf(value);
-  if (type === 'null') return 0;
-  if (type === 'number') return Math.abs(value as number);
-  if (type === 'string') return [...(value as string)].length;
-  if (type === 'array') return (value as unknown[]).length;
-  if (type === 'object') return Object.keys(value as object).length;
-  throw new JqError('boolean has no length');
-}
-
-function add(value: unknown): unknown {
-  const items = iterate(value).filter((item) => item !== null && item !== undefined);
-  if (items.length === 0) return null;
-  const first = items[0];
-  if (Array.isArray(first)) {
-    const result: unknown[] = [];
-    for (const item of items) {
-      if (!Array.isArray(item)) throw new JqError(`array and ${typeOf(item)} cannot be added`);
-      result.push(...item);
-    }
-    return result;
-  }
-  if (typeOf(first) === 'object') {
-    const result: Record<string, unknown> = {};
-    for (const item of items) {
-      if (typeOf(item) !== 'object') throw new JqError(`object and ${typeOf(item)} cannot be added`);
-      Object.assign(result, item);
-    }
-    return result;
-  }
-  return items.reduce((acc, item) => {
-    if (typeof acc === 'number' && typeof item === 'number') return acc + item;
-    if (typeof acc === 'string' && typeof item === 'string') return acc + item;
-    throw new JqError(`${typeOf(acc)} and ${typeOf(item)} cannot be added`);
-  });
-}
-
-/** jq's number syntax: no surrounding whitespace, hex or `Infinity` (unlike `Number()`). */
-const DECIMAL_NUMBER = /^-?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
-
-const requireString = (value: unknown, name: string): string => {
-  if (typeof value !== 'string') throw new JqError(`${name} requires a string, got ${typeOf(value)}`);
-  return value;
-};
-
-const BUILTINS_0: Record<string, (input: unknown) => unknown[]> = {
-  keys: (x) => {
-    if (Array.isArray(x)) return [x.map((_, i) => i)];
-    if (typeOf(x) === 'object') return [Object.keys(x as object).sort()];
-    throw new JqError(`${typeOf(x)} has no keys`);
-  },
-  length: (x) => [length(x)],
-  not: (x) => [!truthy(x)],
-  empty: () => [],
-  type: (x) => [typeOf(x)],
-  tostring: (x) => [typeof x === 'string' ? x : JSON.stringify(x ?? null)],
-  tonumber: (x) => {
-    if (typeof x === 'number') return [x];
-    if (!DECIMAL_NUMBER.test(requireString(x, 'tonumber'))) throw new JqError(`Cannot parse ${JSON.stringify(x)} as a number`);
-    return [Number(x)];
-  },
-  first: (x) => [index(x, 0)],
-  last: (x) => [index(x, -1)],
-  add: (x) => [add(x)],
-  sort: (x) => [[...iterate(x)].sort(compareValues)],
-  reverse: (x) => [typeof x === 'string' ? [...x].reverse().join('') : [...iterate(x)].reverse()],
-  unique: (x) => [[...iterate(x)].sort(compareValues).filter((v, i, all) => i === 0 || compareValues(all[i - 1], v) !== 0)],
-  to_entries: (x) => {
-    if (Array.isArray(x)) return [x.map((value, key) => ({ key, value }))];
-    if (typeOf(x) === 'object') return [Object.entries(x as object).map(([key, value]) => ({ key, value }))];
-    throw new JqError(`${typeOf(x)} has no keys`);
-  },
-  from_entries: (x) => [
-    Object.fromEntries(
-      iterate(x).map((entry) => {
-        const e = entry as Record<string, unknown>;
-        return [String(e.key ?? e.name ?? e.k), e.value ?? e.v ?? null];
-      }),
-    ),
-  ],
-  ascii_downcase: (x) => [requireString(x, 'ascii_downcase').replace(/[A-Z]/g, (c) => c.toLowerCase())],
-  ascii_upcase: (x) => [requireString(x, 'ascii_upcase').replace(/[a-z]/g, (c) => c.toUpperCase())],
-};
-
-/** Builtins with one argument: `arg` is the compiled argument, applied to whatever the builtin needs. */
-const BUILTINS_1: Record<string, (input: unknown, arg: JqFilter) => unknown[]> = {
-  select: (x, f) =>
-    f(x)
-      .filter(truthy)
-      .map(() => x),
-  map: (x, f) => [iterate(x).flatMap(f)],
-  sort_by: (x, f) => [
-    iterate(x)
-      .map((item) => ({ item, key: f(item) }))
-      .sort((a, b) => compareValues(a.key, b.key))
-      .map(({ item }) => item),
-  ],
-  has: (x, f) =>
-    f(x).map((key) => {
-      if (Array.isArray(x) && typeof key === 'number') return key >= 0 && key < x.length;
-      if (typeOf(x) === 'object' && typeof key === 'string') return Object.hasOwn(x as object, key);
-      throw new JqError(`Cannot check whether ${typeOf(x)} has a ${typeOf(key)} key`);
-    }),
-  join: (x, f) =>
-    f(x).map((sep) =>
-      iterate(x)
-        .map((item) => (item === null || item === undefined ? '' : String(item)))
-        .join(requireString(sep, 'join')),
-    ),
-  test: (x, f) => f(x).map((re) => new RegExp(requireString(re, 'test')).test(requireString(x, 'test'))),
-  startswith: (x, f) => f(x).map((s) => requireString(x, 'startswith').startsWith(requireString(s, 'startswith'))),
-  endswith: (x, f) => f(x).map((s) => requireString(x, 'endswith').endsWith(requireString(s, 'endswith'))),
-};
+export type { JqFilter } from './jq-builtins.ts';
+export { JqError } from './jq-builtins.ts';
 
 // ── Tokenizer ───────────────────────────────────────────────────────────
 
 type Token =
   | { type: 'field'; value: string }
   | { type: 'ident'; value: string }
+  | { type: 'variable'; value: string }
+  | { type: 'format'; value: string }
   | { type: 'string'; value: string }
   | { type: 'number'; value: number }
   | { type: 'punct'; value: string };
 
-const PUNCT = ['==', '!=', '<=', '>=', '//', '<', '>', '.', '[', ']', '{', '}', '(', ')', '|', ',', ':', '?', '-'];
+const PUNCT = ['==', '!=', '<=', '>=', '//', '<', '>', '.', '[', ']', '{', '}', '(', ')', '|', ',', ':', ';', '?', '+', '-', '*', '/', '%'];
+
+const NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
+
+/** Names after a prefix: `.field`, `$variable`, `@format`. */
+const PREFIXED = { '.': 'field', $: 'variable', '@': 'format' } as const;
 
 function tokenize(source: string): Token[] {
   const tokens: Token[] = [];
@@ -220,11 +58,14 @@ function tokenize(source: string): Token[] {
       i++;
       continue;
     }
-    if (ch === '.' && /[A-Za-z_]/.test(source[i + 1] ?? '')) {
-      const name = source.slice(i + 1).match(/^[A-Za-z_][A-Za-z0-9_]*/)![0];
-      tokens.push({ type: 'field', value: name });
-      i += name.length + 1;
-      continue;
+    if (ch in PREFIXED) {
+      const name = source.slice(i + 1).match(NAME)?.[0];
+      if (name) {
+        tokens.push({ type: PREFIXED[ch as keyof typeof PREFIXED], value: name });
+        i += name.length + 1;
+        continue;
+      }
+      if (ch !== '.') throw new JqError(`Expected a name after "${ch}" at ${i}`);
     }
     if (ch === '"') {
       let j = i + 1;
@@ -245,7 +86,7 @@ function tokenize(source: string): Token[] {
       i += number[0].length;
       continue;
     }
-    const ident = source.slice(i).match(/^[A-Za-z_][A-Za-z0-9_]*/);
+    const ident = source.slice(i).match(NAME);
     if (ident) {
       tokens.push({ type: 'ident', value: ident[0] });
       i += ident[0].length;
@@ -262,11 +103,6 @@ function tokenize(source: string): Token[] {
 
 // ── Parser ──────────────────────────────────────────────────────────────
 
-/** Every combination of one output from each filter. */
-function product(filters: JqFilter[], input: unknown): unknown[][] {
-  return filters.reduce<unknown[][]>((combos, f) => combos.flatMap((combo) => f(input).map((value) => [...combo, value])), [[]]);
-}
-
 const COMPARE: Record<string, (c: number) => boolean> = {
   '==': (c) => c === 0,
   '!=': (c) => c !== 0,
@@ -276,8 +112,12 @@ const COMPARE: Record<string, (c: number) => boolean> = {
   '>=': (c) => c >= 0,
 };
 
+/** A variable's current value: set while the body of its `as` binding runs (filters run eagerly). */
+type Slot = { value: unknown };
+
 class Parser {
   private i = 0;
+  private scope: Map<string, Slot>[] = [];
   constructor(private readonly tokens: Token[]) {}
 
   private peek(offset = 0): Token | undefined {
@@ -295,6 +135,10 @@ class Parser {
     if (!this.isPunct(value)) throw new JqError(`Expected "${value}"${this.describeNext()}`);
     this.i++;
   }
+  private expectIdent(value: string): void {
+    if (!this.isIdent(value)) throw new JqError(`Expected "${value}"${this.describeNext()}`);
+    this.i++;
+  }
   private describeNext(): string {
     const token = this.peek();
     return token ? ` before ${JSON.stringify(token.value)}` : ' at the end';
@@ -307,14 +151,11 @@ class Parser {
   }
 
   private parsePipe(): JqFilter {
-    let left = this.parseComma();
-    while (this.isPunct('|')) {
-      this.i++;
-      const l = left;
-      const r = this.parseComma();
-      left = (x) => l(x).flatMap(r);
-    }
-    return left;
+    const left = this.parseComma();
+    if (!this.isPunct('|')) return left;
+    this.i++;
+    const right = this.parsePipe();
+    return (x) => left(x).flatMap(right);
   }
 
   private parseComma(): JqFilter {
@@ -370,14 +211,70 @@ class Parser {
   }
 
   private parseCompare(): JqFilter {
-    const left = this.parsePostfix();
+    const left = this.parseArithmetic(0);
     const token = this.peek();
     if (token?.type !== 'punct' || !COMPARE[token.value]) return left;
     this.i++;
     const test = COMPARE[token.value]!;
-    const right = this.parsePostfix();
+    const right = this.parseArithmetic(0);
     // jq loops over the right side's outputs outermost
     return (x) => product([right, left], x).map(([b, a]) => test(compareValues(a, b)));
+  }
+
+  /** `+ -` (level 0) and `* / %` (level 1), left-associative. */
+  private parseArithmetic(level: 0 | 1): JqFilter {
+    const operators = level === 0 ? ['+', '-'] : ['*', '/', '%'];
+    const operand = () => (level === 0 ? this.parseArithmetic(1) : this.parseTerm());
+    let left = operand();
+    while (operators.some((op) => this.isPunct(op))) {
+      const op = (this.tokens[this.i++] as { value: string }).value;
+      const l = left;
+      const r = operand();
+      left = (x) => product([r, l], x).map(([b, a]) => arithmetic(op, a, b));
+    }
+    return left;
+  }
+
+  /** A postfix term, negated by a leading `-`, or `term as $name | body`. */
+  private parseTerm(): JqFilter {
+    if (this.isPunct('-')) {
+      this.i++;
+      const operand = this.parseTerm();
+      return (x) =>
+        operand(x).map((v) => {
+          if (typeof v !== 'number') throw new JqError(`${describe(v)} cannot be negated`);
+          return -v;
+        });
+    }
+    const term = this.parsePostfix();
+    if (!this.isIdent('as')) return term;
+    this.i++;
+    const variable = this.peek();
+    if (variable?.type !== 'variable') throw new JqError(`Expected a $variable after "as"${this.describeNext()}`);
+    this.i++;
+    this.expect('|');
+    const slot: Slot = { value: null };
+    this.scope.push(new Map([[variable.value, slot]]));
+    const body = this.parsePipe();
+    this.scope.pop();
+    return (x) =>
+      term(x).flatMap((value) => {
+        const previous = slot.value;
+        slot.value = value;
+        try {
+          return body(x);
+        } finally {
+          slot.value = previous;
+        }
+      });
+  }
+
+  private lookup(name: string): Slot {
+    for (let i = this.scope.length - 1; i >= 0; i--) {
+      const slot = this.scope[i]!.get(name);
+      if (slot) return slot;
+    }
+    throw new JqError(`$${name} is not defined`);
   }
 
   private parsePostfix(): JqFilter {
@@ -436,21 +333,31 @@ class Parser {
 
     if (token.type === 'field') return (x) => [index(x, token.value)];
     if (token.type === 'string' || token.type === 'number') return () => [token.value];
+    if (token.type === 'variable') {
+      const slot = this.lookup(token.value);
+      return () => [slot.value];
+    }
+    if (token.type === 'format') {
+      const format = FORMATS[token.value];
+      if (!format) throw new JqError(`${token.value} is not a valid format`);
+      return (x) => [format(x)];
+    }
 
     if (token.type === 'ident') {
       if (token.value === 'true' || token.value === 'false') return () => [token.value === 'true'];
       if (token.value === 'null') return () => [null];
+      if (token.value === 'if') return this.parseIf();
+      const args: JqFilter[] = [];
       if (this.isPunct('(')) {
-        const builtin = BUILTINS_1[token.value];
-        if (!builtin) throw new JqError(`Unknown function ${token.value}/1`);
-        this.i++;
-        const arg = this.parsePipe();
+        do {
+          this.i++;
+          args.push(this.parsePipe());
+        } while (this.isPunct(';'));
         this.expect(')');
-        return (x) => builtin(x, arg);
       }
-      const builtin = BUILTINS_0[token.value];
-      if (!builtin) throw new JqError(`Unknown function ${token.value}/0`);
-      return builtin;
+      const builtin = BUILTINS[`${token.value}/${args.length}`];
+      if (!builtin) throw new JqError(`Unknown function ${token.value}/${args.length}`);
+      return args.length ? (x) => builtin(x, ...args) : builtin;
     }
 
     switch (token.value) {
@@ -460,12 +367,6 @@ class Parser {
           return (x) => [index(x, key)];
         }
         return (x) => [x];
-      case '-': {
-        const number = this.peek();
-        if (number?.type !== 'number') throw new JqError('Only negative number literals are supported');
-        this.i++;
-        return () => [-number.value];
-      }
       case '(': {
         const inner = this.parsePipe();
         this.expect(')');
@@ -486,16 +387,40 @@ class Parser {
     throw new JqError(`Unexpected ${JSON.stringify(token.value)}`);
   }
 
+  /** After `if`: `cond then a (elif cond then b)* (else c)? end`; without `else`, the input passes through. */
+  private parseIf(): JqFilter {
+    const condition = this.parsePipe();
+    this.expectIdent('then');
+    const then = this.parsePipe();
+    let otherwise: JqFilter = (x) => [x];
+    if (this.isIdent('elif')) {
+      this.i++;
+      otherwise = this.parseIf();
+    } else {
+      if (this.isIdent('else')) {
+        this.i++;
+        otherwise = this.parsePipe();
+      }
+      this.expectIdent('end');
+    }
+    return (x) => condition(x).flatMap((c) => (truthy(c) ? then(x) : otherwise(x)));
+  }
+
   private parseObject(): JqFilter {
     const entries: [JqFilter, JqFilter][] = [];
     while (!this.isPunct('}')) {
       const token = this.peek();
       let key: JqFilter;
-      let shorthand: string | undefined;
+      let shorthand: JqFilter | undefined;
       if (token?.type === 'ident' || token?.type === 'string') {
         this.i++;
         key = () => [token.value];
-        shorthand = token.value;
+        shorthand = (x) => [index(x, token.value)];
+      } else if (token?.type === 'variable') {
+        this.i++;
+        const slot = this.lookup(token.value);
+        key = () => [token.value];
+        shorthand = () => [slot.value];
       } else if (this.isPunct('(')) {
         this.i++;
         key = this.parsePipe();
@@ -507,9 +432,8 @@ class Parser {
       if (this.isPunct(':')) {
         this.i++;
         value = this.parseAlternative();
-      } else if (shorthand !== undefined) {
-        const name = shorthand;
-        value = (x) => [index(x, name)];
+      } else if (shorthand) {
+        value = shorthand;
       } else {
         throw new JqError('Computed object keys need a value');
       }

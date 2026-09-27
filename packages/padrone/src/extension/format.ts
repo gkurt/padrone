@@ -23,11 +23,30 @@ export type PadroneFormatOptions = {
   flags?: readonly string[];
   /** Add `--columns a,b` (pick and order columns), `--sort <column>` (`-column` for descending) and `--no-header` for the table, csv and tsv formats. */
   tableFlags?: boolean;
+  /**
+   * The columns of the table, csv and tsv formats, in order, with their header labels: `{ id: 'ID', createdAt: 'Created' }`.
+   * Or a function giving them for a command. Without them (or `undefined`), every key of the rows, labeled by its name.
+   * `--columns` can still pick any key of the rows.
+   */
+  columns?: PadroneFormatColumns | ((command: AnyPadroneCommand) => PadroneFormatColumns | undefined);
+  /**
+   * What `-o table` prints when stdout isn't a terminal (piped or redirected): `'tsv'` prints tab-separated rows instead,
+   * like `gh`, so scripts get one line per row. Defaults to `'table'` (the table, wherever it goes).
+   */
+  pipedTable?: 'table' | 'tsv';
+  /** Line ending of `-o csv`: `'crlf'` for RFC 4180 (`\r\n`). Defaults to `'lf'`. */
+  csvLineEnding?: 'lf' | 'crlf';
 };
+
+/** Column key → header label, in display order. */
+export type PadroneFormatColumns = Record<string, string>;
 
 const ALL_FORMATS: readonly PadroneOutputFormat[] = ['text', 'json', 'yaml', 'csv', 'tsv', 'table'];
 
 type TableFlags = { columns?: string[]; sort?: string; header: boolean };
+
+/** How the table, csv and tsv formats lay out rows: the flags, plus the columns and csv line ending from the options. */
+type TableLayout = TableFlags & { defaults?: PadroneFormatColumns; crlf: boolean };
 
 // ── Rendering ───────────────────────────────────────────────────────────
 
@@ -63,10 +82,11 @@ function compareCells(a: unknown, b: unknown): number {
 }
 
 /** The rows sorted and the columns to print, checked against the columns the rows have. */
-function layout(rows: Row[], flags: TableFlags): { rows: Row[]; columns: string[] } {
+function layout(rows: Row[], flags: TableLayout): { rows: Row[]; columns: string[] } {
   const available = columnsOf(rows);
   if (flags.columns) checkColumns('columns', flags.columns, rows, available);
-  if (!flags.sort) return { rows, columns: flags.columns ?? available };
+  const columns = flags.columns ?? (flags.defaults ? Object.keys(flags.defaults) : available);
+  if (!flags.sort) return { rows, columns };
 
   const descending = flags.sort.startsWith('-');
   const key = descending ? flags.sort.slice(1) : flags.sort;
@@ -78,7 +98,7 @@ function layout(rows: Row[], flags: TableFlags): { rows: Row[]; columns: string[
     if (x == null || y == null) return (x == null ? 1 : 0) - (y == null ? 1 : 0);
     return descending ? compareCells(y, x) : compareCells(x, y);
   });
-  return { rows: sorted, columns: flags.columns ?? available };
+  return { rows: sorted, columns };
 }
 
 const csvCell = (value: unknown) => {
@@ -92,20 +112,25 @@ const tsvCell = (value: unknown) => stringifyCell(value).replace(/[\\\t\n\r]/g, 
 /** Renders results in a non-JSON format; `text` is left to auto-output. */
 function createRenderer(
   format: Exclude<PadroneOutputFormat, 'text' | 'json'>,
-  flags: TableFlags,
+  flags: TableLayout,
   runtime: ResolvedPadroneRuntime,
   caller: PadroneActionContext['caller'],
 ): OutputRenderer {
+  const headers = flags.defaults;
+  const label = (column: string) => headers?.[column] ?? column;
+  // Each csv line ends with `\r` for CRLF: the runtime's output adds the `\n`
+  const eol = format === 'csv' && flags.crlf ? '\r' : '';
   const lines = (rows: Row[], columns: string[], header: boolean): string[] => {
     if (!columns.length) return [];
     const [cell, separator] = format === 'csv' ? [csvCell, ','] : [tsvCell, '\t'];
-    const body = rows.map((row) => columns.map((column) => cell(row[column])).join(separator));
-    return header ? [columns.map(cell).join(separator), ...body] : body;
+    const line = (cells: string[]) => cells.join(separator) + eol;
+    const body = rows.map((row) => line(columns.map((column) => cell(row[column]))));
+    return header ? [line(columns.map((column) => cell(label(column)))), ...body] : body;
   };
   const table = (value: Row[]): string[] => {
     const { rows, columns } = layout(value, flags);
     if (format !== 'table') return [lines(rows, columns, flags.header).join('\n')].filter(Boolean);
-    const rendered = renderTable(rows, { columns, header: flags.header }, resolveOutputFormat(runtime, caller));
+    const rendered = renderTable(rows, { columns, headers, header: flags.header }, resolveOutputFormat(runtime, caller));
     return rendered ? [rendered] : [];
   };
 
@@ -180,10 +205,12 @@ function createFormatInterceptor(options: PadroneFormatOptions) {
     ) => {
       const flags = frameworkFlags(rawArgs, command);
       const given = flagNames.map((name) => flags.get(name)).find((v) => v !== undefined);
-      const table: TableFlags = {
+      const table: TableLayout = {
         columns: options.tableFlags ? splitList(flags.get('columns')) : undefined,
         sort: options.tableFlags ? splitList(flags.get('sort'))?.[0] : undefined,
         header: !options.tableFlags || flags.flag('header') !== false,
+        defaults: typeof options.columns === 'function' ? options.columns(command) : options.columns,
+        crlf: options.csvLineEnding === 'crlf',
       };
       flags.delete(...Object.keys(flagOptions));
       // Registered on the program, the parse phase has already read the flags
@@ -199,7 +226,9 @@ function createFormatInterceptor(options: PadroneFormatOptions) {
       if (format === 'json') runtime.format = 'json';
       // A renderer that's already set (bare `--json` listing its fields) wins
       else if (format !== 'text' && !getOutputRenderer(runtime)) {
-        setOutputRenderer(runtime, createRenderer(format as Exclude<PadroneOutputFormat, 'text' | 'json'>, table, runtime, caller));
+        const piped = format === 'table' && options.pipedTable === 'tsv' && runtime.terminal?.isTTY !== true;
+        const renderAs = piped ? 'tsv' : (format as Exclude<PadroneOutputFormat, 'text' | 'json'>);
+        setOutputRenderer(runtime, createRenderer(renderAs, table, runtime, caller));
       }
     };
 
@@ -235,7 +264,9 @@ function createFormatInterceptor(options: PadroneFormatOptions) {
  * - `json`: like `--json` — the result, and errors, as JSON.
  * - `yaml`: the result as YAML (streamed items as `---` separated documents).
  * - `csv` / `tsv`: an object or an array of objects as rows with a header (streamed items one row each).
- * - `table`: the same rows through the table primitive.
+ * - `table`: the same rows through the table primitive (tab-separated when piped, with `pipedTable: 'tsv'`).
+ *
+ * `columns` sets the columns and their header labels; `csvLineEnding: 'crlf'` ends csv lines with `\r\n`.
  *
  * String results (e.g. help) are printed as text under every format but json, and other non-objects under csv, tsv and table. `--json`, `--jq` and
  * `--template` take precedence over `--output`. Serve, MCP and tool calls are unaffected.

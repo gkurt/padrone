@@ -1,6 +1,8 @@
+import { ValidationError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import type { ColorTheme } from '../output/colorizer.ts';
+import { colorThemes } from '../output/colorizer.ts';
 import type { AnyPadroneBuilder, CommandTypesBase } from '../types/index.ts';
 import { frameworkFlags, parseWithFallback, rawInputFlag, toFlag } from './utils.ts';
 
@@ -8,7 +10,8 @@ import { frameworkFlags, parseWithFallback, rawInputFlag, toFlag } from './utils
 
 const FORCE_VALUES = new Set(['true', '1', 'always', 'on', 'yes']);
 
-function applyColorFlag(runtime: ResolvedPadroneRuntime, color: unknown) {
+/** Applies `--color[=value]`; an unknown theme throws, unless `lenient` (the input didn't parse, so another error is reported). */
+function applyColorFlag(runtime: ResolvedPadroneRuntime, color: unknown, lenient = false) {
   const auto = runtime.format === 'auto';
   const keyword = typeof color === 'string' ? color.toLowerCase() : color;
   if (keyword === 'auto') return;
@@ -16,7 +19,14 @@ function applyColorFlag(runtime: ResolvedPadroneRuntime, color: unknown) {
     if (auto || runtime.format === 'ansi' || runtime.format === 'console') runtime.format = 'text';
     return;
   }
-  if (typeof keyword === 'string' && !FORCE_VALUES.has(keyword)) runtime.theme = keyword as ColorTheme;
+  if (typeof keyword === 'string' && !FORCE_VALUES.has(keyword)) {
+    if (!Object.hasOwn(colorThemes, keyword)) {
+      if (lenient) return;
+      const message = `Unknown color theme "${color}". Expected auto, always, never or a theme: ${Object.keys(colorThemes).join(', ')}`;
+      throw new ValidationError(message, [{ path: ['color'], message }]);
+    }
+    runtime.theme = keyword as ColorTheme;
+  }
   if (auto) runtime.format = 'ansi';
 }
 
@@ -37,7 +47,7 @@ const colorInterceptor = defineInterceptor(
         // Parsing failed (e.g. an unknown command): the error is still printed with the requested colors
         () => {
           const color = rawInputFlag(ctx.input, 'color');
-          if (color !== undefined) applyColorFlag(ctx.runtime, color);
+          if (color !== undefined) applyColorFlag(ctx.runtime, color, true);
         },
       );
     },
@@ -51,7 +61,7 @@ const colorInterceptor = defineInterceptor(
  * - `--color`, `--color=always` (or `true`, `1`, `on`, `yes`) → force colors, even when output isn't a TTY
  * - `--color=never` (or `false`, `0`, `off`, `no`) or `--no-color` → disable colors (text format)
  * - `--color=auto` → detect from the terminal (the default)
- * - `--color=<theme>` → force colors with the named theme
+ * - `--color=<theme>` → force colors with the named theme (`default`, `ocean`, `warm` or `monochrome`; any other value is an error)
  *
  * Modifies the runtime's format and theme accordingly. An explicit non-ANSI `format` (e.g. `'json'`) is kept.
  *

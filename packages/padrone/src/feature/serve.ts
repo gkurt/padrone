@@ -61,6 +61,15 @@ function jsonResponse(body: unknown, status = 200, headers?: Record<string, stri
 }
 
 /** Normalizes a base path to start and end with `/` (`api` → `/api/`). */
+/** A page served by this server itself (the docs, opened on a LAN address): its origin names the request's own host. */
+function isSameOrigin(origin: string, req: Request): boolean {
+  try {
+    return new URL(origin).host === (req.headers.get('host') ?? new URL(req.url).host);
+  } catch {
+    return false;
+  }
+}
+
 function normalizeBasePath(basePath = '/'): string {
   return `/${basePath}/`.replace(/\/{2,}/g, '/');
 }
@@ -366,7 +375,7 @@ export function createServeHandler(
   async function routeRequest(req: Request): Promise<Response> {
     // Other websites could otherwise run commands with "simple" requests, which browsers send without a preflight
     const origin = req.headers.get('origin');
-    if (origin && !isAllowedOrigin(origin, prefs?.cors)) {
+    if (origin && !isSameOrigin(origin, req) && !isAllowedOrigin(origin, prefs?.cors)) {
       return addCorsHeaders(jsonResponse({ ok: false, error: 'forbidden', message: `Origin not allowed: ${origin}` }, 403));
     }
 

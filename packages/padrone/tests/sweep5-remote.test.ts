@@ -120,6 +120,13 @@ describe('serve origins', () => {
     expect((await post(one, { Origin: 'https://other.example.com' })).status).toBe(403);
     expect((await post(handler({ cors: '*' }), { Origin: 'https://other.example.com' })).status).toBe(200);
   });
+
+  test('a same-origin request (the served docs page on a LAN address) is allowed', async () => {
+    const res = await handler()(
+      new Request('http://192.168.1.5:3000/deploy', { method: 'POST', body: '{}', headers: { Origin: 'http://192.168.1.5:3000' } }),
+    );
+    expect(res.status).toBe(200);
+  });
 });
 
 describe('serve sensitive values inside objects', () => {

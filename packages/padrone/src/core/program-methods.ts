@@ -1,6 +1,7 @@
 import type { Schema } from 'ai';
 import type { ShellType } from '../feature/completion.ts';
 import { createPrompt } from '../feature/prompt.ts';
+import { createCallLimiter, linkedController } from '../feature/remote.ts';
 import { createReplIterator } from '../feature/repl-loop.ts';
 import { generateHelp } from '../output/help.ts';
 import type {
@@ -14,8 +15,15 @@ import type {
 } from '../types/index.ts';
 import { outputValueToText } from '../util/json.ts';
 import { parsePositionalConfig } from './args.ts';
-import { findCommandByName, getCommandRuntime, resolveAllCommands, resolveContext, serializeArgsToFlags } from './commands.ts';
-import { RoutingError } from './errors.ts';
+import {
+  exposeRefusal,
+  findCommandByName,
+  getCommandRuntime,
+  resolveAllCommands,
+  resolveContext,
+  serializeArgsToFlags,
+} from './commands.ts';
+import { ActionError, RoutingError } from './errors.ts';
 import { withEmit } from './events.ts';
 import type { ExecContext } from './exec.ts';
 import { collectInterceptors, errorResultWithSignal, execCommand } from './exec.ts';
@@ -97,6 +105,8 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
       const commandObj = typeof command === 'string' ? findCommandByName(command, rootCommand.commands) : (command as AnyPadroneCommand);
       if (!commandObj) throw new RoutingError(`Command "${command ?? ''}" not found`);
       if (!commandObj.action) throw new RoutingError(`Command "${commandObj.path}" has no action`, { command: commandObj.path });
+      const refusal = exposeRefusal(commandObj, 'run');
+      if (refusal) throw new ActionError(refusal, { command: commandObj.path });
 
       const resolvedCtx = resolveContext(commandObj, prefs?.context);
       const commandRuntime = getCommandRuntime(commandObj);
@@ -154,8 +164,9 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
       caller: 'run',
     }).emit(event, ...payload);
 
-  const tool: AnyPadroneProgram['tool'] = () => {
+  const tool: AnyPadroneProgram['tool'] = (prefs) => {
     resolveAllCommands(rootCommand);
+    const limit = createCallLimiter(prefs);
     const helpText = generateHelp(rootCommand, undefined, { format: 'text' });
 
     const description = `Run a command. Pass the full command string including arguments. Use "help <command>" for detailed usage.\n\n${helpText}`;
@@ -194,16 +205,21 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
       },
       execute: async (input, options) => {
         const printed: { text: string; stderr?: boolean }[] = [];
-        const result = await evalCommand(input.command, {
-          caller: 'tool',
-          signal: options?.abortSignal,
-          runtime: {
-            output: (...args) => printed.push({ text: args.map(outputValueToText).join(' ') }),
-            error: (text) => printed.push({ text, stderr: true }),
-            interactive: 'unsupported',
-            format: 'text',
-          },
-        });
+        const { controller, dispose } = linkedController(options?.abortSignal);
+        const call = await limit(controller, () =>
+          evalCommand(input.command, {
+            caller: 'tool',
+            signal: controller.signal,
+            runtime: {
+              output: (...args) => printed.push({ text: args.map(outputValueToText).join(' ') }),
+              error: (text) => printed.push({ text, stderr: true }),
+              interactive: 'unsupported',
+              format: 'text',
+            },
+          }),
+        ).finally(dispose);
+        const timedOut = { error: new Error(`Timed out after ${prefs?.timeout} ms`), result: undefined, argsResult: undefined };
+        const result = call.status === 'done' ? call.value : timedOut;
         // Failures come back in `error` for the model to read; auto-output only prints errors in `cli()`
         const failure =
           result.error !== undefined

@@ -17,8 +17,8 @@ import type {
   RegisteredInterceptor,
   ResolvedInterceptor,
 } from '../types/index.ts';
-import { getCommandRuntime, resolveContext } from './commands.ts';
-import { RoutingError, SignalError, ValidationError } from './errors.ts';
+import { exposeRefusal, getCommandRuntime, resolveContext } from './commands.ts';
+import { ActionError, RoutingError, SignalError, ValidationError } from './errors.ts';
 import { withEmit } from './events.ts';
 import { readFileValues } from './from-file.ts';
 import {
@@ -154,6 +154,7 @@ export function execCommand(
   };
 
   const initialContext = evalOptions?.context;
+  const auth = evalOptions?.auth;
 
   // Factory resolution cache — ensures each factory is called at most once per execution,
   // so root interceptor closures are shared when they appear in both root and command chains.
@@ -180,6 +181,7 @@ export function execCommand(
       runtime,
       program: active.builder,
       caller,
+      auth,
     });
 
     // Tokenizer issues (e.g. an option missing its value) surface as validation issues of the parsed command.
@@ -207,6 +209,9 @@ export function execCommand(
     const continueAfterParse = (parsed: InterceptorParseResult) => {
       const { command } = parsed;
       pipelineState.phase = 'parse';
+      // `.configure({ expose })`: e.g. built-in commands that act on the host refuse serve, MCP and tool() calls
+      const refusal = exposeRefusal(command, caller);
+      if (refusal) throw new ActionError(refusal, { command: command.path || command.name });
       pipelineState.rawArgs = parsed.rawArgs;
       pipelineState.positionalArgs = parsed.positionalArgs;
       const registered = collectInterceptorsFn(command);
@@ -288,6 +293,7 @@ export function execCommand(
                 context: executeCtx.context,
                 caller,
                 prompt: createPrompt(executeCtx),
+                auth: executeCtx.auth,
               });
               const result = handler(executeCtx.args as any, actionCtx);
               return { result };
@@ -332,6 +338,7 @@ export function execCommand(
           active.builder,
           caller,
           pipelineState,
+          auth,
         );
       };
 
@@ -354,5 +361,6 @@ export function execCommand(
     caller,
     pipelineState,
     overridden,
+    auth,
   ) as any;
 }

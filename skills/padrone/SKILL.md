@@ -64,7 +64,7 @@ program.cli();
 | `.command(name, builderFn?)` | Add or extend a subcommand |
 | `.context(transform?)` | Define typed context or transform inherited context |
 | `.mount(name, program, options?)` | Mount another Padrone program as a subcommand (with optional `{ context }`) |
-| `.configure(config)` | Set title, description, version, deprecated, hidden, group, mutation, needsApproval, outputSchema |
+| `.configure(config)` | Set title, description, version, deprecated, hidden, group, mutation, needsApproval, outputSchema, expose (which callers may run it: `false` = local only) |
 | `.intercept(interceptor)` | Register a middleware interceptor |
 | `.extend(extension)` | Apply a build-time extension (bundle of config, commands, interceptors) |
 | `.extend(padroneEnv(schema))` | Parse environment variables into args; `{ prefix: 'APP' }` reads every option (`APP_DB__HOST` → `db.host`, `nestedSeparator` changes `__`), array options split on `arraySeparator` (`APP_TAGS=a,b`), empty variables count as unset unless `allowEmpty` (import `padroneEnv` from `'padrone'`) |
@@ -90,9 +90,9 @@ program.cli();
 | `.completion(shell?)` | Generate shell completion script |
 | `.find(command)` | Look up a command by path |
 | `.api()` | Type-safe programmatic API |
-| `.tool()` | Vercel AI SDK tool definition |
-| `.mcp(prefs?)` | Start MCP server (HTTP or stdio); hidden and built-in commands are left out *(experimental)* |
-| `.serve(prefs?)` | Start REST server with OpenAPI docs; cross-site `Origin`s other than `cors` get 403, `maxBodySize` caps bodies *(experimental)* |
+| `.tool(prefs?)` | Vercel AI SDK tool definition; `timeout` aborts long calls |
+| `.mcp(prefs?)` | Start MCP server (HTTP or stdio); hidden, built-in and unexposed commands are left out; `include`/`exclude`, `auth`/`bearer`, `allowedHosts`, `timeout`, `maxConcurrent`, `sessionTtl`, `maxSessions` *(experimental)* |
+| `.serve(prefs?)` | Start REST server with OpenAPI docs; cross-site `Origin`s other than `cors` get 403, `maxBodySize` caps bodies; `include`/`exclude`, `auth`/`bearer` (401, identity in `ctx.auth`), `allowedHosts`, `timeout` (504), `maxConcurrent` (503) *(experimental)* |
 | `.stringify(command?, args?)` | Convert back to CLI string |
 
 ## Arguments Meta
@@ -136,7 +136,7 @@ Seven phases in onion/middleware pattern with `next()`:
 6. **error** — error handling, two layers: command-level first, then root-level (return `{ error: undefined, result }` to suppress); a command-level interceptor with a root one's `id` replaces it in both
 7. **shutdown** — cleanup, always runs, two layers: command-level first, then root-level
 
-All phase contexts include `context` (user-provided context), `signal` (AbortSignal for cancellation), `caller` (invocation method: `'cli'`, `'eval'`, `'run'`, etc.), and `runtime`.
+All phase contexts include `context` (user-provided context), `signal` (AbortSignal for cancellation), `caller` (invocation method: `'cli'`, `'eval'`, `'run'`, etc.), `auth` (who made the request, from serve/MCP `auth` or `eval()`'s `auth`), and `runtime`.
 
 ```ts
 import { defineInterceptor } from 'padrone';

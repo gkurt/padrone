@@ -268,6 +268,7 @@ const deferredShutdowns = new WeakMap<object, Deferred[]>();
  * - On error: `error` interceptors run (can transform/suppress the error).
  * - Always: `shutdown` interceptors run (success or failure), after the command-level shutdowns a failed command deferred.
  * - `overridden`: root interceptors a same-id one on the routed command replaces; they skip error and shutdown.
+ * - `auth`: the caller's identity, as `ctx.auth`.
  */
 export function wrapWithLifecycle<T>(
   interceptors: ResolvedInterceptor[],
@@ -282,6 +283,7 @@ export function wrapWithLifecycle<T>(
   caller: PadroneCaller = 'eval',
   pipelineState?: { phase: InterceptorPipelinePhase; rawArgs?: Record<string, unknown>; positionalArgs?: string[]; args?: unknown },
   overridden?: ReadonlySet<ResolvedInterceptor>,
+  auth?: unknown,
 ): T | Promise<T> {
   const defaultSignal = typeof AbortSignal !== 'undefined' ? AbortSignal.abort() : (undefined as unknown as AbortSignal);
   const hasStart = interceptors.some((p) => p.start);
@@ -328,6 +330,7 @@ export function wrapWithLifecycle<T>(
       runtime: runtime!,
       program: program!,
       caller,
+      auth,
       ...effectivePipelineState,
     });
     return runInterceptorChain('shutdown', lifecycleInterceptors(), ctx, () => {});
@@ -351,6 +354,7 @@ export function wrapWithLifecycle<T>(
       runtime: runtime!,
       program: program!,
       caller,
+      auth,
       ...effectivePipelineState,
     });
     const errorResult = runErrorChain(lifecycleInterceptors(), ctx, error);
@@ -381,6 +385,7 @@ export function wrapWithLifecycle<T>(
     program: program!,
     input,
     caller,
+    auth,
   });
   let result: T | Promise<T>;
   try {
@@ -423,6 +428,7 @@ export function wrapWithCommandLifecycle<T>(
   program: AnyPadroneProgram,
   caller: PadroneCaller,
   pipelineState: { phase: InterceptorPipelinePhase; rawArgs?: Record<string, unknown>; positionalArgs?: string[]; args?: unknown },
+  auth?: unknown,
 ): T | Promise<T> {
   const hasError = interceptors.some((p) => p.error);
   const hasShutdown = interceptors.some((p) => p.shutdown);
@@ -441,6 +447,7 @@ export function wrapWithCommandLifecycle<T>(
       runtime,
       program,
       caller,
+      auth,
       ...pipelineState,
     });
     return runInterceptorChain('shutdown', interceptors, ctx, () => {});
@@ -469,6 +476,7 @@ export function wrapWithCommandLifecycle<T>(
       runtime,
       program,
       caller,
+      auth,
       ...pipelineState,
     });
     const errorResult = runErrorChain(interceptors, ctx, error);

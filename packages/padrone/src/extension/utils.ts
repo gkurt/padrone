@@ -1,7 +1,6 @@
 import { extractSchemaMetadata, getJsonSchema, isSensitiveField, parsePositionalConfig, REDACTED } from '../core/args.ts';
 import { findCommandByName, getGlobalArgs } from '../core/commands.ts';
-import { ActionError } from '../core/errors.ts';
-import { defineInterceptor, REMOTE_CALLERS } from '../core/interceptors.ts';
+import { REMOTE_CALLERS } from '../core/interceptors.ts';
 import { tokenizeInput } from '../core/parse.ts';
 import { getKnownOptionNames } from '../core/validate.ts';
 import type { AnyPadroneCommand, InterceptorValidateResult, PadroneFieldMeta, PadroneInput, PadroneSchema } from '../types/index.ts';
@@ -114,21 +113,6 @@ export function getOutputRenderer(runtime: object): OutputRenderer | undefined {
 /** Whether the caller returns results through its own transport (HTTP, MCP, AI tool calls): no terminal, no stdin. */
 export function isRemoteCaller(caller: string): boolean {
   return (REMOTE_CALLERS as readonly string[]).includes(caller);
-}
-
-/**
- * For built-in commands that act on the host (`config`, `alias`, `upgrade`, `completion`, `man`, `serve`, `mcp`): serve,
- * MCP and `tool()` calls can't run them, so a request can't read or write files, install anything or open a server there.
- * Outermost, so it refuses before another interceptor (upgrade's registry check) does any work.
- */
-export function localOnlyInterceptor() {
-  return defineInterceptor({ id: 'padrone:local-only', name: 'padrone:local-only', order: -3000 }, () => ({
-    execute(ctx, next) {
-      if (isRemoteCaller(ctx.caller))
-        throw new ActionError(`"${ctx.command.path || ctx.command.name}" is only available on the command line`);
-      return next();
-    },
-  }));
 }
 
 type PassthroughType = 'string' | 'string[]' | 'boolean';

@@ -31,6 +31,7 @@ export type {
   PadroneCommand,
   PadroneCommandComplete,
   PadroneCommandConfig,
+  PadroneExpose,
   PadroneHookContext,
   PadroneHookName,
   PadroneProgramMeta,
@@ -73,6 +74,7 @@ export type {
   PadroneEvalPreferences,
   PadroneReplPreferences,
   PadroneReplSpacing,
+  PadroneToolPreferences,
 } from './preferences.ts';
 export type {
   GetArguments,

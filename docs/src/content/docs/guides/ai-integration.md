@@ -41,7 +41,7 @@ myapp mcp --port 8080 --host 0.0.0.0
 
 When you run `myapp mcp`, Padrone:
 
-1. Collects all commands that have an action or schema, except hidden and built-in ones (`config`, `alias`, `upgrade`, …)
+1. Collects all commands that have an action or schema, except hidden and built-in ones (`config`, `alias`, `upgrade`, …) and those not exposed to it (see [Securing Remote Access](#securing-remote-access))
 2. Exposes each as an MCP tool with a JSON Schema derived from your Zod definitions, named by its path (`db.migrate`); a root command with an action is named after the program
 3. Handles the JSON-RPC protocol (initialize, tools/list, tools/call, ping, etc.), with a session per client over HTTP
 4. Adds a `help` tool that returns the program's or a command's help (named `padrone_help` when a command is already called `help`)
@@ -94,6 +94,15 @@ The `.mcp()` method, `padroneMcp(defaults)` and the `mcp` command accept these o
 | `version` | `string` | program version | Server version |
 | `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable. Also the origin allowed past the `Origin` check (below) |
 | `maxBodySize` | `number` | 4 MiB | Largest request body in bytes; a larger one gets 413 |
+| `include` | `string[] \| (command) => boolean` | — | Only offer these commands (paths or globs, see below) |
+| `exclude` | `string[] \| (command) => boolean` | — | Never offer these commands |
+| `auth` | `(req: Request) => unknown` | — | Authenticate each request: the identity, or a falsy value for 401 |
+| `bearer` | `string \| string[]` | — | Accepted bearer tokens |
+| `allowedHosts` | `string[] \| true \| 'all'` | — | `Host` names answered besides loopback ones and the bound host |
+| `timeout` | `number` | — | Longest a command may run, in ms |
+| `maxConcurrent` | `number` | — | Most commands running at once |
+| `sessionTtl` | `number` | — | Drop an HTTP session after this many ms without requests |
+| `maxSessions` | `number` | `1000` | Most HTTP sessions kept; a new one drops the least recently used |
 
 ### Transports
 
@@ -152,7 +161,7 @@ myapp serve --base-path /api/
 
 When you run `myapp serve`, Padrone:
 
-1. Collects all commands that have an action or schema, except hidden and built-in ones (`config`, `alias`, `upgrade`, …)
+1. Collects all commands that have an action or schema, except hidden and built-in ones (`config`, `alias`, `upgrade`, …) and those not exposed to it (see [Securing Remote Access](#securing-remote-access))
 2. Maps each to a URL path (e.g., `users list` → `/users/list`)
 3. For each request, converts query params (GET) or JSON body (POST) to CLI flags and calls `eval()`. Nested objects are passed as dotted query params (`?db.host=localhost`), repeated params fill arrays, `_` gives positional values, a param without a value is an empty string (`?name=`) or turns a boolean on (`?verbose`), and `null` in a JSON body means unset
 4. Returns structured JSON responses
@@ -218,6 +227,13 @@ await program.serve({
 | `basePath` | `string` | `'/'` | Base path prefix for all routes |
 | `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable. Also the origin allowed past the `Origin` check (below) |
 | `maxBodySize` | `number` | 4 MiB | Largest request body in bytes; a larger one gets 413 (`payload_too_large`) |
+| `include` | `string[] \| (command) => boolean` | — | Only offer these commands (paths or globs, see below) |
+| `exclude` | `string[] \| (command) => boolean` | — | Never offer these commands |
+| `auth` | `(req: Request) => unknown` | — | Authenticate each request: the identity, or a falsy value for 401 |
+| `bearer` | `string \| string[]` | — | Accepted bearer tokens |
+| `allowedHosts` | `string[] \| true \| 'all'` | — | `Host` names answered besides loopback ones and the bound host |
+| `timeout` | `number` | — | Longest a command may run, in ms |
+| `maxConcurrent` | `number` | — | Most commands running at once |
 | `builtins` | `object` | all `true` | Toggle built-in endpoints (health, help, schema, docs) |
 | `onRequest` | `function` | — | Hook to run before each request (auth, rate-limiting) |
 | `onError` | `function` | — | Custom error response handler |
@@ -263,9 +279,75 @@ Like MCP, a request with an `Origin` header is rejected with 403 unless the orig
 { "ok": false, "error": "action_error", "message": "Database unavailable" }
 ```
 
+**Unauthorized (401), busy (503), timed out (504):** with `auth`/`bearer`, `maxConcurrent` and `timeout` (below)
+```json
+{ "ok": false, "error": "unauthorized", "message": "Unauthorized" }
+{ "ok": false, "error": "unavailable", "message": "Too many requests in progress, try again later" }
+{ "ok": false, "error": "timeout", "message": "The command timed out after 5000 ms" }
+```
+
 Validation errors go through `onError` when it's set. Arguments reach the command intact: strings with spaces or quotes, arrays (empty ones too, and items like `[x]`), nested objects (as `--a.b=`, or as JSON when dotted keys can't express them: record keys with dots, arrays inside, empty objects), arrays of objects (as JSON) and `false` for booleans with a custom `negative` keyword or none. An empty POST body means no arguments. Serve, MCP and `tool()` callers can't pick a config file: `--config`/`-c` is an unknown option for them, so they can't make the server read local files. The `config`, `alias`, `completion`, `man`, `serve`, `mcp` and `upgrade` commands refuse them ("… is only available on the command line").
 
 The `serve` command is hidden from help. Leave out `padroneServe()` to go without it; `program.serve()` works either way.
+
+---
+
+## Securing Remote Access
+
+These apply to both `mcp()` and `serve()` (and `padroneMcp()`/`padroneServe()` defaults). For MCP, `auth`, `bearer` and `allowedHosts` apply to the HTTP transport.
+
+### Choosing what's exposed
+
+`.configure({ expose })` says which callers may run a command (and its subcommands, unless they set their own): `true` any (the default), `false` local ones only (`cli`, `eval`, `run`, `repl`), or the callers allowed. Servers don't list a command they can't run, and running it from another caller (a `tool()` call included) fails with `"admin reset" is only available on the command line`. Built-in commands that act on the host (`config`, `alias`, `plugins`, `upgrade`, `completion`, `man`, `serve`, `mcp`) are local only; `help` and `version` stay available.
+
+```typescript
+.command('admin', (c) =>
+  c
+    .configure({ expose: false })                               // not over serve, MCP or tool()
+    .command('reset', (c) => c.action(() => resetEverything()))
+    .command('status', (c) => c.configure({ expose: true }).action(() => status())),
+)
+.command('ask', (c) => c.configure({ expose: ['cli', 'mcp'] }).action(/* … */)) // MCP, not serve
+```
+
+`include` and `exclude` choose commands per server: command paths (`'db migrate'` or `'db.migrate'`) and globs over them (`*` within a name, `**` any number of names: `'db.**'` is `db` and everything under it, `'**'` also the root program), or a predicate of the command.
+
+```typescript
+await program.mcp({ include: ['db.**', 'status'], exclude: ['db drop'] });
+await program.serve({ include: (command) => !command.mutation });
+```
+
+### Authentication
+
+`bearer` accepts `Authorization: Bearer <token>` requests with one of the tokens (compared in constant time); `auth` runs your own check on the `Request` and returns who made it. A refused request gets 401 (serve: `{ "error": "unauthorized" }`; MCP: a JSON-RPC error), with `WWW-Authenticate: Bearer` for bearer tokens and MCP. The identity reaches actions, hooks and interceptors as `ctx.auth` (`{ token }` with `bearer`; the `auth` result when it's set, which runs after the token check). Serve's `/_health` and CORS preflights don't authenticate.
+
+```typescript
+await program.serve({ bearer: process.env.API_TOKEN! });
+
+await program.mcp({
+  auth: async (req) => verifySession(req.headers.get('authorization')), // a user, or undefined for 401
+});
+
+.command('whoami', (c) => c.action((_args, ctx) => ctx.auth))
+```
+
+`eval()` and `cli()` take an `auth` preference too, which becomes `ctx.auth`.
+
+### Host names
+
+Bound to a loopback host (the default), the servers only answer requests whose `Host` is a loopback name, against DNS rebinding. `allowedHosts` lists more names (`.example.com` covers its subdomains) and applies the check to any binding; the bound host always passes, and `true` or `'all'` turns the check off.
+
+```typescript
+await program.serve({ host: '0.0.0.0', allowedHosts: ['api.example.com', '.internal.example.com'] });
+```
+
+### Limits
+
+`timeout` (ms) aborts a command's `ctx.signal` with a `TimeoutError` and fails the request (serve: 504; MCP: JSON-RPC error `-32001`); `maxConcurrent` refuses a request while that many commands are running (serve: 503 with `Retry-After`; MCP: `-32000`). A command that ignores its signal keeps its slot until it ends. MCP HTTP sessions are dropped after `sessionTtl` ms without requests (calls in flight keep them alive) and, past `maxSessions` (default 1000), least recently used first; their calls are aborted and the client gets 404, which tells it to start a new session.
+
+```typescript
+await program.mcp({ timeout: 30_000, maxConcurrent: 8, sessionTtl: 30 * 60_000 });
+```
 
 ---
 
@@ -378,6 +460,12 @@ Your action handlers should return data that the AI can use:
 ```
 
 The tool returns `{ result, logs, error }` to the AI model: `result` is the action's return value, `logs` what the command printed (`runtime.output`, `ctx.context.output.*`, and its stderr when it succeeded), and `error` the error message, after what it wrote to stderr, when the command failed, its arguments didn't validate, or the command doesn't exist. The AI SDK's `abortSignal` cancels the command through `ctx.signal`.
+
+`tool({ timeout })` aborts a call that runs longer (in ms): the command's signal is aborted and the model gets `Timed out after 30000 ms` in `error`. Commands with `expose` that leaves out `tool` fail with an error the model reads.
+
+```typescript
+const weatherTool = weatherCli.tool({ timeout: 30_000 });
+```
 
 ### Approval
 

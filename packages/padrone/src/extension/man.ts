@@ -4,7 +4,7 @@ import type { AnyPadroneBuilder, CommandTypesBase, PadroneCommand } from '../typ
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
-import { localOnlyInterceptor, passthroughSchema } from './utils.ts';
+import { passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -43,7 +43,6 @@ export function padroneMan(options: PadroneManOptions = {}): <T extends CommandT
     builder.command('man', (c) =>
       c
         .configure({ description: 'Generate man pages', hidden: true, builtin: true })
-        .intercept(localOnlyInterceptor())
         .arguments(
           passthroughSchema({
             setup: { type: 'boolean', description: 'Install the man pages' },

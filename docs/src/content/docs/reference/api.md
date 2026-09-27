@@ -48,6 +48,7 @@ program.configure({
 | `confirm` | `boolean \| string \| (args) => string` | Whether `padroneConfirm()` asks before running the command, overriding its `when` (by default, `mutation` commands ask): `false` never asks, `true` asks the default question, a string or a function of the validated args is the question |
 | `outputSchema` | `PadroneSchema` | Schema of the object the action returns: MCP's tool `outputSchema` (object schemas only) and the OpenAPI `result`. Not validated at runtime |
 | `builtin` | `boolean` | Mark a command an extension adds for the program itself (like the built-in `help`, `config` or `serve`): `padroneConfig()` and `padroneEnv()` don't fill its options or its subcommands' unless their `builtins: true` |
+| `expose` | `boolean \| PadroneCaller[]` | Which callers may run the command and its subcommands (a subcommand's own `expose` wins): `true` any (default), `false` local ones only (`cli`, `eval`, `run`, `repl`), or the callers allowed (`['cli', 'mcp']`). `serve()`/`mcp()` don't list a command they can't run, and running it from another caller fails (`"x" is only available on the command line`). Built-in commands default to `false`, except `help`, `version` and `repl` |
 | `help` | `PadroneHelpConfig \| PadroneHelpTransform` | `{ usage?, before?, after? }` for this command, or `(info, ctx) => HelpInfo \| string` for this command and its subcommands. See [Customizing Help](/padrone/guides/commands-arguments/#customizing-help) |
 | `complete` | `(ctx) => values \| { values, directive? }` (or a Promise) | Shell completion for the command's positionals (needs `padroneCompletion()`): called with `position`, `field`, `positionals`, `prefix`, `args`, `runtime` and `context`. A positional field's own `complete` wins. See [Command-level completion](/padrone/reference/args-meta/#command-level-completion) |
 
@@ -287,7 +288,7 @@ const program = createPadrone('my-cli')
 
 - `preAction` runs after validation (and after execute interceptors such as `padroneConfirm()`), right before the action; `postAction` runs after the action succeeds, with its result (awaited when it's a promise). Neither runs when validation fails, and `postAction` doesn't run when the action (or a `preAction`) throws.
 - An ancestor's `preAction` runs before a descendant's, and its `postAction` after. Several hooks on one command run in the order they were added.
-- Handlers get the action's context (`command`, `runtime`, `context`, `signal`, `caller`, `program`, `emit`) plus `args` and `dryRun`. On a command with subcommands, `command`, `args` and `context` are the running subcommand's; they're typed as the command's own, which its [global args](#globalargsschema-meta) always match.
+- Handlers get the action's context (`command`, `runtime`, `context`, `signal`, `caller`, `auth`, `program`, `emit`) plus `args` and `dryRun`. On a command with subcommands, `command`, `args` and `context` are the running subcommand's; they're typed as the command's own, which its [global args](#globalargsschema-meta) always match.
 - A hook can be async: the action waits for it and the run's result is a promise, as with an async action. Sync hooks keep a sync command sync.
 - Hooks are execute-phase interceptors (innermost, order `10000`), so they also run for dry runs (`ctx.dryRun`) and `run()`, but not for what a [`commandNotFound`](#commandnotfound) handler runs.
 
@@ -1018,6 +1019,7 @@ program.cli({ context: { db, logger } });
   - `runtime`: Override runtime configuration (including `argv`)
   - `context`: User-defined context object. Required when the program has a non-`unknown` context type.
   - `signal`: `AbortSignal` that cancels the run. Actions and interceptors see it through `ctx.signal`, together with process signals.
+  - `auth`: Who made the request, available to actions and interceptors as `ctx.auth` (serve and MCP pass what their `auth` returned).
 
 **Returns:** `PadroneCommandResult` with `command`, `args`, `argsResult`, and `result`. Returns a `Promise` when the matched command is async.
 
@@ -1046,7 +1048,7 @@ if (result.argsResult?.issues) {
 
 **Parameters:**
 - `input`: Command string to parse and execute
-- `preferences` (optional): `{ interactive?: boolean, context?: TContext, runtime?: PadroneRuntime, signal?: AbortSignal }` — override interactive prompting and the runtime, provide context, and cancel the run with `signal` (e.g. `AbortSignal.timeout(5000)`)
+- `preferences` (optional): `{ interactive?: boolean, context?: TContext, runtime?: PadroneRuntime, signal?: AbortSignal, auth?: unknown }` — override interactive prompting and the runtime, provide context, pass the caller's identity as `ctx.auth`, and cancel the run with `signal` (e.g. `AbortSignal.timeout(5000)`)
 
 **Returns:** `PadroneCommandResult` with `command`, `args`, `argsResult`, and `result`. Returns a `Promise` when the matched command is async.
 
@@ -1158,7 +1160,7 @@ program.help('', { format: 'markdown' });
 
 > **Experimental**: This API is experimental and may change in future releases.
 
-Start a Model Context Protocol server, exposing all commands as MCP tools (except hidden and built-in ones).
+Start a Model Context Protocol server, exposing all commands as MCP tools (except hidden and built-in ones, those `expose` keeps from `mcp`, and those `include`/`exclude` leave out).
 
 ```typescript
 // Start with defaults (HTTP on port 3000)
@@ -1186,6 +1188,15 @@ await program.mcp({
 | `version` | `string` | program version | Server version reported to clients |
 | `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable. Also the one non-loopback `Origin` accepted (`'*'` any) |
 | `maxBodySize` | `number` | 4 MiB | Largest HTTP request body in bytes; a larger one gets 413 |
+| `include` | `string[] \| (command) => boolean` | — | Only offer these commands: paths (`'db migrate'` or `'db.migrate'`), globs (`*` within a name, `**` any number of names: `'db.**'` is `db` and all under it; `'**'` matches the root), or a predicate. Others are neither listed nor run |
+| `exclude` | `string[] \| (command) => boolean` | — | Never offer these commands (same patterns) |
+| `auth` | `(req: Request) => unknown` | — | Authenticates each request (HTTP; not the CORS preflight): return the identity (`ctx.auth` in actions and interceptors) or a falsy value for 401. Runs after `bearer` |
+| `bearer` | `string \| string[]` | — | Accepted `Authorization: Bearer` tokens (compared in constant time); others get 401 with `WWW-Authenticate: Bearer`. `ctx.auth` is `{ token }` |
+| `allowedHosts` | `string[] \| true \| 'all'` | — | `Host` names answered besides loopback ones and the bound host (`.example.com` covers subdomains), so non-loopback bindings are protected from DNS rebinding too (403 otherwise); `true`/`'all'` turns the check off |
+| `timeout` | `number` | — | Longest a command may run, in ms: its signal is aborted and the request fails (JSON-RPC error `-32001`) |
+| `maxConcurrent` | `number` | — | Most commands running at once; one over it fails right away (JSON-RPC error `-32000`) |
+| `sessionTtl` | `number` | — | HTTP sessions idle this long (ms, no request and no call running) are dropped, aborting their calls; the client gets 404 and starts a new one |
+| `maxSessions` | `number` | `1000` | Most HTTP sessions kept; a new one drops the least recently used |
 
 **Returns:** `Promise<void>` (resolves when the server shuts down)
 
@@ -1199,7 +1210,7 @@ Also available as a built-in CLI command: `myapp mcp [http|stdio] --port 3000 --
 
 > **Experimental**: This API is experimental and may change in future releases.
 
-Start a REST HTTP server that exposes commands as endpoints. Each command becomes a route (`users list` → `/users/list`); hidden and built-in commands are left out. Commands with `mutation: true` only accept POST; others accept both GET and POST.
+Start a REST HTTP server that exposes commands as endpoints. Each command becomes a route (`users list` → `/users/list`); hidden and built-in commands are left out, as are those `expose` keeps from `serve` and those `include`/`exclude` leave out. Commands with `mutation: true` only accept POST; others accept both GET and POST.
 
 ```typescript
 // Start with defaults (port 3000)
@@ -1224,6 +1235,13 @@ await program.serve({
 | `basePath` | `string` | `'/'` | Base path prefix for all routes |
 | `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable. Also the one non-loopback, cross-site `Origin` accepted (`'*'` any) |
 | `maxBodySize` | `number` | 4 MiB | Largest request body in bytes; a larger one gets 413 (`payload_too_large`) |
+| `include` | `string[] \| (command) => boolean` | — | Only offer these commands: paths (`'db migrate'` or `'db.migrate'`), globs (`*` within a name, `**` any number of names: `'db.**'` is `db` and all under it; `'**'` matches the root), or a predicate. Others are neither listed nor run |
+| `exclude` | `string[] \| (command) => boolean` | — | Never offer these commands (same patterns) |
+| `auth` | `(req: Request) => unknown` | — | Authenticates each request (not the CORS preflight or `/_health`): return the identity (`ctx.auth` in actions and interceptors) or a falsy value for 401. Runs after `bearer` |
+| `bearer` | `string \| string[]` | — | Accepted `Authorization: Bearer` tokens (compared in constant time); others get 401 with `WWW-Authenticate: Bearer`. `ctx.auth` is `{ token }` |
+| `allowedHosts` | `string[] \| true \| 'all'` | — | `Host` names answered besides loopback ones and the bound host (`.example.com` covers subdomains), so non-loopback bindings are protected from DNS rebinding too (403 otherwise); `true`/`'all'` turns the check off |
+| `timeout` | `number` | — | Longest a command may run, in ms: its signal is aborted and the request fails with 504 (`timeout`) |
+| `maxConcurrent` | `number` | — | Most commands running at once; one over it fails right away with 503 (`unavailable`, `Retry-After: 1`) |
 | `builtins.health` | `boolean` | `true` | Enable `GET /_health` endpoint |
 | `builtins.help` | `boolean` | `true` | Enable `GET /_help` and `GET /_help/:command` |
 | `builtins.schema` | `boolean` | `true` | Enable `GET /_schema` and `GET /_schema/:command` |
@@ -1254,7 +1272,7 @@ Also available as a built-in CLI command: `myapp serve --port 3000 --host 0.0.0.
 
 ---
 
-### .tool()
+### .tool(prefs?)
 
 Generate a Vercel AI SDK compatible tool.
 
@@ -1262,6 +1280,8 @@ Generate a Vercel AI SDK compatible tool.
 import { streamText } from 'ai';
 
 const tool = program.tool();
+// A call running longer than 30 s is aborted, and the model gets "Timed out after 30000 ms"
+const limited = program.tool({ timeout: 30_000 });
 
 await streamText({
   model: yourModel,

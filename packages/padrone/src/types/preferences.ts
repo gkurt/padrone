@@ -90,8 +90,20 @@ export type PadroneEvalPreferences = {
    */
   signal?: AbortSignal;
 
+  /**
+   * Who made the request, available to actions and interceptors as `ctx.auth`. `serve()` and `mcp()` pass what their
+   * `auth` option returned.
+   */
+  auth?: unknown;
+
   /** @internal Which API entry point triggered this execution. */
   caller?: PadroneActionContext['caller'];
+};
+
+/** Options for `tool()`. */
+export type PadroneToolPreferences = {
+  /** Longest a call may run, in ms: then its signal is aborted and the model gets a "Timed out" error. Default: no limit. */
+  timeout?: number;
 };
 
 /**

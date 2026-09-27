@@ -8,7 +8,7 @@ import { readTextFile } from '../util/files.ts';
 import { findExecutable, pathDirs, spawnInherited } from '../util/spawn.ts';
 import { getRootCommand } from '../util/utils.ts';
 import { detectInstaller } from './upgrade.ts';
-import { localOnlyInterceptor, passthroughSchema } from './utils.ts';
+import { passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -283,7 +283,6 @@ export function padronePlugins(options: PadronePluginsOptions = {}): <T extends 
     return result.command(commandName, (c) =>
       c
         .configure({ description: 'Manage plugins', builtin: true })
-        .intercept(localOnlyInterceptor())
         .command(['list', 'ls'], (l) =>
           l
             .configure({ description: 'List installed plugins' })

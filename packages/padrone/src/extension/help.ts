@@ -389,6 +389,8 @@ export function padroneHelp(options: PadroneHelpOptions = {}): <T extends Comman
             description: 'Display help for a command',
             hidden: true,
             builtin: true,
+            // Remote callers (tool() especially) read help and the version too
+            expose: true,
             flagNames: options.flags ?? DEFAULT_HELP_FLAGS,
             helpTopics: options.topics,
           } as PadroneCommandConfig)

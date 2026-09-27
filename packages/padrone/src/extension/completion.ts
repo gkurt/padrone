@@ -7,7 +7,7 @@ import type { AnyPadroneBuilder, CommandTypesBase, PadroneCommand } from '../typ
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
-import { passthroughSchema } from './utils.ts';
+import { localOnlyInterceptor, passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -59,6 +59,7 @@ export function padroneCompletion(): <T extends CommandTypesBase>(builder: T) =>
       .command('completion', (c) =>
         c
           .configure({ description: 'Generate shell completion scripts', hidden: true, builtin: true })
+          .intercept(localOnlyInterceptor())
           .arguments(
             passthroughSchema({
               shell: {

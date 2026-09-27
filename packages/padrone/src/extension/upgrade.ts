@@ -4,7 +4,7 @@ import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import { fetchLatestVersion, isNewerVersion } from '../feature/update-check.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
 import { getRootCommand, getVersion } from '../util/utils.ts';
-import { passthroughSchema } from './utils.ts';
+import { localOnlyInterceptor, passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -229,6 +229,7 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
     builder.intercept(configMarker).command(commandName, (c) =>
       c
         .configure({ description: 'Upgrade to the latest version', mutation: true, builtin: true })
+        .intercept(localOnlyInterceptor())
         .intercept(planner)
         .arguments(
           passthroughSchema({

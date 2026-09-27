@@ -392,6 +392,31 @@ export function findCommandByName(name: string, commands?: AnyPadroneCommand[]):
 
 export type CollectedEndpoint = { name: string; command: AnyPadroneCommand };
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+const hostnameOf = (url: string) => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+};
+
+/** Whether a request's `Origin` may reach an HTTP server: a loopback origin, or the one `cors` explicitly allows (`'*'` any). */
+export function isAllowedOrigin(origin: string, cors: string | false | undefined): boolean {
+  if (cors === '*' || (cors && cors === origin)) return true;
+  return /^https?:/.test(origin) && LOOPBACK_HOSTS.has(hostnameOf(origin) ?? '');
+}
+
+/**
+ * DNS rebinding protection: a server bound to a loopback address only answers requests whose `Host` names a loopback
+ * host, as a page on another domain that resolves to 127.0.0.1 sends its own name. Other bindings allow any.
+ */
+export function isAllowedHost(host: string | undefined, boundHost: string): boolean {
+  if (host === undefined || !LOOPBACK_HOSTS.has(boundHost === '::1' ? '[::1]' : boundHost)) return true;
+  return LOOPBACK_HOSTS.has(hostnameOf(`http://${host}`) ?? '');
+}
+
 /** Collect all actionable commands recursively. Hidden and built-in commands are excluded. */
 export function collectEndpoints(commands: AnyPadroneCommand[] | undefined, prefix: string): CollectedEndpoint[] {
   if (!commands) return [];

@@ -3,8 +3,8 @@ import { createPadrone, padroneLogger } from 'padrone';
 import type { OtelSpan, OtelTracerProvider } from 'padrone/tracing';
 import { padroneTracing } from 'padrone/tracing';
 import * as z from 'zod/v4';
-import { commandSymbol } from '../src/core/commands.ts';
-import { createMcpHandler, isAllowedOrigin, startMcpServer } from '../src/feature/mcp.ts';
+import { commandSymbol, isAllowedOrigin } from '../src/core/commands.ts';
+import { createMcpHandler, startMcpServer } from '../src/feature/mcp.ts';
 import { createServeHandler } from '../src/feature/serve.ts';
 
 const getCommand = (program: any) => program[commandSymbol];

@@ -117,11 +117,12 @@ export function isRemoteCaller(caller: string): boolean {
 }
 
 /**
- * For command groups that manage the user's local files (`config`, `alias`): serve, MCP and `tool()` calls can't run
- * their commands, so a request can't read or write files on the host.
+ * For built-in commands that act on the host (`config`, `alias`, `upgrade`, `completion`, `man`, `serve`, `mcp`): serve,
+ * MCP and `tool()` calls can't run them, so a request can't read or write files, install anything or open a server there.
+ * Outermost, so it refuses before another interceptor (upgrade's registry check) does any work.
  */
 export function localOnlyInterceptor() {
-  return defineInterceptor({ id: 'padrone:local-only', name: 'padrone:local-only' }, () => ({
+  return defineInterceptor({ id: 'padrone:local-only', name: 'padrone:local-only', order: -3000 }, () => ({
     execute(ctx, next) {
       if (isRemoteCaller(ctx.caller))
         throw new ActionError(`"${ctx.command.path || ctx.command.name}" is only available on the command line`);

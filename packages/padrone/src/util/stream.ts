@@ -91,11 +91,31 @@ export function concatBytes(chunks: Uint8Array[]): Uint8Array {
   return result;
 }
 
-/** Read an async iterable of chunks into a UTF-8 string. */
-export async function readStreamAsText(stream: AsyncIterable<Uint8Array | string>): Promise<string> {
+/** Thrown by `readStreamAsText` when the stream is longer than its `maxBytes`. */
+export class BodyTooLargeError extends RangeError {}
+
+/** Read an async iterable of chunks into a UTF-8 string, throwing a `BodyTooLargeError` past `maxBytes`. */
+export async function readStreamAsText(stream: AsyncIterable<Uint8Array | string>, maxBytes = Number.POSITIVE_INFINITY): Promise<string> {
   const chunks: Uint8Array[] = [];
+  let size = 0;
   for await (const chunk of stream) {
-    chunks.push(typeof chunk === 'string' ? textEncoder.encode(chunk) : chunk);
+    const bytes = typeof chunk === 'string' ? textEncoder.encode(chunk) : chunk;
+    size += bytes.byteLength;
+    if (size > maxBytes) throw new BodyTooLargeError(`The body is larger than ${maxBytes} bytes`);
+    chunks.push(bytes);
   }
   return textDecoder.decode(concatBytes(chunks));
+}
+
+/** The largest HTTP request body serve and MCP read by default (the MCP SDK's limit). */
+export const DEFAULT_MAX_BODY_SIZE = 4 * 1024 * 1024;
+
+/** Reads an HTTP request body, refusing one whose `Content-Length` (without reading it) or size is over `maxBytes`. */
+export async function readBodyText(
+  body: AsyncIterable<Uint8Array> | null | undefined,
+  contentLength: string | null | undefined,
+  maxBytes = DEFAULT_MAX_BODY_SIZE,
+): Promise<string> {
+  if (Number(contentLength) > maxBytes) throw new BodyTooLargeError(`The body is larger than ${maxBytes} bytes`);
+  return body ? readStreamAsText(body, maxBytes) : '';
 }

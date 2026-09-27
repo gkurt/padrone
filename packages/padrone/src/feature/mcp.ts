@@ -1,10 +1,17 @@
 import { isPlainObject } from '../core/args.ts';
-import { buildInputSchema, buildOutputSchema, collectEndpoints, serializeArgsToFlags } from '../core/commands.ts';
+import {
+  buildInputSchema,
+  buildOutputSchema,
+  collectEndpoints,
+  isAllowedHost,
+  isAllowedOrigin,
+  serializeArgsToFlags,
+} from '../core/commands.ts';
 import { formatIssueMessages } from '../core/validate.ts';
 import { generateHelp } from '../output/help.ts';
 import type { AnyPadroneCommand, AnyPadroneProgram } from '../types/index.ts';
 import { outputValueToText } from '../util/json.ts';
-import { readStreamAsText } from '../util/stream.ts';
+import { BodyTooLargeError, readBodyText } from '../util/stream.ts';
 
 export type PadroneMcpPreferences = {
   /** Server name. Defaults to the program name. */
@@ -29,6 +36,8 @@ export type PadroneMcpPreferences = {
    * or the origin set here (`'*'` set explicitly allows any).
    */
   cors?: string | false;
+  /** Largest HTTP request body accepted, in bytes; a larger one gets a 413. Defaults to 4 MiB. Only used with `transport: 'http'`. */
+  maxBodySize?: number;
 };
 
 const PROTOCOL_VERSION = '2025-11-25';
@@ -81,19 +90,6 @@ function buildToolDefinition(toolName: string, name: string, cmd: AnyPadroneComm
     outputSchema: outputSchema?.type === 'object' ? outputSchema : undefined,
     annotations: buildAnnotations(cmd),
   };
-}
-
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
-
-/** Whether a request's `Origin` may reach the HTTP transport: a loopback origin, or the one `cors` explicitly allows. */
-export function isAllowedOrigin(origin: string, cors: string | false | undefined): boolean {
-  if (cors === '*' || (cors && cors === origin)) return true;
-  try {
-    const url = new URL(origin);
-    return (url.protocol === 'http:' || url.protocol === 'https:') && LOOPBACK_HOSTS.has(url.hostname);
-  } catch {
-    return false;
-  }
 }
 
 /** Create the MCP request handler. Returns an async function that processes a JSON-RPC request and returns a response (or undefined for notifications). */
@@ -372,6 +368,10 @@ async function startHttpTransport(
       sendJson(403, { jsonrpc: '2.0', id: null, error: { code: -32600, message: `Origin not allowed: ${origin}` } });
       return;
     }
+    if (!isAllowedHost(req.headers.host, host)) {
+      sendJson(403, { jsonrpc: '2.0', id: null, error: { code: -32600, message: `Host not allowed: ${req.headers.host}` } });
+      return;
+    }
 
     if (req.method === 'OPTIONS') {
       res.writeHead(corsOrigin ? 204 : 405);
@@ -433,9 +433,12 @@ async function startHttpTransport(
 
     let rpcRequest: unknown;
     try {
-      rpcRequest = JSON.parse(await readStreamAsText(req as AsyncIterable<Uint8Array>));
-    } catch {
-      sendJson(400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } });
+      rpcRequest = JSON.parse(await readBodyText(req as AsyncIterable<Uint8Array>, req.headers['content-length'], prefs.maxBodySize));
+    } catch (error) {
+      const tooLarge = error instanceof BodyTooLargeError;
+      if (tooLarge) res.setHeader('Connection', 'close');
+      const rpcError = tooLarge ? { code: -32600, message: error.message } : { code: -32700, message: 'Parse error' };
+      sendJson(tooLarge ? 413 : 400, { jsonrpc: '2.0', id: null, error: rpcError });
       return;
     }
 

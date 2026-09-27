@@ -50,6 +50,7 @@ export const configKeys = [
   'hidden',
   'mutation',
   'needsApproval',
+  'outputSchema',
   'help',
   'flagNames',
 ] as const;
@@ -384,6 +385,16 @@ export function buildInputSchema(cmd: AnyPadroneCommand): Record<string, unknown
     type: 'object',
     properties: { ...properties, dryRun: { type: 'boolean', description: 'Show what would change without changing anything' } },
   };
+}
+
+/** The JSON Schema of a command's result, from `.configure({ outputSchema })`. */
+export function buildOutputSchema(cmd: AnyPadroneCommand): Record<string, unknown> | undefined {
+  if (!cmd.outputSchema) return undefined;
+  try {
+    return cmd.outputSchema['~standard'].jsonSchema.output({ target: 'draft-2020-12', libraryOptions: { unrepresentable: 'any' } });
+  } catch {
+    return undefined;
+  }
 }
 
 /** A JSON schema with its sensitive properties marked `writeOnly`, without their defaults and examples. */

@@ -53,7 +53,7 @@ Additional opt-in extensions are available for advanced features:
 | `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support; `remote: 'exit'` returns an app's last frame to serve, MCP and `tool()` calls |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
-| `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing (pass `api: { context, trace }` for span parenting) |
+| `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing (pass `api: { context, trace }` for span parenting); spans are named `<caller> <command>`, with a server kind for serve and MCP |
 | `padroneCompletion()` | `'padrone/completion'` | Shell completion generation (dynamic, with descriptions, field `complete` callbacks and `hint`s) |
 | `padroneMan()` | `'padrone/man'` | Man page generation |
 

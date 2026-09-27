@@ -631,6 +631,7 @@ z.object({
 - Interactive prompts ask for it without echo (`type: 'password'`) and never prefill it.
 - Help, generated docs and man pages don't show its default or examples.
 - MCP, serve and `tool()` input schemas mark it `writeOnly` without `default` or `examples`.
+- `serve()` rejects it in GET query strings (400), so it doesn't end up in URLs and logs, and leaves it out of the OpenAPI GET parameters: send it in a POST body.
 - Padrone's own error messages never include option values.
 - `config list` (from `padroneConfig({ command: true })`) shows its value as `[redacted]`.
 - Extensions that log or record args can call `redactArgs(command, args)` (from `'padrone'`): a copy with sensitive fields, nested and global ones included, replaced by `'[redacted]'`.

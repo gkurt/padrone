@@ -31,9 +31,15 @@ export interface OtelSpan {
   spanContext(): { traceId: string; spanId: string };
 }
 
+/** OTEL `SpanKind`: `0` internal, `1` server, `2` client, `3` producer, `4` consumer. */
+export type OtelSpanKind = 0 | 1 | 2 | 3 | 4;
+
+/** Minimal subset of OTEL `SpanOptions`. */
+export type OtelSpanOptions = { kind?: OtelSpanKind };
+
 /** Minimal subset of OTEL `Tracer`. */
 export interface OtelTracer {
-  startSpan(name: string): OtelSpan;
+  startSpan(name: string, options?: OtelSpanOptions): OtelSpan;
 }
 
 /** Minimal subset of OTEL `TracerProvider`. */
@@ -83,6 +89,14 @@ export type WithTracing<T> = WithInterceptor<T, { tracing: PadroneTracer }>;
 // ---------------------------------------------------------------------------
 
 const OTEL_ERROR: SpanStatusCode = 2;
+const SPAN_KIND_INTERNAL: OtelSpanKind = 0;
+const SPAN_KIND_SERVER: OtelSpanKind = 1;
+
+/** Records `error` on `span` and marks it failed with the error's message, per OTEL conventions. */
+function failSpan(span: OtelSpan, error: unknown): void {
+  span.recordException(error);
+  span.setStatus({ code: OTEL_ERROR, message: error instanceof Error ? error.message : String(error) });
+}
 
 type ResolvedTracingConfig = { provider: OtelTracerProvider; serviceName: string | undefined; api: OtelContextApi | undefined };
 
@@ -100,11 +114,14 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
       (tracer ??= config.provider.getTracer(config.serviceName ?? getRootCommand(command).name));
 
     // Started once the command is known: in the route phase, right before the action for `run()`,
-    // or in the error phase when parsing failed (named after the root command)
+    // or in the error phase when parsing failed (named after the root command).
+    // Named `<caller> <command>`; serve and MCP handle a request, so their spans are server spans
     const startRootSpan = (ctx: Pick<InterceptorRouteContext, 'command' | 'caller'>) => {
       if (rootSpan) return rootSpan;
-      rootSpan = getTracer(ctx.command).startSpan(`cli ${ctx.command.path || ctx.command.name}`);
-      rootSpan.setAttribute('padrone.command', ctx.command.path || ctx.command.name);
+      const command = ctx.command.path || ctx.command.name;
+      const kind = ctx.caller === 'serve' || ctx.caller === 'mcp' ? SPAN_KIND_SERVER : SPAN_KIND_INTERNAL;
+      rootSpan = getTracer(ctx.command).startSpan(`${ctx.caller} ${command}`, { kind });
+      rootSpan.setAttribute('padrone.command', command);
       rootSpan.setAttribute('padrone.caller', ctx.caller);
       return rootSpan;
     };
@@ -145,8 +162,7 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
                     return v;
                   },
                   (err: unknown) => {
-                    child.recordException(err);
-                    child.setStatus({ code: OTEL_ERROR });
+                    failSpan(child, err);
                     child.end();
                     throw err;
                   },
@@ -155,8 +171,7 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
               child.end();
               return result;
             } catch (err) {
-              child.recordException(err);
-              child.setStatus({ code: OTEL_ERROR });
+              failSpan(child, err);
               child.end();
               throw err;
             }
@@ -168,8 +183,7 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
 
         // `run()` has no error/shutdown phases: settle the root span here
         const fail = (err: unknown): never => {
-          span.recordException(err);
-          span.setStatus({ code: OTEL_ERROR });
+          failSpan(span, err);
           span.end();
           throw err;
         };
@@ -196,8 +210,7 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
 
       error(ctx, next) {
         const span = startRootSpan(ctx);
-        span.recordException(ctx.error);
-        span.setStatus({ code: OTEL_ERROR });
+        failSpan(span, ctx.error);
         span.setAttribute('padrone.phase', ctx.phase);
         return next();
       },

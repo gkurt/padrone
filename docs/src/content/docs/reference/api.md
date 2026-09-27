@@ -44,6 +44,8 @@ program.configure({
 | `hidden` | `boolean` | Hide from help output |
 | `group` | `string` | Group name for organizing in help output |
 | `mutation` | `boolean` | Mark as mutation (POST-only in serve, destructiveHint in MCP, defaults needsApproval in tool) |
+| `needsApproval` | `boolean \| (args) => boolean \| Promise<boolean>` | Whether `tool()` asks for approval before running the command. A function gets the validated args (call `.configure()` after `.arguments()` for them to be typed); with invalid args approval is asked. Defaults to `mutation`; dry runs never need approval |
+| `outputSchema` | `PadroneSchema` | Schema of the object the action returns: MCP's tool `outputSchema` (object schemas only) and the OpenAPI `result`. Not validated at runtime |
 | `help` | `PadroneHelpConfig \| PadroneHelpTransform` | `{ usage?, before?, after? }` for this command, or `(info, ctx) => HelpInfo \| string` for this command and its subcommands. See [Customizing Help](/padrone/guides/commands-arguments/#customizing-help) |
 
 ---
@@ -1473,7 +1475,7 @@ The following extensions live in their own subpath imports to keep optional depe
 | `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support; serve, MCP and `tool()` calls get the first frame as text, or the last frame once the app exits with `remote: 'exit'` (`remoteTimeout`, default 10s) |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
-| `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing. Pass `api: { context, trace }` from `@opentelemetry/api` to parent child spans to the command's span |
+| `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing. Pass `api: { context, trace }` from `@opentelemetry/api` to parent child spans to the command's span. The span is named `<caller> <command>` (`cli deploy`, `serve users list`), is a server span for serve and MCP calls (internal otherwise), has `padrone.command` and `padrone.caller` attributes (never args), and failures set its status message to the error's |
 | `padroneCompletion()` | `'padrone/completion'` | Shell completion generation, with dynamic per-command completion (`__complete2`), descriptions, and field `complete` callbacks and `hint`s |
 | `padroneMan()` | `'padrone/man'` | Man page generation |
 

@@ -64,7 +64,7 @@ program.cli();
 | `.command(name, builderFn?)` | Add or extend a subcommand |
 | `.context(transform?)` | Define typed context or transform inherited context |
 | `.mount(name, program, options?)` | Mount another Padrone program as a subcommand (with optional `{ context }`) |
-| `.configure(config)` | Set title, description, version, deprecated, hidden, group, mutation |
+| `.configure(config)` | Set title, description, version, deprecated, hidden, group, mutation, needsApproval, outputSchema |
 | `.intercept(interceptor)` | Register a middleware interceptor |
 | `.extend(extension)` | Apply a build-time extension (bundle of config, commands, interceptors) |
 | `.extend(padroneEnv(schema))` | Parse environment variables into args (import `padroneEnv` from `'padrone'`) |

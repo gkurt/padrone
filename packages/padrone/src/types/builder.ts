@@ -327,7 +327,7 @@ export type PadroneBuilderMethods<
 
   /** Set command metadata like title, description, version, hidden, deprecated, etc. @category Builder */
   configure: (
-    config: PadroneCommandConfig,
+    config: PadroneCommandConfig<StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>>,
   ) => BuilderOrProgram<
     TReturn,
     TProgramName,

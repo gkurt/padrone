@@ -111,8 +111,7 @@ describe('tool()', () => {
   const program = createPadrone('app').command('del', (c) =>
     c
       .arguments(z.object({ force: z.boolean().optional(), n: z.number() }))
-      // Not in the typed config yet; stored on the command like `mutation`
-      .configure({ needsApproval: (args: { force?: boolean }) => !!args.force } as never)
+      .configure({ needsApproval: (args) => !!args.force })
       .action(() => 'deleted'),
   );
   const tool = program.tool();

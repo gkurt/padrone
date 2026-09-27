@@ -1,4 +1,12 @@
-import { buildInputSchema, type CollectedEndpoint, collectEndpoints, serializeArgsToFlags } from '../core/commands.ts';
+import { extractSchemaMetadata, parsePositionalConfig } from '../core/args.ts';
+import {
+  buildInputSchema,
+  buildOutputSchema,
+  type CollectedEndpoint,
+  collectEndpoints,
+  getGlobalArgs,
+  serializeArgsToFlags,
+} from '../core/commands.ts';
 import { RoutingError, ValidationError } from '../core/errors.ts';
 import { formatIssueMessages } from '../core/validate.ts';
 import { generateHelp } from '../output/help.ts';
@@ -49,9 +57,11 @@ function normalizeBasePath(basePath = '/'): string {
   return `/${basePath}/`.replace(/\/{2,}/g, '/');
 }
 
-function errorToResponse(error: unknown): Response {
+/** The error response, with what the command wrote to stderr (left out when it wrote nothing). */
+function errorToResponse(error: unknown, stderr: string[] = []): Response {
   // The route was already matched, so a routing error here means bad input (e.g. an extra positional value)
   const status = error instanceof ValidationError || error instanceof RoutingError ? 400 : 500;
+  const logs = stderr.length > 0 ? { stderr } : {};
   if (error instanceof ValidationError) {
     return jsonResponse(
       {
@@ -59,22 +69,25 @@ function errorToResponse(error: unknown): Response {
         error: 'validation',
         message: error.message,
         issues: error.issues.map((i) => ({ path: i.path?.map(String), message: i.message })),
+        ...logs,
       },
       status,
     );
   }
   if (error instanceof RoutingError) {
-    return jsonResponse({ ok: false, error: 'bad_request', message: error.message, suggestions: error.suggestions }, status);
+    return jsonResponse({ ok: false, error: 'bad_request', message: error.message, suggestions: error.suggestions, ...logs }, status);
   }
   const message = error instanceof Error ? error.message : String(error);
-  return jsonResponse({ ok: false, error: 'action_error', message }, status);
+  return jsonResponse({ ok: false, error: 'action_error', message, ...logs }, status);
 }
+
+const stderrSchema = { type: 'array', items: { type: 'string' }, description: 'Lines the command wrote to stderr' };
 
 /** Generate an OpenAPI 3.1.0 spec from the command tree. */
 function buildOpenApiSpec(existingCommand: AnyPadroneCommand, endpoints: CollectedEndpoint[], basePath: string): Record<string, unknown> {
   const paths: Record<string, unknown> = {};
 
-  const responseSchema = {
+  const responses = (resultSchema: Record<string, unknown> = {}) => ({
     '200': {
       description: 'Successful response',
       content: {
@@ -83,8 +96,9 @@ function buildOpenApiSpec(existingCommand: AnyPadroneCommand, endpoints: Collect
             type: 'object',
             properties: {
               ok: { type: 'boolean', const: true },
-              result: {},
+              result: resultSchema,
               output: { type: 'array', items: { type: 'string' }, description: 'Lines the command printed' },
+              stderr: stderrSchema,
             },
           },
         },
@@ -101,6 +115,7 @@ function buildOpenApiSpec(existingCommand: AnyPadroneCommand, endpoints: Collect
               error: { type: 'string', enum: ['validation', 'bad_request'] },
               message: { type: 'string' },
               issues: { type: 'array', items: { type: 'object', properties: { path: { type: 'array' }, message: { type: 'string' } } } },
+              stderr: stderrSchema,
             },
           },
         },
@@ -131,32 +146,24 @@ function buildOpenApiSpec(existingCommand: AnyPadroneCommand, endpoints: Collect
               ok: { type: 'boolean', const: false },
               error: { type: 'string', const: 'action_error' },
               message: { type: 'string' },
+              stderr: stderrSchema,
             },
           },
         },
       },
     },
-  };
+  });
 
   for (const { name, command: cmd } of endpoints) {
     const urlPath = `${basePath}${toUrlPath(name)}`;
     const inputSchema = buildInputSchema(cmd);
     const description = cmd.description || cmd.title || `Run the "${name}" command`;
     const pathItem: Record<string, unknown> = {};
+    const responseSchema = responses(buildOutputSchema(cmd));
 
-    const postOp = {
-      summary: cmd.title || name,
-      description,
-      operationId: `post_${name.replace(/\./g, '_')}`,
-      requestBody: { content: { 'application/json': { schema: inputSchema } } },
-      responses: responseSchema,
-    };
-
-    if (cmd.mutation) {
-      pathItem.post = postOp;
-    } else {
-      // GET: args as query parameters
-      const queryParams = toQueryParameters(inputSchema);
+    // GET: args as query parameters, unless the command is a mutation or needs a sensitive field
+    const queryParams = cmd.mutation ? undefined : toQueryParameters(inputSchema);
+    if (queryParams) {
       pathItem.get = {
         summary: cmd.title || name,
         description,
@@ -164,8 +171,14 @@ function buildOpenApiSpec(existingCommand: AnyPadroneCommand, endpoints: Collect
         parameters: queryParams,
         responses: responseSchema,
       };
-      pathItem.post = postOp;
     }
+    pathItem.post = {
+      summary: cmd.title || name,
+      description,
+      operationId: `post_${name.replace(/\./g, '_')}`,
+      requestBody: { content: { 'application/json': { schema: inputSchema } } },
+      responses: responseSchema,
+    };
 
     paths[urlPath] = pathItem;
   }
@@ -183,14 +196,59 @@ function buildOpenApiSpec(existingCommand: AnyPadroneCommand, endpoints: Collect
 
 type JsonSchemaObject = Record<string, unknown> & { properties?: Record<string, JsonSchemaObject>; required?: string[] };
 
-/** GET query parameters for an input schema: nested objects become dotted names (`db.host`), which is what the server parses. */
-function toQueryParameters(schema: JsonSchemaObject, prefix = '', parentRequired = true): Record<string, unknown>[] {
-  return Object.entries(schema.properties ?? {}).flatMap(([key, propSchema]) => {
+/**
+ * GET query parameters for an input schema: nested objects become dotted names (`db.host`), which is what the server parses.
+ * Sensitive (`writeOnly`) fields are left out, as the server rejects them in query strings; `undefined` when one is required.
+ */
+function toQueryParameters(schema: JsonSchemaObject, prefix = '', parentRequired = true): Record<string, unknown>[] | undefined {
+  const params: Record<string, unknown>[] = [];
+  for (const [key, propSchema] of Object.entries(schema.properties ?? {})) {
     const name = `${prefix}${key}`;
     const required = parentRequired && (schema.required?.includes(key) ?? false);
-    if (propSchema.type === 'object' && propSchema.properties) return toQueryParameters(propSchema, `${name}.`, required);
-    return [{ name, in: 'query', schema: propSchema, required }];
-  });
+    if (propSchema.writeOnly) {
+      if (required) return undefined;
+      continue;
+    }
+    if (propSchema.type !== 'object' || !propSchema.properties) {
+      params.push({ name, in: 'query', schema: propSchema, required });
+      continue;
+    }
+    const nested = toQueryParameters(propSchema, `${name}.`, required);
+    if (!nested) return undefined;
+    params.push(...nested);
+  }
+  return params;
+}
+
+/**
+ * Whether a query key sets a sensitive (`writeOnly`) field, whose value would end up in URLs and logs: option names,
+ * aliases and flags, dotted paths into nested objects, and `_` when a positional is sensitive.
+ */
+function createSensitiveQueryCheck(cmd: AnyPadroneCommand, inputSchema: JsonSchemaObject): (key: string) => boolean {
+  const names: Record<string, string> = {};
+  const globals = getGlobalArgs(cmd);
+  for (const [schema, meta] of [
+    [globals?.schema, globals?.meta],
+    [cmd.argsSchema, cmd.meta],
+  ] as const) {
+    if (!schema) continue;
+    const { flags, aliases } = extractSchemaMetadata(schema, meta?.fields, meta?.autoAlias);
+    Object.assign(names, flags, aliases);
+  }
+  const isSensitivePath = (path: string[]) => {
+    let node: JsonSchemaObject | undefined = inputSchema;
+    for (const part of path) {
+      node = node?.properties && Object.hasOwn(node.properties, part) ? node.properties[part] : undefined;
+      if (node?.writeOnly) return true;
+    }
+    return false;
+  };
+  const positionals = parsePositionalConfig(cmd.meta?.positional ?? []);
+  return (key) => {
+    if (key === '_') return positionals.some(({ name }) => isSensitivePath([name]));
+    const [first = '', ...rest] = key.split('.');
+    return isSensitivePath([Object.hasOwn(names, first) ? names[first]! : first, ...rest]);
+  };
 }
 
 function scalarDocsHtml(openapiUrl: string, title: string): string {
@@ -240,7 +298,8 @@ export function createServeHandler(
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
   }
 
-  const handleError = (error: unknown, request: Request) => (prefs?.onError ? prefs.onError(error, request) : errorToResponse(error));
+  const handleError = (error: unknown, request: Request, stderr?: string[]) =>
+    prefs?.onError ? prefs.onError(error, request) : errorToResponse(error, stderr);
 
   async function evalAndRespond(input: string[], request: Request): Promise<Response> {
     const output: string[] = [];
@@ -257,15 +316,20 @@ export function createServeHandler(
       },
     });
 
-    if (result.error) return handleError(result.error, request);
+    if (result.error) return handleError(result.error, request, errors);
 
     if (result.argsResult?.issues) {
       const { issues } = result.argsResult;
-      return handleError(new ValidationError(`Validation error:\n${formatIssueMessages(issues)}`, issues as any), request);
+      return handleError(new ValidationError(`Validation error:\n${formatIssueMessages(issues)}`, issues as any), request, errors);
     }
 
-    // Printed output (`runtime.output`, `ctx.context.output.*`) is returned alongside the result
-    return jsonResponse({ ok: true, result: result.result ?? null, ...(output.length > 0 && { output }) });
+    // Printed output (`runtime.output`, `ctx.context.output.*`) and stderr (warnings, logs) are returned alongside the result
+    return jsonResponse({
+      ok: true,
+      result: result.result ?? null,
+      ...(output.length > 0 && { output }),
+      ...(errors.length > 0 && { stderr: errors }),
+    });
   }
 
   return async function handleRequest(req: Request): Promise<Response> {
@@ -399,6 +463,12 @@ export function createServeHandler(
       argParts = [];
       const positionals: string[] = [];
       const inputSchema = buildInputSchema(endpoint.command) as JsonSchemaObject;
+      const isSensitive = createSensitiveQueryCheck(endpoint.command, inputSchema);
+      const sensitiveKey = [...url.searchParams.keys()].find(isSensitive);
+      if (sensitiveKey !== undefined) {
+        const message = `"${sensitiveKey}" is sensitive: send it in a POST body, not the query string`;
+        return addCorsHeaders(jsonResponse({ ok: false, error: 'bad_request', message }, 400));
+      }
       const needsValue = (key: string) => {
         const field = key.split('.').reduce<JsonSchemaObject | undefined>((schema, part) => schema?.properties?.[part], inputSchema);
         const types = [field?.type, ...((field?.anyOf as JsonSchemaObject[] | undefined) ?? []).map((s) => s.type)];

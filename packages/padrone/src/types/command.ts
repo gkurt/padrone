@@ -62,9 +62,10 @@ export type PadroneActionContext<TContext = unknown> = {
 };
 
 /**
- * Configuration for a command.
+ * Configuration for a command. `TArgs` is the validated args type `needsApproval` receives
+ * (set when `.configure()` comes after `.arguments()`).
  */
-export type PadroneCommandConfig = {
+export type PadroneCommandConfig<TArgs = any> = {
   /** A short title for the command, displayed in help. */
   title?: string;
   /** A longer description of what the command does. */
@@ -86,6 +87,17 @@ export type PadroneCommandConfig = {
    * - In `tool()`: defaults `needsApproval` to `true` when not explicitly set.
    */
   mutation?: boolean;
+  /**
+   * Whether `tool()` asks the user to approve a call before running it (the AI SDK's `needsApproval`).
+   * A function receives the validated args; when the args don't validate, approval is asked without calling it.
+   * Defaults to `mutation`. Dry runs never need approval.
+   */
+  needsApproval?: boolean | ((args: TArgs) => boolean | Promise<boolean>);
+  /**
+   * Schema of the object the action returns. `mcp()` advertises it as the tool's `outputSchema` (it must describe
+   * an object), and `serve()` documents it as the OpenAPI `result`. Not validated at runtime.
+   */
+  outputSchema?: PadroneSchema;
   /**
    * Customize this command's help: a declarative `{ usage, before, after }` (this command only), or a function
    * receiving the generated help info that returns modified info or the final string (this command and its subcommands).
@@ -117,7 +129,10 @@ export type PadroneCommand<
   group?: string;
   /** Whether this command performs a mutation (create, update, delete). Affects HTTP method in serve (POST-only) and MCP tool annotations (destructiveHint). */
   mutation?: boolean;
-  needsApproval?: boolean | ((args: TArgs) => Promise<boolean> | boolean);
+  /** Whether `tool()` asks for approval before running this command. Set by `.configure({ needsApproval })`. */
+  needsApproval?: boolean | ((args: StandardSchemaV1.InferOutput<TArgs>) => Promise<boolean> | boolean);
+  /** Schema of the action's result, set by `.configure({ outputSchema })`. */
+  outputSchema?: PadroneSchema;
   /** Usage examples shown in help output. Each entry is a command-line invocation string. */
   examples?: string[];
   /** Help customization, set by `.configure({ help })`. */

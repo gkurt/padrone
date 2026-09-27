@@ -1,5 +1,7 @@
 export type {
   OtelSpan,
+  OtelSpanKind,
+  OtelSpanOptions,
   OtelTracer,
   OtelTracerProvider,
   PadroneTracer,

@@ -1,4 +1,5 @@
-import { buildInputSchema, collectEndpoints, serializeArgsToFlags } from '../core/commands.ts';
+import { isPlainObject } from '../core/args.ts';
+import { buildInputSchema, buildOutputSchema, collectEndpoints, serializeArgsToFlags } from '../core/commands.ts';
 import { formatIssueMessages } from '../core/validate.ts';
 import { generateHelp } from '../output/help.ts';
 import type { AnyPadroneCommand, AnyPadroneProgram } from '../types/index.ts';
@@ -22,7 +23,11 @@ export type PadroneMcpPreferences = {
   host?: string;
   /** Base path for the MCP endpoint. Defaults to `'/mcp'`. Only used with `transport: 'http'`. */
   basePath?: string;
-  /** CORS allowed origin. Defaults to `'*'`. Set to a specific origin or `false` to disable CORS headers. Only used with HTTP transports. */
+  /**
+   * CORS allowed origin. Defaults to `'*'`. Set to a specific origin or `false` to disable CORS headers. Only used with HTTP transports.
+   * Requests with an `Origin` header are rejected (403) unless it's a loopback origin (`localhost`, `127.0.0.1`, `[::1]`)
+   * or the origin set here (`'*'` set explicitly allows any).
+   */
   cors?: string | false;
 };
 
@@ -66,13 +71,29 @@ function buildAnnotations(cmd: AnyPadroneCommand) {
 
 /** Build an MCP tool definition from a command. */
 function buildToolDefinition(toolName: string, name: string, cmd: AnyPadroneCommand) {
+  const outputSchema = buildOutputSchema(cmd);
   return {
     name: toolName,
     title: cmd.title ?? undefined,
     description: cmd.description || cmd.title || (name ? `Run the "${name}" command` : 'Run the program'),
     inputSchema: buildInputSchema(cmd),
+    // The spec only allows object output schemas
+    outputSchema: outputSchema?.type === 'object' ? outputSchema : undefined,
     annotations: buildAnnotations(cmd),
   };
+}
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** Whether a request's `Origin` may reach the HTTP transport: a loopback origin, or the one `cors` explicitly allows. */
+export function isAllowedOrigin(origin: string, cors: string | false | undefined): boolean {
+  if (cors === '*' || (cors && cors === origin)) return true;
+  try {
+    const url = new URL(origin);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && LOOPBACK_HOSTS.has(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 /** Create the MCP request handler. Returns an async function that processes a JSON-RPC request and returns a response (or undefined for notifications). */
@@ -235,7 +256,8 @@ export function createMcpHandler(
             content.push({ type: 'text', text: resultText });
           }
           if (content.length === 0) content.push({ type: 'text', text: 'Done.' });
-          return { jsonrpc: '2.0', id: id ?? null, result: { content, isError: false } };
+          const structuredContent = isPlainObject(result.result) ? result.result : undefined;
+          return { jsonrpc: '2.0', id: id ?? null, result: { content, ...(structuredContent && { structuredContent }), isError: false } };
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
           return {
@@ -325,8 +347,8 @@ async function startHttpTransport(
   const host = prefs.host ?? '127.0.0.1';
   const endpoint = prefs.basePath ?? '/mcp';
 
-  // Session ID → negotiated protocol version, one per initialized client
-  const sessions = new Map<string, string>();
+  // One per initialized client: the negotiated protocol version, and the calls in flight (aborted when it's terminated)
+  const sessions = new Map<string, { version: string; calls: Set<AbortController> }>();
 
   const corsOrigin = prefs.cors !== false ? (prefs.cors ?? '*') : undefined;
 
@@ -344,6 +366,13 @@ async function startHttpTransport(
       res.setHeader('Access-Control-Expose-Headers', 'MCP-Session-Id');
     }
 
+    // DNS rebinding protection: browsers send `Origin`, other clients don't
+    const origin = req.headers.origin;
+    if (origin && !isAllowedOrigin(origin, prefs.cors)) {
+      sendJson(403, { jsonrpc: '2.0', id: null, error: { code: -32600, message: `Origin not allowed: ${origin}` } });
+      return;
+    }
+
     if (req.method === 'OPTIONS') {
       res.writeHead(corsOrigin ? 204 : 405);
       res.end();
@@ -359,7 +388,12 @@ async function startHttpTransport(
     // DELETE: terminate session
     if (req.method === 'DELETE') {
       const reqSessionId = req.headers['mcp-session-id'] as string | undefined;
-      res.writeHead(!reqSessionId ? 400 : sessions.delete(reqSessionId) ? 200 : 404);
+      const session = reqSessionId ? sessions.get(reqSessionId) : undefined;
+      if (reqSessionId && session) {
+        sessions.delete(reqSessionId);
+        for (const call of session.calls) call.abort('Session terminated');
+      }
+      res.writeHead(!reqSessionId ? 400 : session ? 200 : 404);
       res.end();
       return;
     }
@@ -379,7 +413,8 @@ async function startHttpTransport(
 
     // Validate session ID on non-initialize requests
     const reqSessionId = req.headers['mcp-session-id'] as string | undefined;
-    const negotiatedVersion = reqSessionId ? sessions.get(reqSessionId) : undefined;
+    const session = reqSessionId ? sessions.get(reqSessionId) : undefined;
+    const negotiatedVersion = session?.version;
     if (reqSessionId && !negotiatedVersion) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid session' } }));
@@ -404,18 +439,21 @@ async function startHttpTransport(
       return;
     }
 
-    // Abort the call when the client goes away before the response is sent
-    const disconnected = new AbortController();
+    // Abort the call when the client goes away before the response is sent, or its session is terminated
+    const call = new AbortController();
     res.on('close', () => {
-      if (!res.writableFinished) disconnected.abort('Client disconnected');
+      if (!res.writableFinished) call.abort('Client disconnected');
     });
+    session?.calls.add(call);
     let response: JsonRpcResponse | undefined;
     try {
-      response = await handleRequest(rpcRequest, disconnected.signal, reqSessionId);
+      response = await handleRequest(rpcRequest, call.signal, reqSessionId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       sendJson(500, { jsonrpc: '2.0', id: null, error: { code: -32603, message: `Internal error: ${message}` } });
       return;
+    } finally {
+      session?.calls.delete(call);
     }
     if (response?.error?.code === -32600 && response.id === null) {
       sendJson(400, response);
@@ -426,7 +464,7 @@ async function startHttpTransport(
     const initialized = (response?.result as { protocolVersion?: string } | undefined)?.protocolVersion;
     if ((rpcRequest as JsonRpcRequest).method === 'initialize' && initialized) {
       const sessionId = crypto.randomUUID();
-      sessions.set(sessionId, initialized);
+      sessions.set(sessionId, { version: initialized, calls: new Set() });
       res.setHeader('MCP-Session-Id', sessionId);
     }
 

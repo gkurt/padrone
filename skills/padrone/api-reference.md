@@ -263,6 +263,10 @@ Re-paths all nested commands. Drops the mounted program's version. Preserves int
   version?: string,
   deprecated?: boolean | string,
   hidden?: boolean,
+  mutation?: boolean,                 // POST-only in serve, destructiveHint in MCP, needsApproval default in tool()
+  // tool() approval; a function gets the validated args (typed when .configure() comes after .arguments())
+  needsApproval?: boolean | ((args) => boolean | Promise<boolean>),
+  outputSchema?: PadroneSchema,       // result object schema: MCP outputSchema, OpenAPI result (not validated)
   // This command only: replace the usage line, add text before/after
   help?: { usage?: string; before?: string; after?: string }
     // Or a function for this command and its subcommands (nearest wins); return HelpInfo or the final string
@@ -509,6 +513,8 @@ await program.mcp({ transport: 'stdio' });
 
 Options: `transport` (`'http'` | `'stdio'`), `port`, `host`, `basePath`, `name`, `version`, `cors` (`string | false`).
 
+Object results are also returned as `structuredContent`; `.configure({ outputSchema })` (an object schema) is advertised as the tool's `outputSchema`. Over HTTP, a request whose `Origin` isn't a loopback origin (`localhost`, `127.0.0.1`, `[::1]`) or the explicitly set `cors` origin gets 403, and `DELETE` (session termination) aborts that session's calls in flight.
+
 Also available as a built-in CLI command: `myapp mcp [http|stdio] --port 3000`
 
 ### `.serve(prefs?)` *(experimental)*
@@ -522,6 +528,8 @@ await program.serve({ port: 3000, basePath: '/api/' });
 Options: `port`, `host`, `basePath`, `cors` (`string | false`), `builtins` (`{ health, help, schema, docs }`), `onRequest`, `onError`.
 
 Built-in endpoints: `/_health`, `/_help`, `/_schema`, `/_docs` (Scalar OpenAPI viewer), `/_openapi`.
+
+Responses hold `result`, `output` (printed lines) and `stderr` (what the command wrote to stderr), each left out when empty. `sensitive` fields are rejected in GET query strings (400) and left out of the OpenAPI GET parameters; a command with a required sensitive field is POST-only in the spec.
 
 Also available as a built-in CLI command: `myapp serve --port 3000`
 

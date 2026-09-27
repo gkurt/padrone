@@ -46,7 +46,17 @@ When you run `myapp mcp`, Padrone:
 3. Handles the JSON-RPC protocol (initialize, tools/list, tools/call, ping, etc.), with a session per client over HTTP
 4. Adds a `help` tool that returns the program's or a command's help (named `padrone_help` when a command is already called `help`)
 
-A tool call's result holds what the command printed (`runtime.output`, `ctx.context.output.*`) and its return value (as JSON unless it's a string). Errors and validation failures come back as a result with `isError: true`.
+A tool call's result holds what the command printed (`runtime.output`, `ctx.context.output.*`) and its return value (as JSON unless it's a string). When the return value is an object, it's also sent as `structuredContent`. Errors and validation failures come back as a result with `isError: true`.
+
+Declare the shape of that object with `outputSchema`, and it's advertised as the tool's `outputSchema` in `tools/list` (MCP only allows object schemas; others are left out). It documents the result and isn't checked at runtime:
+
+```typescript
+.command('status', (c) =>
+  c
+    .configure({ outputSchema: z.object({ healthy: z.boolean(), uptime: z.number() }) })
+    .action(() => ({ healthy: true, uptime: process.uptime() }))
+)
+```
 
 For example, a CLI with `greet` and `deploy` commands becomes two MCP tools that AI assistants can discover and call.
 
@@ -82,11 +92,18 @@ The `.mcp()` method, `padroneMcp(defaults)` and the `mcp` command accept these o
 | `basePath` | `string` | `'/mcp'` | HTTP endpoint path |
 | `name` | `string` | program name | Server name |
 | `version` | `string` | program version | Server version |
-| `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable |
+| `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable. Also the origin allowed past the `Origin` check (below) |
 
 ### Transports
 
-**Streamable HTTP** (default) — Starts an HTTP server. Responds with `application/json` or `text/event-stream` (SSE) based on the client's `Accept` header, per the MCP spec. Includes session management with `MCP-Session-Id` headers. Protocol versions `2025-11-25`, `2025-06-18` and `2025-03-26` are accepted; JSON-RPC batches are rejected, as the spec no longer has them.
+**Streamable HTTP** (default) — Starts an HTTP server. Responds with `application/json` or `text/event-stream` (SSE) based on the client's `Accept` header, per the MCP spec. Includes session management with `MCP-Session-Id` headers. Protocol versions `2025-11-25`, `2025-06-18` and `2025-03-26` are accepted; JSON-RPC batches are rejected, as the spec no longer has them. A `DELETE` request ends a session and aborts its tool calls still in flight (through `ctx.signal`).
+
+To guard against DNS rebinding, a request with an `Origin` header (which browsers send) is rejected with 403 unless the origin is a loopback one (`http://localhost:5173`, `http://127.0.0.1`, `http://[::1]:8080`) or the one set with `cors`. Setting `cors: '*'` explicitly allows any origin; the default only sends the `*` CORS header. Clients that aren't browsers send no `Origin` and aren't affected.
+
+```typescript
+// A web app on another origin may call the server
+await program.mcp({ cors: 'https://app.example.com' });
+```
 
 **stdio** — Communicates over stdin/stdout with newline-delimited JSON. Use this when the AI tool launches your CLI as a subprocess (e.g., Claude Desktop, `mcp-cli`).
 
@@ -164,7 +181,21 @@ await program.serve({ port: 3000 });
 // GET  /users/create?name=Alice             → 405 Method Not Allowed
 ```
 
-The `mutation` flag also affects MCP (sets `annotations.destructiveHint`) and Vercel AI SDK (defaults `needsApproval` to `true`).
+The `mutation` flag also affects MCP (sets `annotations.destructiveHint`) and Vercel AI SDK (defaults `needsApproval` to `true`, see [Approval](#approval)).
+
+### Sensitive Fields
+
+Fields marked `sensitive: true` are `writeOnly` in the schemas, and can't be sent in a GET query string, where they'd end up in URLs and server logs: the server answers 400 for them (by name, alias, flag, dotted path, or `_` for a sensitive positional), and the OpenAPI spec leaves them out of the GET parameters. Send them in a POST body. A command with a required sensitive field has no GET operation in the spec.
+
+```typescript
+.command('login', (c) =>
+  c
+    .arguments(z.object({ user: z.string(), token: z.string() }), { fields: { token: { sensitive: true } } })
+    .action((args) => signIn(args))
+)
+// GET  /login?user=alice&token=…           → 400 Bad Request
+// POST /login { "user": "alice", "token": "…" } → 200 OK
+```
 
 ### Programmatic Usage
 
@@ -203,9 +234,9 @@ await program.serve({
 
 ### Response Format
 
-**Success (200):** `output` holds what the command printed (`runtime.output`, `ctx.context.output.*`) and is left out when it printed nothing
+**Success (200):** `output` holds what the command printed (`runtime.output`, `ctx.context.output.*`), `stderr` what it wrote to stderr (warnings, `padroneLogger()` logs), each left out when empty. Error responses carry `stderr` too, unless `onError` builds them. The OpenAPI `result` schema comes from `.configure({ outputSchema })`
 ```json
-{ "ok": true, "result": <action return value>, "output": ["line printed by the command"] }
+{ "ok": true, "result": <action return value>, "output": ["line printed by the command"], "stderr": ["[WARN] cache is stale"] }
 ```
 
 **Validation error (400):**
@@ -343,6 +374,19 @@ Your action handlers should return data that the AI can use:
 ```
 
 The tool returns `{ result, logs, error }` to the AI model: `result` is the action's return value, `logs` what the command printed (`runtime.output`, `ctx.context.output.*`, and its stderr when it succeeded), and `error` the error message, after what it wrote to stderr, when the command failed, its arguments didn't validate, or the command doesn't exist. The AI SDK's `abortSignal` cancels the command through `ctx.signal`.
+
+### Approval
+
+`tool()` sets the AI SDK's `needsApproval`, so the user confirms a call before it runs. It defaults to the command's `mutation` flag; set `needsApproval` to override it, as a boolean or a function of the validated args. Put `.configure()` after `.arguments()` so the args are typed. When the args don't validate, approval is asked without calling the function, and a dry run (`--dry-run`) never needs approval.
+
+```typescript
+.command('delete', (c) =>
+  c
+    .arguments(z.object({ id: z.string(), force: z.boolean().optional() }))
+    .configure({ needsApproval: (args) => !!args.force })
+    .action((args) => remove(args.id, args.force))
+)
+```
 
 ### Multiple Tools
 

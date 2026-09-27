@@ -131,7 +131,7 @@ describe('tracing', () => {
       .command('deploy', (c) => c.action(() => 'done'));
 
     program.eval('deploy');
-    expect(spans[0]!._name).toBe('cli deploy');
+    expect(spans[0]!._name).toBe('eval deploy');
   });
 
   it('should end root span on shutdown', () => {
@@ -163,7 +163,7 @@ describe('tracing', () => {
     expect(result.error).toBeDefined();
     const rootSpan = spans[0]!;
     expect(rootSpan._exception).toBe(error);
-    expect(rootSpan._status).toEqual({ code: 2 });
+    expect(rootSpan._status).toEqual({ code: 2, message: 'boom' });
     expect(rootSpan._ended).toBe(true);
   });
 
@@ -178,7 +178,7 @@ describe('tracing', () => {
     const result = program.eval('nope');
     expect(result.error).toBeDefined();
     expect(spans).toHaveLength(1);
-    expect(spans[0]!._name).toBe('cli app');
+    expect(spans[0]!._name).toBe('eval app');
     expect(spans[0]!._exception).toBe(result.error);
     expect(spans[0]!._ended).toBe(true);
   });
@@ -228,7 +228,7 @@ describe('tracing', () => {
     const child = spans.find((s) => s._name === 'bad');
     expect(child).toBeDefined();
     expect(child!._exception).toBeInstanceOf(Error);
-    expect(child!._status).toEqual({ code: 2 });
+    expect(child!._status).toEqual({ code: 2, message: 'child-error' });
     expect(child!._ended).toBe(true);
   });
 
@@ -279,7 +279,7 @@ describe('tracing', () => {
     expect(await result.result).toBe('recovered');
     const child = spans.find((s) => s._name === 'async-bad');
     expect(child!._exception).toBeInstanceOf(Error);
-    expect(child!._status).toEqual({ code: 2 });
+    expect(child!._status).toEqual({ code: 2, message: 'async-fail' });
     expect(child!._ended).toBe(true);
   });
 
@@ -413,7 +413,7 @@ describe('padroneTracing with run() and nested commands', () => {
     const result = await program.run('deploy', undefined);
     expect(result.result).toBe('done');
     expect(getTracerName()).toBe('test-cli');
-    expect(spans[0]!._name).toBe('cli deploy');
+    expect(spans[0]!._name).toBe('run deploy');
     expect(spans[0]!._ended).toBe(true);
   });
 
@@ -429,7 +429,7 @@ describe('padroneTracing with run() and nested commands', () => {
 
     const result = await program.run('deploy', undefined);
     expect((result.error as Error).message).toBe('nope');
-    expect(spans[0]!._status).toEqual({ code: 2 });
+    expect(spans[0]!._status).toEqual({ code: 2, message: 'nope' });
     expect(spans[0]!._ended).toBe(true);
   });
 
@@ -440,7 +440,7 @@ describe('padroneTracing with run() and nested commands', () => {
       .command('db', (c) => c.command('migrate', (m) => m.action(() => 'ok')));
 
     await program.eval('db migrate');
-    expect(spans[0]!._name).toBe('cli db migrate');
+    expect(spans[0]!._name).toBe('eval db migrate');
     expect(spans[0]!._attributes).toEqual({ 'padrone.command': 'db migrate', 'padrone.caller': 'eval' });
   });
 });
@@ -499,8 +499,8 @@ describe('padroneTracing context propagation', () => {
       );
 
     await program.eval('deploy');
-    expect(parents.get('cli deploy')).toBeUndefined();
-    expect(parents.get('build')).toBe('cli deploy');
+    expect(parents.get('eval deploy')).toBeUndefined();
+    expect(parents.get('build')).toBe('eval deploy');
     expect(parents.get('compile')).toBe('build');
   });
 });

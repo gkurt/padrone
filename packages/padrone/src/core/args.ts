@@ -527,7 +527,7 @@ export function coerceArgs(data: Record<string, unknown>, schema: StandardJSONSc
   return coerceProperties(data, properties);
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
 }
 

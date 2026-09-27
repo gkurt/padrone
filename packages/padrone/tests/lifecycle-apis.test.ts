@@ -493,6 +493,11 @@ describe('spawnCommand()', () => {
     expect(args.slice(0, 3)).toEqual(['/d', '/s', '/c']);
     expect(args[3]).toBe('"C:\\bin\\app-x.cmd ^^^"a^^^ b^^^" ^^^"x^^^&calc^^^" ^^^"say^^^ \\^^^"hi\\^^^"^^^""');
   });
+
+  it('refuses a line break in an argument for a batch file, which cmd.exe would run as a new command', () => {
+    expect(() => spawnCommand('C:\\bin\\app-x.cmd', ['a\r\ncalc'], 'win32')).toThrow('line break');
+    expect(spawnCommand('/bin/app-x', ['a\nb'], 'linux')[1]).toEqual(['a\nb']);
+  });
 });
 
 describe('padronePlugins()', () => {

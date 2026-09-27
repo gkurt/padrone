@@ -106,6 +106,7 @@ export function spawnCommand(
   comspec = globalThis.process?.env?.ComSpec,
 ): [command: string, args: string[], verbatim: boolean] {
   if (!isWindows(platform) || !/\.(cmd|bat)$/i.test(file)) return [file, [...args], false];
+  if (args.some((arg) => /[\r\n]/.test(arg))) throw new Error(`Can't pass an argument with a line break to ${file}`);
   const line = [file.replace(CMD_META, '^$1'), ...args.map(batchArgument)].join(' ');
   return [comspec || 'cmd.exe', ['/d', '/s', '/c', `"${line}"`], true];
 }

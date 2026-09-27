@@ -1,3 +1,4 @@
+import { createPrompt } from '../feature/prompt.ts';
 import type { InterceptorExecuteContext, PadroneHookContext, PadroneHookName, RegisteredInterceptor } from '../types/index.ts';
 import { withEmit } from './events.ts';
 import { isNotFoundCommand } from './not-found.ts';
@@ -10,7 +11,7 @@ type HookHandler = (ctx: PadroneHookContext, result?: unknown) => unknown;
 
 function hookContext(ctx: InterceptorExecuteContext): PadroneHookContext {
   const { runtime, command, program, signal, context, caller, args, dryRun } = ctx;
-  return withEmit({ runtime, command, program, signal, context, caller, args, ...(dryRun && { dryRun }) });
+  return withEmit({ runtime, command, program, signal, context, caller, args, prompt: createPrompt(ctx), ...(dryRun && { dryRun }) });
 }
 
 /**

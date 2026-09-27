@@ -5,6 +5,8 @@ import {
   type CollectedEndpoint,
   collectEndpoints,
   getGlobalArgs,
+  isAllowedHost,
+  isAllowedOrigin,
   serializeArgsToFlags,
 } from '../core/commands.ts';
 import { RoutingError, ValidationError } from '../core/errors.ts';
@@ -12,7 +14,7 @@ import { formatIssueMessages } from '../core/validate.ts';
 import { generateHelp } from '../output/help.ts';
 import type { AnyPadroneCommand, AnyPadroneProgram } from '../types/index.ts';
 import { outputValueToText } from '../util/json.ts';
-import { readStreamAsText } from '../util/stream.ts';
+import { BodyTooLargeError, readBodyText } from '../util/stream.ts';
 
 export type PadroneServePreferences = {
   /** Port to listen on. Default: 3000 */
@@ -21,8 +23,14 @@ export type PadroneServePreferences = {
   host?: string;
   /** Base path prefix for all routes. Default: '/' */
   basePath?: string;
-  /** CORS allowed origin. Default: '*'. Set to `false` to disable CORS headers. */
+  /**
+   * CORS allowed origin. Default: '*'. Set to `false` to disable CORS headers.
+   * Requests with an `Origin` header are rejected (403) unless it's a loopback origin (`localhost`, `127.0.0.1`, `[::1]`)
+   * or the origin set here (`'*'` set explicitly allows any).
+   */
   cors?: string | false;
+  /** Largest request body accepted, in bytes; a larger one gets a 413. Default: 4 MiB. */
+  maxBodySize?: number;
   /** Control built-in utility endpoints. All enabled by default. */
   builtins?: {
     /** GET /_health — returns 200 OK. */
@@ -205,11 +213,12 @@ function toQueryParameters(schema: JsonSchemaObject, prefix = '', parentRequired
   for (const [key, propSchema] of Object.entries(schema.properties ?? {})) {
     const name = `${prefix}${key}`;
     const required = parentRequired && (schema.required?.includes(key) ?? false);
-    if (propSchema.writeOnly) {
+    const leaf = propSchema.type !== 'object' || !propSchema.properties;
+    if (propSchema.writeOnly || (leaf && containsSensitive(propSchema))) {
       if (required) return undefined;
       continue;
     }
-    if (propSchema.type !== 'object' || !propSchema.properties) {
+    if (leaf) {
       params.push({ name, in: 'query', schema: propSchema, required });
       continue;
     }
@@ -218,6 +227,15 @@ function toQueryParameters(schema: JsonSchemaObject, prefix = '', parentRequired
     params.push(...nested);
   }
   return params;
+}
+
+/** Whether a JSON schema is, or has somewhere inside (properties, array items, unions), a sensitive field. */
+function containsSensitive(schema: unknown): boolean {
+  if (!schema || typeof schema !== 'object') return false;
+  const node = schema as JsonSchemaObject;
+  if (node.writeOnly || node.sensitive === true) return true;
+  const children = [...Object.values(node.properties ?? {}), node.items, ...['anyOf', 'oneOf', 'allOf'].flatMap((key) => node[key] ?? [])];
+  return children.some(containsSensitive);
 }
 
 /**
@@ -241,7 +259,8 @@ function createSensitiveQueryCheck(cmd: AnyPadroneCommand, inputSchema: JsonSche
       node = node?.properties && Object.hasOwn(node.properties, part) ? node.properties[part] : undefined;
       if (node?.writeOnly) return true;
     }
-    return false;
+    // A whole object (`?db={"password":…}`) holding a sensitive value
+    return containsSensitive(node);
   };
   const positionals = parsePositionalConfig(cmd.meta?.positional ?? []);
   return (key) => {
@@ -345,6 +364,12 @@ export function createServeHandler(
   };
 
   async function routeRequest(req: Request): Promise<Response> {
+    // Other websites could otherwise run commands with "simple" requests, which browsers send without a preflight
+    const origin = req.headers.get('origin');
+    if (origin && !isAllowedOrigin(origin, prefs?.cors)) {
+      return addCorsHeaders(jsonResponse({ ok: false, error: 'forbidden', message: `Origin not allowed: ${origin}` }, 403));
+    }
+
     // CORS preflight
     if (req.method === 'OPTIONS') {
       return addCorsHeaders(new Response(null, { status: corsOrigin ? 204 : 405 }));
@@ -448,9 +473,15 @@ export function createServeHandler(
     if (req.method === 'POST') {
       let body: unknown;
       try {
-        const text = await req.text();
+        const text = await readBodyText(
+          req.body as AsyncIterable<Uint8Array> | null,
+          req.headers.get('content-length'),
+          prefs?.maxBodySize,
+        );
         body = text.trim() ? JSON.parse(text) : {};
-      } catch {
+      } catch (error) {
+        if (error instanceof BodyTooLargeError)
+          return addCorsHeaders(jsonResponse({ ok: false, error: 'payload_too_large', message: error.message }, 413));
         return addCorsHeaders(jsonResponse({ ok: false, error: 'bad_request', message: 'Invalid JSON body' }, 400));
       }
       if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -501,6 +532,10 @@ export async function startServeServer(
   const basePath = normalizeBasePath(prefs?.basePath);
 
   const server = http.createServer(async (req, res) => {
+    if (!isAllowedHost(req.headers.host, host)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      return void res.end(JSON.stringify({ ok: false, error: 'forbidden', message: `Host not allowed: ${req.headers.host}` }));
+    }
     // The request target is a path; IPv6 hosts need brackets in a URL
     const url = `http://${host.includes(':') ? `[${host}]` : host}:${port}${req.url ?? '/'}`;
     const headers = new Headers();
@@ -517,7 +552,10 @@ export async function startServeServer(
         method: req.method,
         headers,
         signal: disconnected.signal,
-        body: req.method !== 'GET' && req.method !== 'HEAD' ? await readBody(req) : undefined,
+        body:
+          req.method !== 'GET' && req.method !== 'HEAD'
+            ? await readBodyText(req as AsyncIterable<Uint8Array>, req.headers['content-length'], prefs?.maxBodySize)
+            : undefined,
       });
 
       const response = await handler(fetchReq);
@@ -529,8 +567,10 @@ export async function startServeServer(
       res.end(await response.text());
     } catch (error) {
       if (res.headersSent) return void res.end();
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: false, error: 'server_error', message: error instanceof Error ? error.message : String(error) }));
+      const tooLarge = error instanceof BodyTooLargeError;
+      res.writeHead(tooLarge ? 413 : 500, { 'Content-Type': 'application/json', ...(tooLarge && { Connection: 'close' }) });
+      const message = error instanceof Error ? error.message : String(error);
+      res.end(JSON.stringify({ ok: false, error: tooLarge ? 'payload_too_large' : 'server_error', message }));
     }
   });
 
@@ -549,9 +589,4 @@ export async function startServeServer(
     });
     server.on('close', () => unsubscribe?.());
   });
-}
-
-/** Read the full body from a Node.js IncomingMessage. */
-async function readBody(req: import('node:http').IncomingMessage): Promise<string> {
-  return readStreamAsText(req as AsyncIterable<Uint8Array>);
 }

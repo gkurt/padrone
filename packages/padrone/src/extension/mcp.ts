@@ -4,7 +4,7 @@ import type { AnyPadroneBuilder, CommandTypesBase, PadroneCommand } from '../typ
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
-import { passthroughSchema } from './utils.ts';
+import { localOnlyInterceptor, passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -32,6 +32,7 @@ export function padroneMcp(defaults?: PadroneMcpPreferences): <T extends Command
     builder.command('mcp', (c) =>
       c
         .configure({ description: 'Start a Model Context Protocol server', hidden: true, builtin: true })
+        .intercept(localOnlyInterceptor())
         .arguments(
           passthroughSchema({
             transport: { type: 'string', description: 'Transport to serve over', enum: ['http', 'stdio'] },

@@ -14,13 +14,13 @@
     "dev": "bun --conditions=padrone@dev run --watch src/tasks.ts"
   },
   "dependencies": {
-    "ai": "^7.0.8",
-    "ink": "^7.1.0",
+    "ai": "^7.0.118",
+    "ink": "^7.1.1",
     "padrone": "workspace:*",
-    "react": "^19.2.7",
-    "zod": "^4.4.3"
+    "react": "^19.3.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@types/react": "^19.2.17"
+    "@types/react": "^19.3.0"
   }
 }

@@ -41,9 +41,9 @@ describe('MCP messages', () => {
 
   test('initialize echoes a supported protocol version', async () => {
     const older = await handler({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } });
-    expect((older?.result as any).protocolVersion).toBe('2025-06-18');
+    expect((older!.result as any).protocolVersion).toBe('2025-06-18');
     const unknown = await handler({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '1999-01-01' } });
-    expect((unknown?.result as any).protocolVersion).toBe('2025-11-25');
+    expect((unknown!.result as any).protocolVersion).toBe('2025-11-25');
   });
 
   test('cancellation is scoped to the session', async () => {
@@ -53,34 +53,34 @@ describe('MCP messages', () => {
     const b = call('b');
     await handler({ jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 1 } }, undefined, 'a');
     const [resA, resB] = await Promise.all([a, b]);
-    expect((resA?.result as any).content[0].text).toBe('aborted');
-    expect((resB?.result as any).content[0].text).toBe('finished');
+    expect((resA!.result as any).content[0].text).toBe('aborted');
+    expect((resB!.result as any).content[0].text).toBe('finished');
   });
 
   test('objects printed with runtime.output are JSON', async () => {
     const res = await handler({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'print', arguments: {} } });
-    expect((res?.result as any).content[0].text).toBe(JSON.stringify({ a: 1 }, null, 2));
+    expect((res!.result as any).content[0].text).toBe(JSON.stringify({ a: 1 }, null, 2));
   });
 
   test('null arguments are unset', async () => {
     const res = await handler({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'greet', arguments: { name: null } } });
-    expect((res?.result as any).content[0].text).toBe('Hello, nobody');
+    expect((res!.result as any).content[0].text).toBe('Hello, nobody');
     expect(serializeArgsToFlags({ a: null, b: undefined, c: 'x' })).toEqual(['--c=x']);
   });
 
   test('help for an unknown command is an error', async () => {
     const res = await handler({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'help', arguments: { command: 'nope' } } });
-    expect((res?.result as any).isError).toBe(true);
+    expect((res!.result as any).isError).toBe(true);
   });
 
   test("a command named help keeps the tool name; the built-in help tool doesn't collide", async () => {
     const withHelp = createPadrone('app', { builtins: { help: false } }).command('help', (c) => c.action(() => 'user help ran'));
     const h = createMcpHandler(getCommand(withHelp), withHelp.eval.bind(withHelp) as any);
     const list = await h({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
-    const names = (list?.result as any).tools.map((t: any) => t.name);
+    const names = (list!.result as any).tools.map((t: any) => t.name);
     expect(names).toEqual(['help', 'padrone_help']);
     const res = await h({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'help', arguments: {} } });
-    expect((res?.result as any).content[0].text).toBe('user help ran');
+    expect((res!.result as any).content[0].text).toBe('user help ran');
   });
 });
 

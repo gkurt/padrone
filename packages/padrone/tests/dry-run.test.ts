@@ -135,7 +135,7 @@ describe('dry-run', () => {
     const { program, deleted } = createProgram();
     const handler = createMcpHandler((program as any)[commandSymbol], program.eval.bind(program) as any);
     const list = await handler({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
-    const tools = (list?.result as any).tools as { name: string; inputSchema: { properties: Record<string, unknown> } }[];
+    const tools = (list!.result as any).tools as { name: string; inputSchema: { properties: Record<string, unknown> } }[];
     expect(tools.find((t) => t.name === 'rm')!.inputSchema.properties.dryRun).toEqual({ type: 'boolean', description: expect.any(String) });
     expect(tools.find((t) => t.name === 'touch')!.inputSchema.properties.dryRun).toBeUndefined();
 
@@ -145,7 +145,7 @@ describe('dry-run', () => {
       method: 'tools/call',
       params: { name: 'rm', arguments: { paths: ['a'], dryRun: true } },
     });
-    expect((call?.result as any).isError).toBe(false);
+    expect((call!.result as any).isError).toBe(false);
     expect(deleted).toEqual([]);
   });
 });

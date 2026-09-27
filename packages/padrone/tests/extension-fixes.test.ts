@@ -54,8 +54,8 @@ describe('MCP and serve arguments', () => {
     const handler = createMcpHandler(root, program.eval.bind(program) as any);
     const arguments_ = { text: 'say "hi" now', tag: ['a b', 'c'], db: { host: 'h', port: 5 }, local: false };
     const res = await handler({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'echo', arguments: arguments_ } });
-    const content = (res?.result as { content: { text: string }[]; isError: boolean }).content;
-    expect((res?.result as { isError: boolean }).isError).toBe(false);
+    const content = (res!.result as { content: { text: string }[]; isError: boolean }).content;
+    expect((res!.result as { isError: boolean }).isError).toBe(false);
     // The result once, not also the auto-output copy
     expect(content).toHaveLength(1);
     expect(JSON.parse(content[0]!.text)).toEqual(arguments_);
@@ -64,11 +64,11 @@ describe('MCP and serve arguments', () => {
   it('names the root tool after the program and answers no notifications', async () => {
     const handler = createMcpHandler(root, program.eval.bind(program) as any);
     const list = await handler({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
-    const names = (list?.result as { tools: { name: string }[] }).tools.map((t) => t.name);
+    const names = (list!.result as { tools: { name: string }[] }).tools.map((t) => t.name);
     expect(names).toContain('app');
     expect(names).not.toContain('');
     const call = await handler({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'app', arguments: { text: 'x' } } });
-    expect((call?.result as { content: { text: string }[] }).content[0]!.text).toBe('root:x');
+    expect((call!.result as { content: { text: string }[] }).content[0]!.text).toBe('root:x');
     expect(await handler({ jsonrpc: '2.0', method: 'tools/call', params: { name: 'app', arguments: {} } })).toBeUndefined();
   });
 

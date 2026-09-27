@@ -54,7 +54,7 @@ describe('mcp', () => {
       const handler = createHandler({ name: 'custom', version: '2.0.0' });
       const res = await handler({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
 
-      expect((res?.result as any).serverInfo).toEqual({ name: 'custom', version: '2.0.0' });
+      expect((res!.result as any).serverInfo).toEqual({ name: 'custom', version: '2.0.0' });
     });
   });
 
@@ -86,7 +86,7 @@ describe('mcp', () => {
       const handler = createHandler();
       const res = await handler({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
 
-      const tools = (res?.result as any).tools;
+      const tools = (res!.result as any).tools;
       const toolNames = tools.map((t: any) => t.name);
 
       expect(toolNames).toContain('greet');
@@ -102,7 +102,7 @@ describe('mcp', () => {
       const handler = createHandler();
       const res = await handler({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
 
-      const tools = (res?.result as any).tools;
+      const tools = (res!.result as any).tools;
       const greetTool = tools.find((t: any) => t.name === 'greet');
 
       expect(greetTool.title).toBe('Greeter');
@@ -116,7 +116,7 @@ describe('mcp', () => {
       const handler = createMcpHandler(getCommand(simpleProgram), simpleProgram.eval.bind(simpleProgram) as any);
       const res = await handler({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
 
-      const tools = (res?.result as any).tools;
+      const tools = (res!.result as any).tools;
       const noopTool = tools.find((t: any) => t.name === 'noop');
       expect(noopTool.inputSchema).toEqual({ type: 'object', additionalProperties: false });
     });
@@ -272,7 +272,7 @@ describe('mcp', () => {
       const handler = createMcpHandler(getCommand(prog), prog.eval.bind(prog) as any);
       const res = await handler({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
 
-      const tools = (res?.result as any).tools;
+      const tools = (res!.result as any).tools;
       const toolNames = tools.map((t: any) => t.name);
 
       // Default command should use parent name, not 'parent.'

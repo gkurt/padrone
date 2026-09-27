@@ -1066,7 +1066,7 @@ await streamText({
 });
 ```
 
-**Returns:** AI SDK tool object. Its `execute` returns `{ result, logs, error }`: the action's return value, what the command printed, and the error message when it failed (a thrown error, a validation failure or an unknown command).
+**Returns:** AI SDK tool object. Its `execute` returns `{ result, logs, error }`: the action's return value, what the command printed (with its stderr when it succeeded), and the error message when it failed (a thrown error, a validation failure or an unknown command).
 
 ---
 

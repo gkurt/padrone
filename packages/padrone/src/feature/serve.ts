@@ -394,12 +394,19 @@ export function createServeHandler(
       }
       argParts = serializeArgsToFlags(body as Record<string, unknown>, endpoint.command);
     } else {
-      // GET: query string → flags, `_` → positional values (after `--`, so values starting with `-` stay values)
+      // GET: query string → flags, `_` → positional values (after `--`, so values starting with `-` stay values).
+      // Without a value, a field that isn't a boolean gets an empty one; anything else (`?verbose`, `?help`) is a flag.
       argParts = [];
       const positionals: string[] = [];
+      const inputSchema = buildInputSchema(endpoint.command) as JsonSchemaObject;
+      const needsValue = (key: string) => {
+        const field = key.split('.').reduce<JsonSchemaObject | undefined>((schema, part) => schema?.properties?.[part], inputSchema);
+        const types = [field?.type, ...((field?.anyOf as JsonSchemaObject[] | undefined) ?? []).map((s) => s.type)];
+        return !!field && !types.includes('boolean');
+      };
       for (const [key, value] of url.searchParams.entries()) {
         if (key === '_') positionals.push(value);
-        else argParts.push(value === '' ? `--${key}` : `--${key}=${value}`);
+        else argParts.push(value !== '' || needsValue(key) ? `--${key}=${value}` : `--${key}`);
       }
       if (positionals.length) argParts.push('--', ...positionals);
     }

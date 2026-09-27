@@ -1,6 +1,7 @@
 import { type PadronePageOptions, pageWithRuntime } from '../feature/pager.ts';
 import { openInEditor, openWithSystem, type PadroneEditorOptions } from '../feature/system.ts';
 import { readStreamAsText } from '../util/stream.ts';
+import { isCI } from '../util/utils.ts';
 import type {
   InteractiveMode,
   InteractivePromptConfig,
@@ -104,7 +105,7 @@ export function createTerminalReplSession(config: ReplSessionConfig) {
  */
 function detectInteractiveMode(): InteractiveMode {
   if (typeof process === 'undefined') return 'disabled';
-  if (process.env.CI || process.env.CONTINUOUS_INTEGRATION) return 'disabled';
+  if (isCI(process.env)) return 'disabled';
   if (!process.stdout?.isTTY || !process.stdin?.isTTY) return 'disabled';
   return 'supported';
 }
@@ -183,6 +184,9 @@ function getTerminalInfo(): PadroneRuntime['terminal'] {
     },
     get isTTY() {
       return process.stdout?.isTTY === true;
+    },
+    get stderrIsTTY() {
+      return process.stderr?.isTTY === true;
     },
   };
 }

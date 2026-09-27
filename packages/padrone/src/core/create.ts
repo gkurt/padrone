@@ -5,6 +5,7 @@ import type { HelpCommand, PadroneHelpOptions } from '../extension/help.ts';
 import { padroneHelp } from '../extension/help.ts';
 import { padroneInteractive } from '../extension/interactive.ts';
 import { padroneRepl } from '../extension/repl.ts';
+import type { PadroneSignalOptions } from '../extension/signal.ts';
 import { padroneSignalHandling } from '../extension/signal.ts';
 import { padroneStdin } from '../extension/stdin.ts';
 import type { PadroneSuggestionsOptions } from '../extension/suggestions.ts';
@@ -65,8 +66,8 @@ export type PadroneBuiltins = {
   color?: boolean;
   /** Enable "Did you mean?" suggestions for unknown commands and options. Defaults to `true`. Pass `{ run: 'prompt' }` to offer running the closest command. */
   suggestions?: boolean | PadroneSuggestionsOptions;
-  /** Enable signal handling (SIGINT, SIGTERM, SIGHUP). Defaults to `true`. */
-  signal?: boolean;
+  /** Enable signal handling (SIGINT, SIGTERM, SIGHUP). Defaults to `true`. Pass options to configure the force exit (e.g. `{ forceExitMs: 1000 }`). */
+  signal?: boolean | PadroneSignalOptions;
   /** Enable automatic result and error output for `cli()`. Defaults to `true`. Pass options to configure it (e.g. `{ errorStack: true }`). */
   autoOutput?: boolean | PadroneAutoOutputOptions;
   /** Enable stdin piping support. Defaults to `true`. */
@@ -96,7 +97,7 @@ export function createPadrone<TProgramName extends string, const TBuiltins exten
   if (b?.color !== false) builder = builder.extend(padroneColor());
   if (b?.suggestions !== false)
     builder = builder.extend(padroneSuggestions(typeof b?.suggestions === 'object' ? b.suggestions : undefined));
-  if (b?.signal !== false) builder = builder.extend(padroneSignalHandling());
+  if (b?.signal !== false) builder = builder.extend(padroneSignalHandling(typeof b?.signal === 'object' ? b.signal : undefined));
   if (b?.autoOutput !== false) builder = builder.extend(padroneAutoOutput(typeof b?.autoOutput === 'object' ? b.autoOutput : undefined));
   if (b?.stdin !== false) builder = builder.extend(padroneStdin());
   if (b?.interactive !== false) builder = builder.extend(padroneInteractive());

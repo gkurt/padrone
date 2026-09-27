@@ -17,7 +17,7 @@ export { padroneHelp } from './help.ts';
 export { padroneInteractive } from './interactive.ts';
 export type { PadroneJqFunction, PadroneJsonOptions } from './json.ts';
 export { padroneJson } from './json.ts';
-export type { PadroneLogger, PadroneLoggerConfig, PadroneLogLevel, WithLogger } from './logger.ts';
+export type { PadroneLogDestination, PadroneLogger, PadroneLoggerConfig, PadroneLogLevel, WithLogger } from './logger.ts';
 export { padroneLogger } from './logger.ts';
 export type {
   PadroneProgressConfig,
@@ -34,21 +34,23 @@ export type {
   PadroneTask,
   PadroneTaskContext,
   PadroneTaskListRenderer,
+  PadroneTaskRendererOptions,
   PadroneTaskState,
   PadroneTaskStatus,
   PadroneTasksFn,
   PadroneTasksOptions,
 } from './progress-tasks.ts';
-export { createTerminalTaskList } from './progress-tasks.ts';
+export { createSimpleTaskList, createTerminalTaskList } from './progress-tasks.ts';
 export type { WithRepl } from './repl.ts';
 export { padroneRepl } from './repl.ts';
 export type { PadroneResponseFilesOptions } from './response-files.ts';
 export { padroneResponseFiles } from './response-files.ts';
+export type { PadroneSignalOptions } from './signal.ts';
 export { padroneSignalHandling } from './signal.ts';
 export { padroneStdin } from './stdin.ts';
 export type { PadroneSuggestionsOptions } from './suggestions.ts';
 export { padroneSuggestions } from './suggestions.ts';
-export type { PadroneTimingOptions } from './timing.ts';
+export type { PadroneTimingInfo, PadroneTimingOptions } from './timing.ts';
 export { padroneTiming } from './timing.ts';
 export { padroneUpdateCheck } from './update-check.ts';
 export type { PadroneInstaller, PadroneUpgradeOptions, PadroneUpgradePlan } from './upgrade.ts';

@@ -13,6 +13,8 @@ function formatDuration(ms: number): string {
   return `${Math.floor(centis / 6000)}m ${((centis % 6000) / 100).toFixed(2)}s`;
 }
 
+const defaultFormat = ({ duration, failed }: PadroneTimingInfo) => `\n${failed ? 'Failed after' : 'Done in'} ${duration}`;
+
 // ── Interceptor ─────────────────────────────────────────────────────────
 
 const timingMeta: InterceptorMeta = {
@@ -22,7 +24,7 @@ const timingMeta: InterceptorMeta = {
   options: { timing: 'flag', time: 'flag' },
 };
 
-function createTimingInterceptor(enabledByDefault: boolean) {
+function createTimingInterceptor(enabledByDefault: boolean, format: NonNullable<PadroneTimingOptions['format']>) {
   return defineInterceptor(timingMeta, () => {
     let enabled = enabledByDefault;
     let flagsRead = false;
@@ -55,10 +57,11 @@ function createTimingInterceptor(enabledByDefault: boolean) {
       shutdown(ctx, next) {
         return thenMaybe(next(), (res) => {
           // Serve and MCP handle requests; they have no terminal to report to
-          if (enabled && !isRemoteCaller(ctx.caller)) {
-            const elapsed = performance.now() - startTime;
-            ctx.runtime.error(`\nDone in ${formatDuration(elapsed)}`);
-          }
+          if (!enabled || isRemoteCaller(ctx.caller)) return res;
+          const elapsed = performance.now() - startTime;
+          const failed = ctx.error !== undefined;
+          const text = format({ elapsed, duration: formatDuration(elapsed), failed, ...(failed && { error: ctx.error }) });
+          if (text) ctx.runtime.error(text);
           return res;
         });
       },
@@ -68,9 +71,26 @@ function createTimingInterceptor(enabledByDefault: boolean) {
 
 // ── Extension ───────────────────────────────────────────────────────────
 
+/** What `padroneTiming({ format })` gets to build the line printed after a command. */
+export type PadroneTimingInfo = {
+  /** Elapsed milliseconds. */
+  elapsed: number;
+  /** The elapsed time as shown by default: `12ms`, `1.50s`, `1m 2.00s`. */
+  duration: string;
+  /** Whether the command failed. */
+  failed: boolean;
+  /** The error the command failed with. */
+  error?: unknown;
+};
+
 export interface PadroneTimingOptions {
   /** Enable timing by default without requiring `--time` flag. Default: `false`. */
   enabled?: boolean;
+  /**
+   * Builds the line printed to stderr. Return `null` or `''` to print nothing.
+   * Defaults to `\nDone in <duration>`, or `\nFailed after <duration>` when the command failed.
+   */
+  format?: (info: PadroneTimingInfo) => string | null | undefined;
 }
 
 /**
@@ -79,7 +99,8 @@ export interface PadroneTimingOptions {
  * - `--time` / `--timing` → enables timing output
  * - `--no-time` / `--no-timing` → disables timing output
  *
- * Pass `{ enabled: true }` to enable timing by default (can be disabled via `--no-time`).
+ * Pass `{ enabled: true }` to enable timing by default (can be disabled via `--no-time`), and `format` to change the line.
+ * It's printed after the command's result or error: `Done in 1.20s`, or `Failed after 1.20s`.
  *
  * Usage:
  * ```ts
@@ -91,5 +112,6 @@ export interface PadroneTimingOptions {
  * ```
  */
 export function padroneTiming(options?: PadroneTimingOptions): <T extends CommandTypesBase>(builder: T) => T {
-  return ((builder: AnyPadroneBuilder) => builder.intercept(createTimingInterceptor(options?.enabled ?? false))) as any;
+  const interceptor = createTimingInterceptor(options?.enabled ?? false, options?.format ?? defaultFormat);
+  return ((builder: AnyPadroneBuilder) => builder.intercept(interceptor)) as any;
 }

@@ -57,6 +57,8 @@ export function createBrowserRuntime(options: BrowserRuntimeOptions): PadroneRun
         return term.rows;
       },
       isTTY: !stdout,
+      // `error` always writes to the terminal, even when stdout is piped
+      stderrIsTTY: true,
     },
     interactive: 'supported',
     prompt: createPrompt(term, editor),

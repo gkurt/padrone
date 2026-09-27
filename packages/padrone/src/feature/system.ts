@@ -39,16 +39,23 @@ export async function openInEditor(
   }
 }
 
+/**
+ * The command that opens `target` on `platform`. On Windows it's `cmd /d /s /c "start "" ^"<target>^""`, spawned with
+ * `windowsVerbatimArguments`: every cmd metacharacter of the target (`&`, `|`, `%`, `^`, spaces, …) is `^`-escaped so cmd
+ * passes it to `start` literally, and a `"` (not valid in paths) is URL-encoded.
+ */
+export function systemOpenCommand(target: string, platform: string = process.platform): [command: string, args: string[]] {
+  if (platform === 'darwin') return ['open', [target]];
+  if (platform !== 'win32') return ['xdg-open', [target]];
+  const escaped = `"${target.replace(/"/g, '%22')}"`.replace(/[()[\]%!^"`<>&|;, *?]/g, '^$&');
+  return ['cmd', ['/d', '/s', '/c', `"start "" ${escaped}"`]];
+}
+
 /** Opens a URL or file with the system's default app (`open`, `xdg-open` or `start`), without waiting for it. */
 export async function openWithSystem(target: string): Promise<void> {
   const { spawn } = await import('node:child_process');
   const platform = process.platform;
-  const [command, args] =
-    platform === 'darwin'
-      ? ['open', [target]]
-      : platform === 'win32'
-        ? ['cmd', ['/c', 'start', '""', target.replace(/&/g, '^&')]]
-        : ['xdg-open', [target]];
+  const [command, args] = systemOpenCommand(target, platform);
   await new Promise<void>((resolve, reject) => {
     const child = spawn(command, args, { stdio: 'ignore', detached: true, windowsVerbatimArguments: platform === 'win32' });
     child.on('error', reject);

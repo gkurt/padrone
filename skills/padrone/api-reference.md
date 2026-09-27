@@ -192,9 +192,11 @@ Defines the command handler. Called with no args to create a passthrough command
 Adds `--dry-run` / `-n` to the command. Under that flag `handler(args, ctx)` runs instead of the action (after validation, with the same context) and its return value is printed as the result. Only commands with a dry-run handler accept the flag; elsewhere it's an unknown option. Execute interceptors see `ctx.dryRun`; `padroneConfirm()` skips the prompt; MCP/serve take `dryRun: true`; `parse()` reports `dryRun`.
 
 ```ts
-.dryRun((args) => args.paths.map((p) => `delete ${p}`).join('\n'))
-.action((args) => removeFiles(args.paths))
+.action(async (args) => ({ deleted: await removeFiles(args.paths) }))
+.dryRun((args) => ({ deleted: args.paths })) // same type as the action: result type unchanged
 ```
+
+Return the action's type where possible; a different type widens the result type to a union. Call `.dryRun()` after `.action()` (which sets the result type).
 
 ### `.command(name, builderFn?)`
 

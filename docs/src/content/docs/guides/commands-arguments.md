@@ -425,11 +425,9 @@ Commands that change things can offer a dry run with `.dryRun()`. The command th
   c
     .configure({ mutation: true })
     .arguments(z.object({ env: z.enum(['staging', 'production']) }), { positional: ['env'] })
-    .dryRun(async (args, ctx) => {
-      const changes = await planDeploy(args.env);
-      return changes.map((change) => `${change.kind} ${change.resource}`).join('\n');
-    })
-    .action((args) => deploy(args.env)),
+    // Both return the list of changes: applied by the action, planned by the dry run
+    .action(async (args) => ({ changes: await deploy(args.env) }))
+    .dryRun(async (args) => ({ changes: await planDeploy(args.env) })),
 )
 ```
 
@@ -438,6 +436,8 @@ my-cli deploy production --dry-run   # prints the planned changes, deploys nothi
 ```
 
 The flag exists only on commands with a dry-run handler, and help shows it only there. On any other command `--dry-run` is rejected as an unknown option, so a command can't silently ignore it and make changes. Execute interceptors still run with `ctx.dryRun` set, and `padroneConfirm()` skips its prompt, since nothing will change.
+
+Try to return the same type from the dry-run handler as from the action, as above: code calling the command then handles one result shape, and its result type doesn't change. If the types differ, the command's result type becomes the union of both. Declare `.dryRun()` after `.action()`, because `.action()` sets the result type.
 
 ## Command Override
 

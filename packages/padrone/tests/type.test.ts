@@ -602,3 +602,16 @@ test('interactive globalArgs make every command in the subtree async', () => {
     .command('logs', (c) => c.action((args) => args.token));
   expectTypeOf(plain.eval('logs')).not.toMatchTypeOf<Promise<any>>();
 });
+
+test('Types - dryRun shares the result type, or extends it when it differs', () => {
+  const same = createPadrone('app').command('rm', (c) =>
+    c
+      .arguments(z.object({ paths: z.string().array() }))
+      .action((args) => ({ deleted: args.paths }))
+      .dryRun((args) => ({ deleted: args.paths })),
+  );
+  expectTypeOf(same.eval('rm').result).toEqualTypeOf<{ deleted: string[] } | undefined>();
+
+  const differs = createPadrone('app').command('rm', (c) => c.action(() => 1).dryRun(() => ['would delete a']));
+  expectTypeOf(differs.eval('rm').result).toEqualTypeOf<number | string[] | undefined>();
+});

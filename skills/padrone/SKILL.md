@@ -69,7 +69,7 @@ program.cli();
 | `.extend(extension)` | Apply a build-time extension (bundle of config, commands, interceptors) |
 | `.extend(padroneEnv(schema))` | Parse environment variables into args (import `padroneEnv` from `'padrone'`) |
 | `.extend(padroneConfig({ files, schema? }))` | Load args from config files (import `padroneConfig` from `'padrone'`) |
-| `.dryRun(handler)` | Adds `--dry-run`/`-n`: `handler(args, ctx)` runs instead of the action and returns what would change. Commands without one reject `--dry-run` |
+| `.dryRun(handler)` | Adds `--dry-run`/`-n`: `handler(args, ctx)` runs instead of the action and returns what would change (ideally the action's type; otherwise the result type becomes a union; call after `.action()`). Commands without one reject `--dry-run` |
 | `.wrap(config)` | Wrap an external CLI tool *(experimental)* |
 | `.extend(padroneProgress(config?))` | Auto-managed progress indicator (import `padroneProgress` from `'padrone'`) |
 | `.runtime(runtime)` | Custom I/O adapter (output, error, env, prompt) |

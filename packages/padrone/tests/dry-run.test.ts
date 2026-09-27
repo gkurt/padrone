@@ -13,11 +13,11 @@ function createProgram() {
       c
         .configure({ mutation: true, description: 'Delete files' })
         .arguments(z.object({ paths: z.string().array().min(1), force: z.boolean().optional() }), { positional: ['...paths'] })
-        .dryRun((args) => args.paths.map((path) => `delete ${path}`))
         .action((args) => {
           deleted.push(...args.paths);
           return `deleted ${args.paths.length}`;
-        }),
+        })
+        .dryRun((args) => args.paths.map((path) => `delete ${path}`)),
     )
     .command('touch', (c) =>
       c
@@ -33,9 +33,8 @@ function createProgram() {
 describe('dry-run', () => {
   it('runs the dry-run handler instead of the action with --dry-run or -n', () => {
     const { program, deleted } = createProgram();
-    // The result is the dry-run handler's (typed as the action's)
-    expect(program.eval('rm a b --dry-run', { runtime: quiet }).result as unknown).toEqual(['delete a', 'delete b']);
-    expect(program.eval('rm a -n', { runtime: quiet }).result as unknown).toEqual(['delete a']);
+    expect(program.eval('rm a b --dry-run', { runtime: quiet }).result).toEqual(['delete a', 'delete b']);
+    expect(program.eval('rm a -n', { runtime: quiet }).result).toEqual(['delete a']);
     expect(deleted).toEqual([]);
 
     expect(program.eval('rm a --no-dry-run', { runtime: quiet }).result).toBe('deleted 1');
@@ -103,8 +102,8 @@ describe('dry-run', () => {
       .command('purge', (c) =>
         c
           .configure({ mutation: true })
-          .dryRun((_args, ctx) => `would purge ${ctx.context.db.count()} rows`)
-          .action(() => 'purged'),
+          .action(() => 'purged')
+          .dryRun((_args, ctx) => `would purge ${ctx.context.db.count()} rows`),
       );
 
     // No terminal: confirm would fail without --yes, but a dry run needs no confirmation
@@ -112,7 +111,7 @@ describe('dry-run', () => {
       runtime: { ...quiet, argv: () => ['purge', '--dry-run'], interactive: 'unsupported', setExitCode: () => {} },
     });
     expect(result.error).toBeUndefined();
-    expect(result.result as unknown).toBe('would purge 3 rows');
+    expect(result.result).toBe('would purge 3 rows');
     expect(seen).toEqual([true]);
   });
 

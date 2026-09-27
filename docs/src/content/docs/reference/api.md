@@ -209,16 +209,17 @@ program.command('rm', (c) =>
   c
     .configure({ mutation: true })
     .arguments(z.object({ paths: z.string().array() }), { positional: ['...paths'] })
-    .dryRun((args) => args.paths.map((path) => `delete ${path}`).join('\n'))
-    .action((args) => removeFiles(args.paths)),
+    .action(async (args) => ({ deleted: await removeFiles(args.paths) }))
+    // Same shape as the action's result: what would be deleted
+    .dryRun((args) => ({ deleted: args.paths })),
 );
-// files rm a.txt b.txt --dry-run   → delete a.txt / delete b.txt, nothing deleted
+// files rm a.txt b.txt --dry-run   → { deleted: ['a.txt', 'b.txt'] }, nothing deleted
 ```
 
 - Only commands with a dry-run handler accept the flag and show it in help; anywhere else `--dry-run` is an unknown option, so it's never silently ignored. A command's own `dryRun` / `dry-run` option, or its own `-n` flag, takes precedence over the framework's.
 - Execute interceptors still run (so context such as a database connection reaches the handler), with `ctx.dryRun` set; `padroneConfirm()` doesn't ask for confirmation in a dry run.
 - `parse()` reports `dryRun: true`; `tool()` needs no approval for a dry run; MCP and serve take `dryRun: true` as an argument on these commands.
-- The result is typed as the action's, but under `--dry-run` it's the dry-run handler's return value.
+- Types: ideally the handler returns the action's type, so callers handle one shape and the result type stays the same. A different type extends the command's result type to a union (`.action(() => 1).dryRun(() => 'would')` gives `number | string`). Call `.dryRun()` after `.action()`, since `.action()` sets the result type.
 
 ---
 

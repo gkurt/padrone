@@ -536,23 +536,25 @@ export type PadroneBuilderMethods<
   /**
    * Set a dry-run handler. The command then accepts `--dry-run` / `-n`, and under that flag this handler runs
    * instead of the action (the action never runs), after validation and with the same context. Return what would
-   * change: it's printed like an action's result (e.g. a string, or a generator yielding one line per change;
-   * JSON under `--json`). Execute interceptors run too, with `ctx.dryRun` set.
+   * change: it's printed like an action's result (JSON under `--json`). Execute interceptors run too, with `ctx.dryRun` set.
    * Commands without a dry-run handler reject `--dry-run` as an unknown option, so it can't be silently ignored.
+   *
+   * Ideally return the action's type (e.g. `{ deleted: string[] }` from both), so callers handle one shape; a different
+   * type extends the command's result type to a union. Call it after `.action()`, which sets the result type.
    * @category Builder
    */
-  dryRun: (
+  dryRun: <TDryRes = TRes>(
     handler: (
       args: StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>,
       ctx: PadroneActionContext<TContext & TContextProvided>,
-    ) => unknown,
+    ) => TDryRes,
   ) => BuilderOrProgram<
     TReturn,
     TProgramName,
     TName,
     TParentName,
     TArgs,
-    TRes,
+    TRes | TDryRes,
     TCommands,
     TParentArgs,
     TAsync,

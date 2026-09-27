@@ -9,12 +9,14 @@ import type {
   InterceptorPipelinePhase,
   InterceptorShutdownContext,
   InterceptorStartContext,
+  PadroneCaller,
   PadroneInput,
   PadroneInterceptorFn,
   RegisteredInterceptor,
   ResolvedInterceptor,
 } from '../types/index.ts';
 import { PadroneError } from './errors.ts';
+import { runsForCaller, withEmit } from './events.ts';
 import { thenMaybe } from './results.ts';
 import type { ResolvedPadroneRuntime } from './runtime.ts';
 
@@ -22,8 +24,14 @@ import type { ResolvedPadroneRuntime } from './runtime.ts';
 // defineInterceptor — creates a single-value distributable interceptor
 // ---------------------------------------------------------------------------
 
+/** Callers with a terminal and the process's stdin: `cli()`, `eval()`, `run()` and the REPL. For `callers` meta. */
+export const LOCAL_CALLERS = ['cli', 'eval', 'run', 'repl'] as const satisfies readonly PadroneCaller[];
+
+/** Callers that return results through their own transport (HTTP, MCP, AI tool calls): no terminal, no stdin. */
+export const REMOTE_CALLERS = ['serve', 'mcp', 'tool'] as const satisfies readonly PadroneCaller[];
+
 /** Meta fields stored as own properties of an interceptor function (`name` is the function's name). */
-const META_KEYS = ['id', 'order', 'disabled', 'inherit', 'options', 'env', 'async'] as const;
+const META_KEYS = ['id', 'order', 'disabled', 'inherit', 'options', 'env', 'async', 'callers'] as const;
 
 function buildInterceptorFn(meta: InterceptorMeta, factory: InterceptorFactory<any, any, any>): PadroneInterceptorFn<any, any, any> {
   Object.defineProperty(factory, 'name', { value: meta.name, configurable: true });
@@ -35,6 +43,18 @@ function buildInterceptorFn(meta: InterceptorMeta, factory: InterceptorFactory<a
     return factory;
   };
   if (meta.requires) (factory as any)['~requires'] = [...meta.requires];
+  if (meta.on) (factory as any)['~on'] = { ...meta.on };
+  (factory as any).on = (event: { id: string }, handler: (...args: any[]) => unknown) => {
+    const handlers = ((factory as any)['~on'] ??= {});
+    const previous = handlers[event.id];
+    handlers[event.id] = previous
+      ? async (payload: unknown, ctx: unknown) => {
+          await previous(payload, ctx);
+          await handler(payload, ctx);
+        }
+      : handler;
+    return factory;
+  };
   return factory as PadroneInterceptorFn<any, any, any>;
 }
 
@@ -109,7 +129,9 @@ export function toRegisteredInterceptor(
         options: metaOrFn.options,
         env: metaOrFn.env,
         async: metaOrFn.async,
+        callers: metaOrFn.callers,
         requires: (metaOrFn as { '~requires'?: string[] })['~requires'],
+        on: (metaOrFn as { '~on'?: InterceptorMeta['on'] })['~on'],
       },
       factory: metaOrFn,
     };
@@ -178,9 +200,10 @@ export function runInterceptorChain<TCtx extends object, TResult>(
   ctx: TCtx,
   core: (ctx: TCtx) => TResult | Promise<TResult>,
 ): TResult | Promise<TResult> {
-  // Deduplicate by id (last wins), then filter to enabled interceptors that have a handler for this phase
+  // Deduplicate by id (last wins), then filter to enabled interceptors for this caller that have a handler for this phase
   const deduped = deduplicateInterceptors(interceptors);
-  const phaseInterceptors = deduped.filter((p) => p[phase] && !p.disabled);
+  const caller = (ctx as { caller?: PadroneCaller }).caller;
+  const phaseInterceptors = deduped.filter((p) => p[phase] && !p.disabled && runsForCaller(p, caller));
   if (phaseInterceptors.length === 0) return core(ctx);
 
   // Stable sort by order (lower = outermost). Equal order preserves registration order.
@@ -202,7 +225,10 @@ export function runInterceptorChain<TCtx extends object, TResult>(
         if (overrides.context != null && typeof overrides.context === 'object') {
           overrides = { ...overrides, context: Object.assign({}, (currentCtx as Record<string, unknown>).context, overrides.context) };
         }
-        return prevNext(Object.assign({}, currentCtx, overrides) as TCtx);
+        const merged = Object.assign({}, currentCtx, overrides) as TCtx;
+        // `emit` follows the overrides (e.g. a new runtime)
+        if ('emit' in merged && !('emit' in overrides)) withEmit(merged as never);
+        return prevNext(merged);
       });
   }
 
@@ -225,7 +251,7 @@ export function wrapWithLifecycle<T>(
   context?: unknown,
   runtime?: ResolvedPadroneRuntime,
   program?: AnyPadroneProgram,
-  caller: 'cli' | 'eval' | 'run' | 'repl' | 'serve' | 'mcp' | 'tool' = 'eval',
+  caller: PadroneCaller = 'eval',
   pipelineState?: { phase: InterceptorPipelinePhase; rawArgs?: Record<string, unknown>; positionalArgs?: string[]; args?: unknown },
 ): T | Promise<T> {
   const defaultSignal = typeof AbortSignal !== 'undefined' ? AbortSignal.abort() : (undefined as unknown as AbortSignal);
@@ -244,7 +270,7 @@ export function wrapWithLifecycle<T>(
 
   const runShutdown = (error?: unknown, result?: unknown) => {
     if (!hasShutdown) return;
-    const ctx: InterceptorShutdownContext = {
+    const ctx: InterceptorShutdownContext = withEmit({
       command,
       input,
       error,
@@ -255,7 +281,7 @@ export function wrapWithLifecycle<T>(
       program: program!,
       caller,
       ...effectivePipelineState,
-    };
+    });
     return runInterceptorChain('shutdown', interceptors, ctx, () => {});
   };
 
@@ -268,7 +294,7 @@ export function wrapWithLifecycle<T>(
         });
       throw error;
     }
-    const ctx: InterceptorErrorContext = {
+    const ctx: InterceptorErrorContext = withEmit({
       command,
       input,
       error,
@@ -278,7 +304,7 @@ export function wrapWithLifecycle<T>(
       program: program!,
       caller,
       ...effectivePipelineState,
-    };
+    });
     const errorResult = runInterceptorChain('error', interceptors, ctx, (): InterceptorErrorResult => ({ error }));
     return thenMaybe(errorResult, (er) => {
       if (er.error !== undefined) {
@@ -299,7 +325,7 @@ export function wrapWithLifecycle<T>(
     return result;
   };
 
-  const startCtx: InterceptorStartContext = {
+  const startCtx: InterceptorStartContext = withEmit({
     command,
     signal: effectiveSignal,
     context: effectiveContext as object,
@@ -307,7 +333,7 @@ export function wrapWithLifecycle<T>(
     program: program!,
     input,
     caller,
-  };
+  });
   let result: T | Promise<T>;
   try {
     result = (
@@ -346,7 +372,7 @@ export function wrapWithCommandLifecycle<T>(
   context: unknown,
   runtime: ResolvedPadroneRuntime,
   program: AnyPadroneProgram,
-  caller: 'cli' | 'eval' | 'run' | 'repl' | 'serve' | 'mcp' | 'tool',
+  caller: PadroneCaller,
   pipelineState: { phase: InterceptorPipelinePhase; rawArgs?: Record<string, unknown>; positionalArgs?: string[]; args?: unknown },
 ): T | Promise<T> {
   const hasError = interceptors.some((p) => p.error);
@@ -356,7 +382,7 @@ export function wrapWithCommandLifecycle<T>(
 
   const runShutdown = (error?: unknown, result?: unknown) => {
     if (!hasShutdown) return;
-    const ctx: InterceptorShutdownContext = {
+    const ctx: InterceptorShutdownContext = withEmit({
       command,
       input,
       error,
@@ -367,7 +393,7 @@ export function wrapWithCommandLifecycle<T>(
       program,
       caller,
       ...pipelineState,
-    };
+    });
     return runInterceptorChain('shutdown', interceptors, ctx, () => {});
   };
 
@@ -380,7 +406,7 @@ export function wrapWithCommandLifecycle<T>(
         });
       throw error;
     }
-    const ctx: InterceptorErrorContext = {
+    const ctx: InterceptorErrorContext = withEmit({
       command,
       input,
       error,
@@ -390,7 +416,7 @@ export function wrapWithCommandLifecycle<T>(
       program,
       caller,
       ...pipelineState,
-    };
+    });
     const errorResult = runInterceptorChain('error', interceptors, ctx, (): InterceptorErrorResult => ({ error }));
     return thenMaybe(errorResult, (er) => {
       if (er.error !== undefined) {

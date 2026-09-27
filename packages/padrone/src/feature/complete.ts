@@ -1,6 +1,7 @@
 import { extractSchemaMetadata, getJsonSchema, getOptionArity, parsePositionalConfig } from '../core/args.ts';
 import { findCommandByName, getGlobalArgs, resolveCommand } from '../core/commands.ts';
 import { getDryRunFlagKeys, getInterceptorOptions, parseCommand } from '../core/validate.ts';
+import { getHelpTopics } from '../output/help.ts';
 import type { AnyPadroneCommand, PadroneFieldMeta, PadroneSchema } from '../types/index.ts';
 import type { ShellType } from '../util/shell-utils.ts';
 
@@ -168,10 +169,13 @@ export async function getCompletions(rootCommand: AnyPadroneCommand, words: read
     return filter([...names, ...dryRun, ...builtinLongFlags(rootCommand, 'help')]);
   }
 
-  const subcommands =
-    positionals === 0 && !afterDoubleDash
-      ? (command.commands ?? []).filter((c) => !c.hidden && c.name && c.name !== COMPLETE_COMMAND).map((c) => c.name)
-      : [];
+  const visibleCommands = (cmd: AnyPadroneCommand) =>
+    (cmd.commands ?? []).filter((c) => !c.hidden && c.name && c.name !== COMPLETE_COMMAND).map((c) => c.name);
+  const subcommands = positionals === 0 && !afterDoubleDash ? visibleCommands(command) : [];
+  // `help <word>`: the built-in help command takes a command or a help topic
+  if (positionals === 0 && !afterDoubleDash && command.flagNames && command.name === 'help' && command.parent && !command.parent.parent) {
+    subcommands.push(...visibleCommands(rootCommand), ...getHelpTopics(rootCommand).map(([name]) => name));
+  }
   const positional = parsePositionalConfig(command.meta?.positional ?? []);
   const slot = positional[positionals] ?? (positional.at(-1)?.variadic ? positional.at(-1) : undefined);
   const values = slot

@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { getCommand } from '../core/commands.ts';
+import { getCommand, getCommandRuntime } from '../core/commands.ts';
 import type { HelpArgumentInfo, HelpInfo, HelpPositionalInfo, HelpSubcommandInfo } from '../output/formatter.ts';
-import { getHelpInfo } from '../output/help.ts';
+import { getHelpInfo, getHelpTopics } from '../output/help.ts';
 import type { AnyPadroneCommand } from '../types/index.ts';
 
 // ============================================================================
@@ -266,6 +266,8 @@ function generateMarkdownPage(info: HelpInfo, depth: number, frontmatterFn?: Doc
     }
   }
 
+  lines.push(...markdownTopicsSection(info));
+
   return `${lines.join('\n').trimEnd()}\n`;
 }
 
@@ -528,6 +530,16 @@ function commandToPath(info: HelpInfo, ext: string, isRoot: boolean): string {
 // Index Page Generators
 // ============================================================================
 
+/** Links to the help topic pages (`topics/<name>.md`). */
+function markdownTopicsSection(info: HelpInfo): string[] {
+  if (!info.topics?.length) return [];
+  const links = info.topics.map((t) => {
+    const desc = t.description ?? t.title;
+    return `- [${t.name}](topics/${t.name}.md)${desc ? ` — ${desc}` : ''}`;
+  });
+  return ['## Help Topics', '', ...links, ''];
+}
+
 function generateMarkdownIndex(rootInfo: HelpInfo, allInfos: HelpInfo[]): string {
   const lines: string[] = [];
   lines.push(`# ${rootInfo.title ?? rootInfo.name ?? 'CLI'} Reference`);
@@ -549,6 +561,8 @@ function generateMarkdownIndex(rootInfo: HelpInfo, allInfos: HelpInfo[]): string
     }
     lines.push('');
   }
+
+  lines.push(...markdownTopicsSection(rootInfo));
 
   return `${lines.join('\n').trimEnd()}\n`;
 }
@@ -603,6 +617,23 @@ export function generateDocs(program: object, options: DocsOptions = {}): DocsRe
     // Replace the root page with a combined index
     const rootPage = pages[0]!;
     rootPage.content = generateMarkdownIndex(rootInfo, allInfos);
+  }
+
+  if (format === 'markdown') {
+    const runtime = getCommandRuntime(cmd);
+    for (const [name, topic] of getHelpTopics(cmd)) {
+      const title = topic.title ?? name;
+      const content = typeof topic.content === 'function' ? topic.content({ runtime, format: 'markdown' }) : topic.content;
+      const info: HelpInfo = {
+        name,
+        title,
+        description: topic.description,
+        usage: { command: `${programName} help ${name}`, hasSubcommands: false, hasPositionals: false, hasArguments: false },
+      };
+      const fm = frontmatter?.(info, 1);
+      const header = fm && Object.keys(fm).length > 0 ? `${generateFrontmatter(fm)}\n\n` : '';
+      pages.push({ path: `topics/${name}.md`, content: `${header}# ${title}\n\n${content.trim()}\n`, command: `help ${name}` });
+    }
   }
 
   const result: DocsResult = { pages, written: [], skipped: [], errors: [] };

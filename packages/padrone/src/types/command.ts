@@ -1,10 +1,11 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { PadroneRuntime, ResolvedPadroneRuntime } from '../core/runtime.ts';
+import type { PadroneHelpTopic } from '../extension/help.ts';
 import type { PadroneHelpConfig, PadroneHelpTransform } from '../output/formatter.ts';
 import type { FullCommandName } from '../util/type-utils.ts';
 import type { PadroneArgsSchemaMeta, PadroneGlobalArgsMeta } from './args-meta.ts';
 import type { AnyPadroneProgram } from './builder.ts';
-import type { RegisteredInterceptor } from './interceptor.ts';
+import type { PadroneEmit, RegisteredInterceptor } from './interceptor.ts';
 import type { PadroneSchema } from './schema.ts';
 
 type UnknownRecord = Record<string, unknown>;
@@ -31,6 +32,9 @@ export type PadroneProgramMeta<TName extends string = string> = {
   commands: string[];
 };
 
+/** The entry point that started an execution: `cli()`, `eval()`, `run()`, the REPL, `serve()`, `mcp()` or `tool()`. */
+export type PadroneCaller = 'cli' | 'eval' | 'run' | 'repl' | 'serve' | 'mcp' | 'tool';
+
 /**
  * Context object passed as the second argument to command action handlers.
  * Contains the resolved runtime, the executing command, and the program instance.
@@ -52,7 +56,9 @@ export type PadroneActionContext<TContext = unknown> = {
   /** User-defined context object. Set via `.context()` on the builder and provided at `cli()`/`eval()` time. */
   context: TContext;
   /** Which API entry point triggered this execution. */
-  caller: 'cli' | 'eval' | 'run' | 'repl' | 'serve' | 'mcp' | 'tool';
+  caller: PadroneCaller;
+  /** Emits a custom event to the handlers of the interceptors on this command's chain (see `defineEvent()`). */
+  emit: PadroneEmit;
 };
 
 /**
@@ -118,6 +124,8 @@ export type PadroneCommand<
   help?: PadroneHelpConfig | PadroneHelpTransform;
   /** @internal Flags that invoke this built-in command (e.g. `['help', 'h']` for `--help`/`-h`). */
   flagNames?: readonly string[];
+  /** @internal Topics shown by the built-in help command (`help <topic>`), from `padroneHelp({ topics })`. */
+  helpTopics?: Record<string, PadroneHelpTopic>;
   argsSchema?: TArgs;
   meta?: GetArgsMeta<TArgs>;
   /**

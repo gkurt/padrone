@@ -6,7 +6,7 @@ import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import { formatIssueMessages } from '../core/validate.ts';
 import { pageText, resolvePager } from '../feature/pager.ts';
 import type { HelpDetail, HelpFormat, HelpInfo } from '../output/formatter.ts';
-import { generateHelp } from '../output/help.ts';
+import { generateHelp, getHelpTopics } from '../output/help.ts';
 import type {
   AnyPadroneBuilder,
   AnyPadroneCommand,
@@ -25,12 +25,31 @@ import { findCommandInTree, frameworkFlags, isErrorReported, markErrorReported, 
 
 type HelpArgs = { command?: string[]; detail?: HelpDetail; format?: HelpFormat; all?: boolean };
 
+/** A help topic as JSON: `help <topic> --format json`. */
+export type HelpTopicInfo = { topic: string; title?: string; content: string };
+
 /** Help text, or the help as an object when output is JSON (e.g. `--json`). */
-export type HelpCommand = PadroneCommand<'help', '', PadroneSchema<HelpArgs>, string | HelpInfo, [], ['h', ''], false>;
+export type HelpCommand = PadroneCommand<'help', '', PadroneSchema<HelpArgs>, string | HelpInfo | HelpTopicInfo, [], ['h', ''], false>;
 
 export type WithHelp<T> = WithCommand<T, 'help', HelpCommand>;
 
 // ── Interceptor ─────────────────────────────────────────────────────────
+
+export type PadroneHelpTopicContext = {
+  runtime: ResolvedPadroneRuntime;
+  /** The format the topic is shown in (`--format`, else the runtime's). */
+  format: HelpFormat | 'auto';
+};
+
+/** A guide `help <topic>` shows, like `gh help environment`. */
+export type PadroneHelpTopic = {
+  /** The topic's heading, used in JSON output and generated docs. */
+  title?: string;
+  /** A one-line summary shown next to the topic's name in the program's help. */
+  description?: string;
+  /** The topic's text, printed as is (Markdown reads well in a terminal too), or a function that returns it. */
+  content: string | ((ctx: PadroneHelpTopicContext) => string);
+};
 
 export type PadroneHelpOptions = {
   /**
@@ -56,6 +75,11 @@ export type PadroneHelpOptions = {
    * `--help` still shows help. Defaults to `false`.
    */
   pickSubcommand?: boolean;
+  /**
+   * Additional help topics, keyed by name: `my-cli help environment` prints the topic, and the program's help lists them
+   * under "Additional help topics". A command of the same name takes precedence.
+   */
+  topics?: Record<string, PadroneHelpTopic>;
 };
 
 const DEFAULT_HELP_FLAGS = ['help', 'h'] as const;
@@ -103,6 +127,27 @@ function renderHelp(runtime: ResolvedPadroneRuntime, command: AnyPadroneCommand,
   } catch {
     return text;
   }
+}
+
+const topicLookupErrors = new WeakSet<object>();
+
+/** Whether `error` is `help <name>` not finding a top-level command or topic, so topic names can be suggested. */
+export function isTopicLookupError(error: unknown): boolean {
+  return !!error && typeof error === 'object' && topicLookupErrors.has(error);
+}
+
+/** A topic's text, or `{ topic, title, content }` under JSON output (as a string unless the runtime's format is JSON). */
+function renderTopic(
+  runtime: ResolvedPadroneRuntime,
+  name: string,
+  topic: PadroneHelpTopic,
+  requested?: HelpFormat,
+): string | HelpTopicInfo {
+  const format = requested ?? runtime.format;
+  const content = typeof topic.content === 'function' ? topic.content({ runtime, format }) : topic.content;
+  if (format !== 'json') return content;
+  const info: HelpTopicInfo = { topic: name, title: topic.title, content };
+  return runtime.format === 'json' ? info : JSON.stringify(info, null, 2);
 }
 
 /**
@@ -317,6 +362,7 @@ export function padroneHelp(options: PadroneHelpOptions = {}): <T extends Comman
             description: 'Display help for a command',
             hidden: true,
             flagNames: options.flags ?? DEFAULT_HELP_FLAGS,
+            helpTopics: options.topics,
           } as PadroneCommandConfig)
           .arguments(
             passthroughSchema({
@@ -333,12 +379,18 @@ export function padroneHelp(options: PadroneHelpOptions = {}): <T extends Comman
             const commandName = args.command?.join(' ');
             const targetCommand = commandName ? findCommandInTree(commandName, rootCommand) : rootCommand;
             if (!targetCommand) {
-              // Reported like a mistyped command: the deepest command that matched lists its subcommands
               const parts = args.command ?? [];
+              const topic = parts.length === 1 && getHelpTopics(rootCommand).find(([name]) => name === parts[0])?.[1];
+              if (topic) return renderTopic(ctx.runtime, parts[0]!, topic, args.format as HelpFormat);
+              // Reported like a mistyped command: the deepest command that matched lists its subcommands
               let known = 0;
               while (known < parts.length && findCommandInTree(parts.slice(0, known + 1).join(' '), rootCommand)) known++;
               const parent = findCommandInTree(parts.slice(0, known).join(' '), rootCommand) ?? rootCommand;
-              throw new RoutingError(`Unknown command: ${parts.slice(0, known + 1).join(' ')}`, { command: parent.path || undefined });
+              const error = new RoutingError(`Unknown command: ${parts.slice(0, known + 1).join(' ')}`, {
+                command: parent.path || undefined,
+              });
+              if (known === 0) topicLookupErrors.add(error);
+              throw error;
             }
             return renderHelp(ctx.runtime, targetCommand, {
               detail: args.detail as HelpDetail,

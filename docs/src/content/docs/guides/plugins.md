@@ -168,6 +168,8 @@ The first argument is metadata (`name`, `order`, optional `id`). The second argu
 | `options` | `Record<string, OptionArity>` | Options the interceptor reads from `rawArgs` that aren't in the command's schema, keyed by long name or single-char flag. Tells the parser whether each takes a value: `'flag'`, `'value'`, `'optional'` or `'array'` |
 | `env` | `Record<string, string \| string[]>` | Environment variables the interceptor reads into args, keyed by arg name. Shown in help as `Env: NAME` |
 | `async` | `boolean` | The interceptor may make the validate phase async (e.g. loading files). Commands it applies to count as async at runtime, so they aren't warned about returning a Promise from validation |
+| `callers` | `PadroneCaller[]` | Run only for these callers (`'cli'`, `'eval'`, `'run'`, `'repl'`, `'serve'`, `'mcp'`, `'tool'`); skipped for the others, like `disabled`. `LOCAL_CALLERS` and `REMOTE_CALLERS` are exported. It still counts as registered for `requires` |
+| `on` | `Record<string, handler>` | Custom event handlers keyed by event id (`.on(event, handler)` adds one with a typed payload; see [Custom Events](#custom-events)) |
 
 If your interceptor reads its own flag from `rawArgs` (like the built-in `--help` or `--config`), declare it in `options` so the parser knows how to read it. A `flag` option given a value (`--yes=false`) arrives as that string, so treat `false`, `'false'`, `'0'`, `'no'` and `'off'` as off. For example, `options: { profile: 'value', p: 'value' }` makes `--profile dev deploy` read `dev` as the value and still route to `deploy`. The command's own schema takes precedence when both define the same name.
 
@@ -583,6 +585,31 @@ const audit = defineInterceptor({ name: 'audit' })
   }));
 ```
 
+### Custom Events
+
+Extensions can talk to each other through custom events, like oclif's `runHook`. Define an event with its payload type, handle it with `.on()` on an interceptor, and emit it with `ctx.emit()` from an action or an interceptor phase:
+
+```typescript
+import { defineEvent, defineInterceptor } from 'padrone';
+
+export const deployed = defineEvent<{ env: string; version: string }>('myapp:deployed');
+
+const slack = defineInterceptor({ name: 'slack' }, () => ({})).on(deployed, async (payload, ctx) => {
+  await postToSlack(`Deployed ${payload.version} to ${payload.env}`);
+});
+
+program
+  .intercept(slack)
+  .command('deploy', (c) =>
+    c.action(async (args, ctx) => {
+      const version = await deploy(args.env);
+      await ctx.emit(deployed, { env: args.env, version });
+    }),
+  );
+```
+
+`ctx.emit()` runs the handlers of the interceptors on the running command's chain (root and command-level, skipping disabled ones, non-inherited ones from parents and those `callers` filters out), one after another in interceptor order, and resolves once they've all run; a handler's error rejects it. Handlers get the payload and a context with the `command`, `runtime`, `context`, `caller`, `signal`, `program` and `emit`. `program.emit(event, payload)` emits outside any execution, to the root's interceptors (`caller: 'run'`). Handlers can also be given in the meta: `on: { [deployed.id]: handler }` (the payload is then untyped).
+
 ### Sync Preservation
 
 Interceptors preserve sync/async behavior. If your interceptor and all inner interceptors are synchronous, the entire chain stays synchronous. Only return a Promise when you need async operations:
@@ -614,6 +641,8 @@ const asyncInterceptor = defineInterceptor({ name: 'async' }, () => ({
 | `eval()` / `cli()` | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | `parse()` | No | Yes | No | Yes | No | No | No |
 | `run()` | No | No | No | No | Yes | No | No |
+
+To run an interceptor for some callers only, set `callers` in its meta: `defineInterceptor({ name: 'stdin', callers: LOCAL_CALLERS }, ...)` skips it for `serve`, `mcp` and `tool()` calls.
 
 ### How Built-in Extensions Use Interceptors
 
@@ -651,7 +680,7 @@ const program = createPadrone('myapp', {
 });
 ```
 
-`help` also accepts options instead of `false`: `builtins: { help: { showHelpOnError: true } }` prints the full help after a routing or validation error, instead of the default one-line `--help` hint. `builtins: { help: { pager: true } }` shows help taller than the terminal through a pager, like git (`$PAGER`, or `less -FRX`; only in `cli()` on a terminal; `--no-pager` prints it directly). For other long output, call `ctx.runtime.page(text)` from an action. `builtins: { help: { pickSubcommand: true } }` asks which subcommand to run, with a select prompt, when a command that only groups subcommands runs without one (like `gh`); `--help` still shows help.
+`help` also accepts options instead of `false`: `builtins: { help: { showHelpOnError: true } }` prints the full help after a routing or validation error, instead of the default one-line `--help` hint. `builtins: { help: { pager: true } }` shows help taller than the terminal through a pager, like git (`$PAGER`, or `less -FRX`; only in `cli()` on a terminal; `--no-pager` prints it directly). For other long output, call `ctx.runtime.page(text)` from an action. `builtins: { help: { pickSubcommand: true } }` asks which subcommand to run, with a select prompt, when a command that only groups subcommands runs without one (like `gh`); `--help` still shows help. `builtins: { help: { topics } }` adds help topics (`app help environment`), listed under "Additional help topics".
 
 ### Overriding via Deduplication
 

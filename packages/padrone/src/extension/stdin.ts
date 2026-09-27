@@ -1,19 +1,19 @@
 import { applyValues, isArrayField, isAsyncStreamField } from '../core/args.ts';
 import { resolveStdin, resolveStdinAlways } from '../core/default-runtime.ts';
-import { defineInterceptor } from '../core/interceptors.ts';
+import { defineInterceptor, LOCAL_CALLERS } from '../core/interceptors.ts';
 import type { AnyPadroneBuilder, CommandTypesBase, InterceptorValidateContext } from '../types/index.ts';
 import { createStdinStream } from '../util/stream.ts';
-import { isProvidedPositionally, isRemoteCaller } from './utils.ts';
+import { isProvidedPositionally } from './utils.ts';
 
 // ── Interceptor ─────────────────────────────────────────────────────────
 
-const stdinMeta = { id: 'padrone:stdin', name: 'padrone:stdin', order: -1001 } as const;
+// Serve, MCP and tool calls pass the field as an argument; the process's stdin isn't theirs (MCP's stdio transport reads it)
+const stdinMeta = { id: 'padrone:stdin', name: 'padrone:stdin', order: -1001, callers: LOCAL_CALLERS } as const;
 
 const stdinInterceptor = defineInterceptor(stdinMeta, () => ({
   validate(ctx: InterceptorValidateContext, next) {
     const stdinField = ctx.command.meta?.stdin;
-    // Serve, MCP and tool calls pass the field as an argument; the process's stdin isn't theirs (MCP's stdio transport reads it)
-    if (!stdinField || isRemoteCaller(ctx.caller)) return next();
+    if (!stdinField) return next();
 
     // Skip if the field was already provided via CLI flags or positionally
     if (stdinField in ctx.rawArgs && ctx.rawArgs[stdinField] !== undefined) return next();

@@ -3,7 +3,8 @@ export type { PadroneOptions } from './core/create.ts';
 export { createPadrone, defineCommand } from './core/create.ts';
 export type { PadroneErrorOptions } from './core/errors.ts';
 export { ActionError, ConfigError, PadroneError, RoutingError, SignalError, ValidationError } from './core/errors.ts';
-export { defineInterceptor } from './core/interceptors.ts';
+export { defineEvent } from './core/events.ts';
+export { defineInterceptor, LOCAL_CALLERS, REMOTE_CALLERS } from './core/interceptors.ts';
 export type { OptionArity } from './core/parse.ts';
 export { asyncSchema } from './core/results.ts';
 export type {
@@ -25,12 +26,15 @@ export { REPL_SIGINT } from './core/runtime.ts';
 export type {
   ConfigSearchOptions,
   HelpCommand,
+  HelpTopicInfo,
   PadroneAliasesOptions,
   PadroneAutoOutputOptions,
   PadroneConfigOptions,
   PadroneConfirmOptions,
   PadroneEnvOptions,
   PadroneHelpOptions,
+  PadroneHelpTopic,
+  PadroneHelpTopicContext,
   PadroneInstaller,
   PadroneJqFunction,
   PadroneJsonOptions,
@@ -129,11 +133,16 @@ export type {
   InterceptorValidateResult,
   PadroneActionContext,
   PadroneBuilder,
+  PadroneCaller,
   PadroneCommand,
   PadroneCommandResult,
   PadroneCompleteContext,
   PadroneContextInterceptor,
   PadroneDrainResult,
+  PadroneEmit,
+  PadroneEvent,
+  PadroneEventContext,
+  PadroneEventHandler,
   PadroneExtension,
   PadroneFieldGroups,
   PadroneGlobalArgsMeta,

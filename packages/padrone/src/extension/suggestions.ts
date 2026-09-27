@@ -4,9 +4,11 @@ import { defineInterceptor } from '../core/interceptors.ts';
 import { parseCliInputToParts, tokenizeInput } from '../core/parse.ts';
 import { thenMaybe } from '../core/results.ts';
 import { createParseResolver, getKnownOptionNames } from '../core/validate.ts';
+import { getHelpTopics } from '../output/help.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, InterceptorParseContext, PadroneInput } from '../types/index.ts';
 import { camelToKebab } from '../util/shell-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
+import { isTopicLookupError } from './help.ts';
 import { quoteToken } from './utils.ts';
 
 function formatSuggestions(names: string[], prefix = ''): string {
@@ -32,7 +34,11 @@ function findSourceCommand(commandPath: string | undefined, root: AnyPadroneComm
 }
 
 /** The mistyped command term of a routing error and the commands it may have meant. */
-function similarCommands(err: RoutingError, rootCommand: AnyPadroneCommand): { term: string; similar: string[] } | undefined {
+function similarCommands(
+  err: RoutingError,
+  rootCommand: AnyPadroneCommand,
+  extraCandidates: string[] = [],
+): { term: string; similar: string[] } | undefined {
   // `help db migrat` reports "Unknown command: db migrat" for `db`: the mistyped term is the last word
   const unknownMatch = err.message.match(/^Unknown command: (?:\S+ )*(\S+)$/m);
   const unexpectedMatch = err.message.match(/^Unexpected arguments for '[^']+': (\S+)/);
@@ -41,7 +47,7 @@ function similarCommands(err: RoutingError, rootCommand: AnyPadroneCommand): { t
 
   const sourceCmd = findSourceCommand(err.command, rootCommand);
 
-  const candidateNames: string[] = [];
+  const candidateNames: string[] = [...extraCandidates];
   if (sourceCmd.commands) {
     for (const cmd of sourceCmd.commands) {
       resolveCommand(cmd);
@@ -57,7 +63,9 @@ function similarCommands(err: RoutingError, rootCommand: AnyPadroneCommand): { t
 
 function enrichRoutingError(err: unknown, rootCommand: AnyPadroneCommand): unknown {
   if (!(err instanceof RoutingError) || err.suggestions?.length) return err;
-  const found = similarCommands(err, rootCommand);
+  // `help <unknown>` may have meant a help topic
+  const topics = isTopicLookupError(err) ? getHelpTopics(rootCommand).map(([name]) => name) : [];
+  const found = similarCommands(err, rootCommand, topics);
   const suggestionText = found ? formatSuggestions(found.similar) : '';
   if (!suggestionText) return err;
 

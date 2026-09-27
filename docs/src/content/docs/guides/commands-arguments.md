@@ -416,6 +416,27 @@ createPadrone('app', {
 
 Long help can go through a pager, like `git help`: with `help: { pager: true }`, help that's taller than the terminal opens in `$PAGER`, or `less -FRX` when it isn't set (it quits right away if the help fits and keeps colors; there's no default pager on Windows). It only applies to `cli()` when stdout is a terminal. `PAGER=cat` turns it off, `--no-pager` prints the help directly for one run, and `--pager` pages it even when it fits. Pass a string (`pager: 'less -R'`) to choose the pager used when `$PAGER` isn't set.
 
+Guides that aren't about one command can be help topics, like `gh help environment` or cobra's "Additional help topics":
+
+```typescript
+createPadrone('app', {
+  builtins: {
+    help: {
+      topics: {
+        environment: {
+          title: 'Environment variables',
+          description: 'Variables that configure app', // shown in the program's help
+          content: '# Environment\n\n- `APP_TOKEN`: the API token',
+        },
+        formatting: { content: ({ format }) => formattingGuide(format) },
+      },
+    },
+  },
+});
+```
+
+`app help environment` prints the topic's content as is (through the pager when it's on), or `{ topic, title, content }` under JSON output. The program's help lists topics under "Additional help topics", `help <typo>` suggests topic names, and shell completion offers them after `help`. A command of the same name takes precedence. `generateDocs()` writes each topic to `topics/<name>.md` in Markdown output.
+
 ## Dry Runs
 
 Commands that change things can offer a dry run with `.dryRun()`. The command then accepts `--dry-run` (or `-n`), and under that flag the dry-run handler runs instead of the action: arguments are parsed and validated as usual, but the action is never called.

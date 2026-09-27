@@ -1,5 +1,6 @@
 import { extractSchemaMetadata, getJsonSchema, parsePositionalConfig } from '../core/args.ts';
 import { getGlobalArgs } from '../core/commands.ts';
+import { REMOTE_CALLERS } from '../core/interceptors.ts';
 import { getKnownOptionNames } from '../core/validate.ts';
 import type { AnyPadroneCommand, PadroneInput, PadroneSchema } from '../types/index.ts';
 
@@ -78,11 +79,9 @@ export function getJsonOutputFilter(runtime: object): JsonOutputFilter | undefin
   return jsonOutputFilters.get(runtime);
 }
 
-/** Callers that return results through their own transport (HTTP, MCP, AI tool calls): no terminal, no stdin. */
-const REMOTE_CALLERS = new Set<string>(['serve', 'mcp', 'tool']);
-
+/** Whether the caller returns results through its own transport (HTTP, MCP, AI tool calls): no terminal, no stdin. */
 export function isRemoteCaller(caller: string): boolean {
-  return REMOTE_CALLERS.has(caller);
+  return (REMOTE_CALLERS as readonly string[]).includes(caller);
 }
 
 type PassthroughType = 'string' | 'string[]' | 'boolean';

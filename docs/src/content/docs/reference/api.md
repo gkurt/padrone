@@ -826,6 +826,8 @@ const result = program.run('serve', { port: 8080 }, { context: { db } });
 
 **Returns:** The action handler's return value
 
+`program.emit(event, payload)` emits a custom event (see `defineEvent()`) outside any execution, to the root's interceptors.
+
 ---
 
 ### .parse(input?)
@@ -1365,11 +1367,31 @@ const withDb = defineInterceptor({ name: 'with-db' })
 | `disabled` | `boolean` | Skip this interceptor during execution |
 | `requires` | `string[]` | Ids of interceptors this one needs; running a command without them fails with an error naming the missing one |
 | `async` | `boolean` | The interceptor may make validation async |
+| `callers` | `PadroneCaller[]` | Run only for these callers (e.g. `LOCAL_CALLERS` = `cli`/`eval`/`run`/`repl`, `REMOTE_CALLERS` = `serve`/`mcp`/`tool`); skipped otherwise. Still counts as registered for `requires` |
+| `on` | `Record<string, handler>` | Custom event handlers keyed by event id |
 
 **Chaining methods (single-arg form):**
 - `.provides<T>()` — Declare what this interceptor adds to the context (type-level only)
 - `.requires<T>(...ids)` — Declare what this interceptor expects on the context; interceptor ids passed (`.requires<{ logger: PadroneLogger }>('padrone:logger')`) are also checked at runtime
 - `.factory(fn)` — Set the factory function
+
+The returned interceptor also has `.on(event, handler)`, which adds a typed handler for a custom event.
+
+## defineEvent\<T\>(id)
+
+Define a custom event for extensions to talk through. Handle it with `.on()` on an interceptor; emit it with `ctx.emit()` in an action or interceptor phase, which runs the handlers of the interceptors on the running command's chain one after another (in interceptor order) and resolves once they've run. `program.emit(event, payload)` emits outside an execution, to the root's interceptors.
+
+```typescript
+import { defineEvent, defineInterceptor } from 'padrone';
+
+const deployed = defineEvent<{ env: string; version: string }>('myapp:deployed');
+
+const slack = defineInterceptor({ name: 'slack' }, () => ({})).on(deployed, (payload, ctx) => notify(payload.env));
+
+program.intercept(slack).command('deploy', (c) => c.action((args, ctx) => ctx.emit(deployed, { env: args.env, version: '1.2.0' })));
+```
+
+Handlers receive the payload and `{ command, runtime, context, caller, signal, program, emit }`; a handler's error rejects `emit()`.
 
 **Returns:** A `PadroneInterceptor` — pass to `.intercept()` or use within an extension.
 
@@ -1407,7 +1429,7 @@ The following extensions are applied automatically by `createPadrone()` and can 
 
 | Export | Builtin key | Purpose |
 |--------|-------------|---------|
-| `padroneHelp(options?)` | `help` | Help command and `--help` flag. Options: `showHelpOnError` prints the full help after errors; `flags` renames the help flags (default `['help', 'h']`); `pager: true` shows help taller than the terminal through `$PAGER` or `less -FRX` in `cli()` (a string sets the fallback pager; `--no-pager` / `--pager` per run); `pickSubcommand: true` asks which subcommand to run (a select prompt) when a group command runs without one in `cli()`/REPL |
+| `padroneHelp(options?)` | `help` | Help command and `--help` flag. Options: `showHelpOnError` prints the full help after errors; `flags` renames the help flags (default `['help', 'h']`); `pager: true` shows help taller than the terminal through `$PAGER` or `less -FRX` in `cli()` (a string sets the fallback pager; `--no-pager` / `--pager` per run); `pickSubcommand: true` asks which subcommand to run (a select prompt) when a group command runs without one in `cli()`/REPL; `topics: { name: { title?, description?, content } }` adds `help <topic>` guides, listed under "Additional help topics" |
 | `padroneVersion(options?)` | `version` | Version command and `--version` flag (on any command; single-character flags on the root only). `version --verbose` adds the runtime, platform, architecture and shell (an object under `--json`). Options: `flags` renames the version flags (default `['version', 'v', 'V']`); `info` adds fields to `--verbose` |
 | `padroneRepl()` | `repl` | REPL command and `--repl` flag |
 | `padroneColor()` | `color` | `--color`/`--no-color` support |
@@ -1439,6 +1461,10 @@ import type {
 
   // Interceptor types
   PadroneInterceptor,
+  PadroneCaller,
+  PadroneEvent,
+  PadroneEventHandler,
+  PadroneEventContext,
   InterceptorBaseContext,
   InterceptorStartContext,
   InterceptorParseContext,

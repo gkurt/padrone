@@ -8,6 +8,7 @@ import {
 } from '../core/args.ts';
 import { findCommandByName, getGlobalArgs, resolveCommand } from '../core/commands.ts';
 import { getDryRunFlagKeys } from '../core/validate.ts';
+import type { PadroneHelpTopic } from '../extension/help.ts';
 import type { AnyPadroneCommand, InterceptorMeta, PadroneSchema } from '../types/index.ts';
 import { getRootCommand } from '../util/utils.ts';
 import type { ColorConfig, ColorTheme } from './colorizer.ts';
@@ -464,6 +465,11 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
     }
   }
 
+  if (!cmd.parent) {
+    const topics = getHelpTopics(cmd).map(([name, topic]) => ({ name, title: topic.title, description: topic.description }));
+    if (topics.length > 0) helpInfo.topics = topics;
+  }
+
   return helpInfo;
 }
 
@@ -490,6 +496,14 @@ function collectInterceptorEnv(command: AnyPadroneCommand): (arg: string) => str
     }
     return undefined;
   };
+}
+
+/** The built-in help command's topics (`help <topic>`), leaving out those a command of the same name hides. */
+export function getHelpTopics(rootCommand: AnyPadroneCommand): [string, PadroneHelpTopic][] {
+  const found = rootCommand.commands?.find((c) => c.name === 'help');
+  const topics = found && resolveCommand(found).helpTopics;
+  if (!topics) return [];
+  return Object.entries(topics).filter(([name]) => !findCommandByName(name, rootCommand.commands));
 }
 
 /** The flag that shows help (`--help`, or a renamed one), from the help command's flags. */

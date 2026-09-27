@@ -18,6 +18,7 @@ import type {
 } from '../types/index.ts';
 import { getCommandRuntime } from './commands.ts';
 import { RoutingError, SignalError, ValidationError } from './errors.ts';
+import { withEmit } from './events.ts';
 import {
   checkInterceptorRequirements,
   resolveRegisteredInterceptors,
@@ -169,7 +170,7 @@ export function execCommand(
 
   const runPipeline = (signal: AbortSignal, pipelineContext: unknown) => {
     // ── Phase 1: Parse ──────────────────────────────────────────────────
-    const parseCtx: InterceptorParseContext = {
+    const parseCtx: InterceptorParseContext = withEmit({
       input: resolvedInput,
       command: rootCommand,
       signal,
@@ -177,7 +178,7 @@ export function execCommand(
       runtime,
       program: ctx.builder,
       caller,
-    };
+    });
 
     // Tokenizer issues (e.g. an option missing its value) surface as validation issues of the parsed command.
     let parseIssues: { command: AnyPadroneCommand; issues: StandardSchemaV1.Issue[] } | undefined;
@@ -206,13 +207,13 @@ export function execCommand(
       const context = resolveContext(command, pipelineContext);
 
       // ── Phase 2: Route ──────────────────────────────────────────────
-      const routeCtx: InterceptorRouteContext = {
+      const routeCtx: InterceptorRouteContext = withEmit({
         ...parseCtx,
         command,
         rawArgs: parsed.rawArgs,
         positionalArgs: parsed.positionalArgs,
         context: context as object,
-      };
+      });
 
       const routedOrPromise = runInterceptorChain('route', commandInterceptors, routeCtx, () => {});
 
@@ -222,14 +223,14 @@ export function execCommand(
         const dryRun = takeDryRunFlag(command, parsed.rawArgs);
         const runValidateAndExecute = () => {
           // ── Phase 3: Validate ───────────────────────────────────────────
-          const validateCtx: InterceptorValidateContext = {
+          const validateCtx: InterceptorValidateContext = withEmit({
             ...parseCtx,
             command,
             rawArgs: parsed.rawArgs,
             positionalArgs: parsed.positionalArgs,
             context: context as object,
             evalInteractive: evalOptions?.interactive,
-          };
+          });
           // What validate interceptors passed to `next()` (e.g. a runtime with `.env` variables) carries into execute
           let validatedCtx = validateCtx;
 
@@ -256,24 +257,24 @@ export function execCommand(
             pipelineState.args = v.args;
             if (v.argsResult?.issues) return handleValidationIssues(v.argsResult as StandardSchemaV1.FailureResult, command, errorMode);
 
-            const executeCtx: InterceptorExecuteContext = {
+            const executeCtx: InterceptorExecuteContext = withEmit({
               ...validatedCtx,
               args: v.args,
               ...(dryRun && { dryRun }),
-            };
+            });
 
             const coreExecute = (executeCtx: InterceptorExecuteContext): InterceptorExecuteResult => {
               // Under --dry-run the action never runs
               const handler = (dryRun ? command.dryRun : command.action) ?? noop;
               const effectiveRuntime = executeCtx.runtime;
-              const actionCtx: PadroneActionContext = {
+              const actionCtx: PadroneActionContext = withEmit({
                 runtime: effectiveRuntime,
                 command: executeCtx.command,
                 program: ctx.builder as any,
                 signal: executeCtx.signal,
                 context: executeCtx.context,
                 caller,
-              };
+              });
               const result = handler(executeCtx.args as any, actionCtx);
               return { result };
             };

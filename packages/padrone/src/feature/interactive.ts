@@ -1,4 +1,4 @@
-import { coerceArgs, getJsonSchema } from '../core/args.ts';
+import { coerceArgs, getJsonSchema, isSensitiveField, REDACTED } from '../core/args.ts';
 import { getGlobalArgs } from '../core/commands.ts';
 import { hasInteractiveConfig } from '../core/results.ts';
 import type { InteractivePromptConfig, ResolvedPadroneRuntime } from '../core/runtime.ts';
@@ -113,7 +113,8 @@ async function promptWithValidation(
     // Warn the user and re-prompt with the invalid value as default
     const messages = fieldIssues.map((i) => i.message).join('; ');
     runtime.error(`Invalid value for "${field}": ${messages}`);
-    promptConfig = { ...config, default: value };
+    // A masked prompt never gets the typed value back as its default
+    promptConfig = config.type === 'password' ? config : { ...config, default: value };
   }
 }
 
@@ -140,13 +141,15 @@ function readSchemaFields(schema: PadroneSchema | undefined): { properties: Reco
  * includes required global fields; `.globalArgs(schema, { interactive })` prompts globals in every command of its subtree.
  *
  * When `force` is true, all configured interactive fields are prompted even if they already
- * have values. The current values are used as defaults in the prompts.
+ * have values. The current values are used as defaults in the prompts (except for sensitive fields).
+ * `conditionallyRequired` lists fields that `requires`/`requiredIf`/`requiredUnless` made required: they're prompted like required ones.
  */
 export async function promptInteractiveFields(
   data: Record<string, unknown>,
   command: AnyPadroneCommand,
   runtime: ResolvedPadroneRuntime,
   force?: boolean,
+  conditionallyRequired: readonly string[] = [],
 ): Promise<Record<string, unknown>> {
   if (!runtime.prompt) return data;
 
@@ -163,8 +166,8 @@ export async function promptInteractiveFields(
     ...Object.fromEntries([...globalOnly].map((key) => [key, globals.properties[key]])),
     ...own.properties,
   };
-  const requiredGlobal = new Set([...globals.required].filter((key) => globalOnly.has(key)));
-  const requiredFields = new Set([...own.required, ...requiredGlobal]);
+  const requiredGlobal = new Set([...globals.required, ...conditionallyRequired].filter((key) => globalOnly.has(key)));
+  const requiredFields = new Set([...own.required, ...conditionallyRequired, ...requiredGlobal]);
 
   const fieldDescriptions: Record<string, string | undefined> = {};
   for (const [key, value] of Object.entries(globalArgs?.meta?.fields ?? {})) {
@@ -173,6 +176,8 @@ export async function promptInteractiveFields(
   for (const [key, value] of Object.entries(meta?.fields ?? {})) {
     if (value?.description) fieldDescriptions[key] = value.description;
   }
+  const fieldMeta = (key: string) => (globalOnly.has(key) ? globalArgs?.meta?.fields : meta?.fields)?.[key];
+  const sensitive = new Set(Object.keys(jsonProperties).filter((key) => isSensitiveField(fieldMeta(key), jsonProperties[key])));
 
   const result = { ...data };
   const isMissing = (name: string) => force || result[name] === undefined;
@@ -184,8 +189,13 @@ export async function promptInteractiveFields(
 
   const promptField = async (field: string) => {
     const config = detectPromptConfig(field, jsonProperties[field], fieldDescriptions[field]);
-    // When forced, use the current value as the default
-    if (force && result[field] !== undefined) config.default = result[field];
+    if (sensitive.has(field)) {
+      if (config.type === 'input') config.type = 'password';
+      config.default = undefined;
+    } else if (force && result[field] !== undefined) {
+      // When forced, use the current value as the default
+      config.default = result[field];
+    }
     result[field] = await promptWithValidation(field, config, result, schemaFor(field), runtime, jsonProperties[field]);
   };
 
@@ -218,7 +228,8 @@ export async function promptInteractiveFields(
         const label = fieldDescriptions[f] || jsonProperties[f]?.description || f;
         const currentValue = result[f];
         // When forced, show current value next to the label for fields that already have values
-        const displayLabel = force && currentValue !== undefined ? `${label} (current: ${currentValue})` : label;
+        const displayLabel =
+          force && currentValue !== undefined ? `${label} (current: ${sensitive.has(f) ? REDACTED : currentValue})` : label;
         return { label: displayLabel, value: f };
       }),
     })) as string[];

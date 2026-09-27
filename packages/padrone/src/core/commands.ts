@@ -1,5 +1,5 @@
 import type { AnyPadroneCommand, PadroneGlobalArgsMeta, PadroneSchema } from '../types/index.ts';
-import { extractSchemaMetadata, getJsonSchema } from './args.ts';
+import { extractSchemaMetadata, getJsonSchema, markSensitiveProperties } from './args.ts';
 import { resolveRuntime } from './default-runtime.ts';
 import type { ResolvedPadroneRuntime } from './runtime.ts';
 
@@ -383,19 +383,24 @@ export function buildInputSchema(cmd: AnyPadroneCommand): Record<string, unknown
   };
 }
 
+/** A JSON schema with its sensitive properties marked `writeOnly`, without their defaults and examples. */
+function withSensitiveMarked(schema: Record<string, any>, fields: Record<string, any> | undefined): Record<string, any> {
+  return schema.properties ? { ...schema, properties: markSensitiveProperties(schema.properties, fields) } : schema;
+}
+
 function buildArgsInputSchema(cmd: AnyPadroneCommand): Record<string, unknown> {
   const empty = { type: 'object', additionalProperties: false };
   let own: Record<string, any> = empty;
   try {
-    if (cmd.argsSchema) own = getJsonSchema(cmd.argsSchema);
+    if (cmd.argsSchema) own = withSensitiveMarked(getJsonSchema(cmd.argsSchema), cmd.meta?.fields);
   } catch {}
 
   // Merge in the global args in effect; the command's own properties win
-  const globalSchema = getGlobalArgs(cmd)?.schema;
-  if (!globalSchema) return own;
+  const globalArgs = getGlobalArgs(cmd);
+  if (!globalArgs) return own;
   let globals: Record<string, any>;
   try {
-    globals = getJsonSchema(globalSchema);
+    globals = withSensitiveMarked(getJsonSchema(globalArgs.schema), globalArgs.meta?.fields);
   } catch {
     return own;
   }

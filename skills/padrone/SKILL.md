@@ -113,6 +113,8 @@ The second parameter to `.arguments()` configures positional args, interactive p
     old: { deprecated: 'Use --new instead', group: 'Legacy' },
     level: { flags: 'v', count: true },   // -vvv → 3
     json: { conflicts: 'table', implies: { color: false } },
+    output: { requiredIf: { format: 'file' } }, // also requires: 'x', requiredUnless: ['a', 'b']
+    token: { sensitive: true },           // masked prompt, no help default; redactArgs(command, args) for logs
   },
 })
 ```

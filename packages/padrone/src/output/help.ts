@@ -1,7 +1,9 @@
 import type { StandardJSONSchemaV1 } from '@standard-schema/spec';
 import {
+  extractFieldRules,
   extractSchemaMetadata,
   getJsonSchema,
+  isSensitiveField,
   optionDisplayName,
   type PadroneArgsSchemaMeta,
   parsePositionalConfig,
@@ -70,7 +72,7 @@ function extractPositionalArgsInfo(
           name: variadic ? `...${name}` : name,
           description: optMeta?.description ?? prop.description,
           optional: !required.includes(name),
-          default: prop.default,
+          default: isSensitiveField(optMeta, prop) ? undefined : prop.default,
           type: variadic ? `array<${prop.items?.type || 'string'}>` : prop.type,
           enum: (prop.enum ?? prop.items?.enum) as string[] | undefined,
         });
@@ -83,11 +85,23 @@ function extractPositionalArgsInfo(
   return { args, positionalNames };
 }
 
+const formatOptions = (keys: readonly string[], separator: string) => keys.map((key) => `--${optionDisplayName(key)}`).join(separator);
+
+/** Option values as flags: `{ color: false, level: 'high' }` → `--no-color, --level=high`. */
+function formatValues(values: Record<string, unknown>, separator: string): string {
+  return Object.entries(values)
+    .map(([k, v]) =>
+      v === true ? `--${optionDisplayName(k)}` : v === false ? `--no-${optionDisplayName(k)}` : `--${optionDisplayName(k)}=${String(v)}`,
+    )
+    .join(separator);
+}
+
 function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSchemaMeta, 'fields'>, positionalNames?: Set<string>) {
   const result: HelpArgumentInfo[] = [];
   if (!schema) return result;
 
   const argsMeta = meta?.fields;
+  const fieldRules = extractFieldRules(schema, argsMeta);
 
   try {
     const jsonSchema = getJsonSchema(schema) as Record<string, any>;
@@ -149,39 +163,29 @@ function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSc
         const isNegatable = propType === 'boolean' && !hasCustomNegative && !hasExplicitNegation(key) && !isNegationOf(key);
 
         const isCount = !!(optMeta?.count ?? prop?.count);
-        const rawConflicts = optMeta?.conflicts ?? prop?.conflicts;
-        const conflicts: string[] = rawConflicts ? (typeof rawConflicts === 'string' ? [rawConflicts] : [...rawConflicts]) : [];
-        const implies = (optMeta?.implies ?? prop?.implies) as Record<string, unknown> | undefined;
         const isVariadic = propType === 'array' && !!(optMeta?.variadic ?? prop?.variadic);
+        const { conflicts, implies, requires, requiredIf, requiredUnless } = fieldRules;
         const notes = [
           ...(isCount ? ['repeatable'] : []),
           ...(isVariadic ? ['takes multiple values'] : []),
-          ...(conflicts.length ? [`conflicts with ${conflicts.map((c) => `--${optionDisplayName(c)}`).join(', ')}`] : []),
-          ...(implies
-            ? [
-                `implies ${Object.entries(implies)
-                  .map(([k, v]) =>
-                    v === true
-                      ? `--${optionDisplayName(k)}`
-                      : v === false
-                        ? `--no-${optionDisplayName(k)}`
-                        : `--${optionDisplayName(k)}=${String(v)}`,
-                  )
-                  .join(', ')}`,
-              ]
-            : []),
+          ...(conflicts[key] ? [`conflicts with ${formatOptions(conflicts[key], ', ')}`] : []),
+          ...(implies[key] ? [`implies ${formatValues(implies[key], ', ')}`] : []),
+          ...(requires[key] ? [`requires ${formatOptions(requires[key], ', ')}`] : []),
+          ...(requiredIf[key] ? [`required if ${requiredIf[key].map((c) => formatValues(c, ' and ')).join(' or ')}`] : []),
+          ...(requiredUnless[key] ? [`required unless ${formatOptions(requiredUnless[key], ' or ')}`] : []),
         ];
+        const sensitive = isSensitiveField(optMeta, prop);
 
         result.push({
           name: key,
           description: optMeta?.description ?? prop.description,
           optional: isOptional,
-          default: prop.default,
+          default: sensitive ? undefined : prop.default,
           type: isCount ? undefined : propType === 'array' ? `${prop.items?.type || 'string'}[]` : propType,
           enum: enumValues,
           deprecated: optMeta?.deprecated ?? prop?.deprecated,
           hidden: optMeta?.hidden ?? prop?.hidden,
-          examples: optMeta?.examples ?? prop?.examples,
+          examples: sensitive ? undefined : (optMeta?.examples ?? prop?.examples),
           variadic: propType === 'array',
           negatable: isNegatable,
           negative: negativeList?.length ? negativeList : undefined,

@@ -67,6 +67,17 @@ export interface PadroneFieldMeta {
    * Options given explicitly keep their value. @example `{ color: false }`
    */
   implies?: Record<string, unknown>;
+  /** Other options (by field name) that must be provided when this one is. */
+  requires?: readonly string[] | string;
+  /**
+   * Required when every listed option has the given value: `{ format: 'file' }`. An array of such objects: required when any matches.
+   * Compares the typed value (`{ port: 80 }` matches `--port 80`), including implied values; schema defaults don't count.
+   */
+  requiredIf?: Record<string, unknown> | readonly Record<string, unknown>[];
+  /** Required unless one of these options is provided. */
+  requiredUnless?: readonly string[] | string;
+  /** Secret value (token, password): prompted without echo, and never shown in help defaults, env values, logs, traces or errors. */
+  sensitive?: boolean;
   /**
    * Values shell completion offers for this option or positional (needs `padroneCompletion()`),
    * e.g. branch names read at completion time. Enum values are offered without it.

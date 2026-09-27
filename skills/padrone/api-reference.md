@@ -142,6 +142,10 @@ type ArgsMeta = {
     variadic?: boolean;               // array: --tag a b c (up to the next option or --)
     conflicts?: string | string[];    // options that can't be combined with this one
     implies?: Record<string, unknown>; // values for other options when this one is used
+    requires?: string | string[];     // options that must be provided along with this one
+    requiredIf?: Record<string, unknown> | Record<string, unknown>[]; // required when others have these values
+    requiredUnless?: string | string[]; // required unless one of these is provided
+    sensitive?: boolean;              // secret: masked prompt, hidden help default, writeOnly in tool schemas
   }>;
 };
 ```

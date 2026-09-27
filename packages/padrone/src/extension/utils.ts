@@ -1,7 +1,7 @@
-import { extractSchemaMetadata, getJsonSchema, parsePositionalConfig } from '../core/args.ts';
+import { extractSchemaMetadata, getJsonSchema, isSensitiveField, parsePositionalConfig, REDACTED } from '../core/args.ts';
 import { getGlobalArgs } from '../core/commands.ts';
 import { getKnownOptionNames } from '../core/validate.ts';
-import type { AnyPadroneCommand, PadroneInput, PadroneSchema } from '../types/index.ts';
+import type { AnyPadroneCommand, PadroneFieldMeta, PadroneInput, PadroneSchema } from '../types/index.ts';
 
 /**
  * Access to the framework flags an extension reads from `rawArgs` (`--color`, `--version`, …).
@@ -230,4 +230,48 @@ export function valuesForCommand(
 /** A token written so that tokenizing an input string gives it back as one token (`my branch` → `"my branch"`). */
 export function quoteToken(token: string): string {
   return token === '' || /[\s"'`]/.test(token) ? `"${token.replace(/[\\"]/g, '\\$&')}"` : token;
+}
+
+function schemaProperties(schema: PadroneSchema | undefined): Record<string, any> {
+  if (!schema) return {};
+  try {
+    const json = getJsonSchema(schema);
+    return json.type === 'object' && json.properties ? json.properties : {};
+  } catch {
+    return {};
+  }
+}
+
+function redactValue(value: unknown, prop: Record<string, any> | undefined): unknown {
+  if (Array.isArray(value)) return prop?.items?.properties ? value.map((item) => redactValue(item, prop.items)) : value;
+  if (!value || typeof value !== 'object' || !prop?.properties) return value;
+  return redactObject(value as Record<string, unknown>, prop.properties);
+}
+
+function redactObject(
+  values: Record<string, unknown>,
+  properties: Record<string, any>,
+  fields?: Record<string, PadroneFieldMeta | undefined>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(values)) {
+    const prop = Object.hasOwn(properties, key) ? properties[key] : undefined;
+    const fieldMeta = fields && Object.hasOwn(fields, key) ? fields[key] : undefined;
+    result[key] = value !== undefined && isSensitiveField(fieldMeta, prop) ? REDACTED : redactValue(value, prop);
+  }
+  return result;
+}
+
+/**
+ * A copy of a command's args with sensitive fields (`sensitive: true`, nested and global ones too) replaced by `'[redacted]'`,
+ * for extensions that log or record args.
+ */
+export function redactArgs<T>(command: AnyPadroneCommand, args: T): T {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args;
+  const own = schemaProperties(command.argsSchema);
+  const globalArgs = getGlobalArgs(command);
+  const globalOnly = ([key]: [string, unknown]) => !Object.hasOwn(own, key);
+  const properties = { ...Object.fromEntries(Object.entries(schemaProperties(globalArgs?.schema)).filter(globalOnly)), ...own };
+  const fields = { ...Object.fromEntries(Object.entries(globalArgs?.meta?.fields ?? {}).filter(globalOnly)), ...command.meta?.fields };
+  return redactObject(args as Record<string, unknown>, properties, fields) as T;
 }

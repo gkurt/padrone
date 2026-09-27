@@ -176,6 +176,10 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `variadic` | `true` | Array option taking all following values (`--tag a b c`) |
 | `conflicts` | `'json'` | Options that can't be used together with this one |
 | `implies` | `{ color: false }` | Values for other options when this one is used |
+| `requires` | `'password'` | Options that must be provided along with this one |
+| `requiredIf` | `{ format: 'file' }` | Required when other options have these values |
+| `requiredUnless` | `['user', 'key']` | Required unless one of these options is provided |
+| `sensitive` | `true` | Secret value: masked prompt, no default in help or tool schemas |
 
 ### Arguments meta (second param of `.arguments()`)
 

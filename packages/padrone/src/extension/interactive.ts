@@ -47,8 +47,10 @@ const interactiveInterceptor = defineInterceptor(
       if (!willPrompt) return proceed();
 
       // Preprocess args to determine what's missing
-      const { args: preprocessedArgs, issues: positionalIssues } = buildCommandArgs(command, ctx.rawArgs, ctx.positionalArgs);
-      if (positionalIssues) return { args: undefined, argsResult: { issues: positionalIssues } } as any;
+      const { args: preprocessedArgs, issues: argIssues, missing } = buildCommandArgs(command, ctx.rawArgs, ctx.positionalArgs);
+      // Options made required by `requires`/`requiredIf`/`requiredUnless` may still be prompted; validation reports the rest
+      const blocking = argIssues?.filter((issue) => !(issue.path?.length === 1 && missing?.includes(String(issue.path[0]))));
+      if (blocking?.length) return { args: undefined, argsResult: { issues: blocking } } as any;
 
       // The early checks below skip options declared by interceptors: inner ones (e.g. confirm's `--yes`)
       // haven't read theirs yet, and still get them through the args passed on
@@ -99,7 +101,7 @@ const interactiveInterceptor = defineInterceptor(
 
       // Prompt for missing fields, then pass filled args to downstream validation via next()
       const doPrompt = (): InterceptorValidateResult | Promise<InterceptorValidateResult> => {
-        const afterInteractive = promptInteractiveFields(preprocessedArgs, command, runtime, forceInteractive || undefined);
+        const afterInteractive = promptInteractiveFields(preprocessedArgs, command, runtime, forceInteractive || undefined, missing);
 
         return thenMaybe(afterInteractive, (filledArgs) => {
           // Pass preprocessed+prompted args downstream with empty positionalArgs (already mapped)

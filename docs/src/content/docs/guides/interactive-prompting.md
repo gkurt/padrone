@@ -71,7 +71,9 @@ Only `name` and `template` will be prompted if missing. Other missing fields rel
 { interactive: true }
 ```
 
-When set to `true`, all fields listed in the schema's `required` array that are missing will be prompted. Fields with defaults or `.optional()` are not prompted.
+When set to `true`, all fields listed in the schema's `required` array that are missing will be prompted. Fields with defaults or `.optional()` are not prompted, unless `requires`, `requiredIf` or `requiredUnless` made them required for this run.
+
+Fields marked `sensitive: true` are asked with a `password` prompt (no echo) and never prefilled with their current or default value.
 
 ## `optionalInteractive` — Optional Fields
 

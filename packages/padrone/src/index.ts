@@ -88,6 +88,7 @@ export {
   padroneUpdateCheck,
   padroneUpgrade,
   padroneVersion,
+  redactArgs,
 } from './extension/index.ts';
 export type { PadronePageOptions } from './feature/pager.ts';
 export type { PadroneEditorOptions } from './feature/system.ts';

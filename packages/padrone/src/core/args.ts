@@ -170,6 +170,12 @@ export interface FieldRules {
   conflicts: Record<string, string[]>;
   /** Field → the values it implies for other fields. */
   implies: Record<string, Record<string, unknown>>;
+  /** Field → the fields that must be provided along with it. */
+  requires: Record<string, string[]>;
+  /** Field → the value conditions (any of them) under which it's required. */
+  requiredIf: Record<string, Record<string, unknown>[]>;
+  /** Field → the fields of which one must be provided when it isn't. */
+  requiredUnless: Record<string, string[]>;
   /** Groups of fields of which exactly one must be provided. */
   exactlyOne: string[][];
   /** Groups of fields of which at least one must be provided. */
@@ -186,6 +192,9 @@ export function extractFieldRules(
     variadic: new Set(),
     conflicts: {},
     implies: {},
+    requires: {},
+    requiredIf: {},
+    requiredUnless: {},
     exactlyOne: toGroups(groups?.exactlyOne),
     atLeastOne: toGroups(groups?.atLeastOne),
   };
@@ -202,12 +211,51 @@ export function extractFieldRules(
     const prop = properties[key];
     if (meta?.count ?? prop?.count) rules.counts.add(key);
     if (meta?.variadic ?? prop?.variadic) rules.variadic.add(key);
-    const conflicts = meta?.conflicts ?? prop?.conflicts;
-    if (conflicts) rules.conflicts[key] = typeof conflicts === 'string' ? [conflicts] : [...conflicts];
+    const conflicts = toList(meta?.conflicts ?? prop?.conflicts);
+    if (conflicts) rules.conflicts[key] = conflicts;
     const implies = meta?.implies ?? prop?.implies;
     if (implies && typeof implies === 'object') rules.implies[key] = implies;
+    const requires = toList(meta?.requires ?? prop?.requires);
+    if (requires) rules.requires[key] = requires;
+    const requiredUnless = toList(meta?.requiredUnless ?? prop?.requiredUnless);
+    if (requiredUnless) rules.requiredUnless[key] = requiredUnless;
+    const requiredIf = meta?.requiredIf ?? prop?.requiredIf;
+    const conditions = (Array.isArray(requiredIf) ? requiredIf : [requiredIf]).filter(
+      (c: unknown): c is Record<string, unknown> => isPlainObject(c) && Object.keys(c).length > 0,
+    );
+    if (conditions.length) rules.requiredIf[key] = conditions;
   }
   return rules;
+}
+
+function toList(value: unknown): string[] | undefined {
+  const list = typeof value === 'string' ? [value] : Array.isArray(value) ? value.filter((item) => typeof item === 'string') : [];
+  return list.length ? list : undefined;
+}
+
+/** What sensitive values are replaced with wherever they'd be shown. */
+export const REDACTED = '[redacted]';
+
+/** Whether a field holds a secret: `sensitive: true` in the `fields` config or the schema's `.meta()`. */
+export function isSensitiveField(meta: PadroneFieldMeta | undefined, prop: Record<string, any> | undefined): boolean {
+  return !!(meta?.sensitive ?? prop?.sensitive);
+}
+
+/** JSON schema properties with the sensitive ones (nested too) marked `writeOnly`, and their `default` and `examples` dropped. */
+export function markSensitiveProperties(
+  properties: Record<string, any>,
+  fields?: Record<string, PadroneFieldMeta | undefined>,
+): Record<string, any> {
+  return Object.fromEntries(
+    Object.entries(properties).map(([key, prop]) => {
+      if (!prop || typeof prop !== 'object') return [key, prop];
+      if (isSensitiveField(fields?.[key], prop)) {
+        const { default: _default, examples: _examples, ...rest } = prop;
+        return [key, { ...rest, writeOnly: true }];
+      }
+      return [key, prop.properties ? { ...prop, properties: markSensitiveProperties(prop.properties) } : prop];
+    }),
+  );
 }
 
 /** One group (`['a', 'b']`) or several (`[['a', 'b'], ['c', 'd']]`) as a list of groups with two or more fields. */
@@ -254,6 +302,39 @@ export function applyFieldRules(data: Record<string, unknown>, rules: FieldRules
     }
   }
   return { args, issues };
+}
+
+const sameValue = (a: unknown, b: unknown) =>
+  Object.is(a, b) || (typeof a === 'object' && a !== null && typeof b === 'object' && JSON.stringify(a) === JSON.stringify(b));
+
+/**
+ * Checks `requires`, `requiredIf` and `requiredUnless` on the args after `implies` and coercion, so implied values count as
+ * provided and `requiredIf` compares typed values (schema defaults aren't applied yet). Each issue's path is the missing option.
+ */
+export function checkFieldRequirements(args: Record<string, unknown>, rules: FieldRules): { path: string[]; message: string }[] {
+  const provided = (key: string) => args[key] !== undefined;
+  const option = (key: string) => `"--${optionDisplayName(key)}"`;
+  const issues: { path: string[]; message: string }[] = [];
+
+  for (const [key, others] of Object.entries(rules.requires)) {
+    if (!provided(key)) continue;
+    for (const other of others) {
+      if (!provided(other)) issues.push({ path: [other], message: `Option ${option(key)} requires ${option(other)}` });
+    }
+  }
+  for (const [key, conditions] of Object.entries(rules.requiredIf)) {
+    if (provided(key)) continue;
+    const match = conditions.find((condition) => Object.entries(condition).every(([other, value]) => sameValue(args[other], value)));
+    if (!match) continue;
+    const when = Object.entries(match).map(([other, value]) => `${option(other)} is ${JSON.stringify(value) ?? String(value)}`);
+    issues.push({ path: [key], message: `Option ${option(key)} is required when ${when.join(' and ')}` });
+  }
+  for (const [key, others] of Object.entries(rules.requiredUnless)) {
+    if (provided(key) || others.some(provided)) continue;
+    const unless = others.length === 1 ? option(others[0]!) : `one of ${others.map(option).join(', ')}`;
+    issues.push({ path: [key], message: `Option ${option(key)} is required unless ${unless} is used` });
+  }
+  return issues;
 }
 
 /** The kebab-case form users type for a field name (`dryRun` → `dry-run`). */

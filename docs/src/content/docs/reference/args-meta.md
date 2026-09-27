@@ -36,6 +36,10 @@ z.object({
 | `variadic` | `boolean` | Array option that takes every following value up to the next option (`--tag a b c`) |
 | `conflicts` | `string \| string[]` | Options that can't be used together with this one |
 | `implies` | `Record<string, unknown>` | Values for other options when this one is used |
+| `requires` | `string \| string[]` | Options that must be provided when this one is |
+| `requiredIf` | `Record<string, unknown> \| Record<string, unknown>[]` | Required when other options have these values (any object of an array) |
+| `requiredUnless` | `string \| string[]` | Required unless one of these options is provided |
+| `sensitive` | `boolean` | Secret value: prompted without echo, default and examples hidden from help and tool schemas |
 | `complete` | `(ctx) => string[] \| Promise<string[]>` | Values shell completion offers for this option or positional (`fields` config only; needs `padroneCompletion()`) |
 
 :::note
@@ -104,7 +108,7 @@ Per-argument configuration that supplements or overrides `.meta()`:
 }
 ```
 
-This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `variadic`, `conflicts`, `implies` — plus `complete`, which only works here since functions don't survive `.meta()`.
+This is equivalent to using `.meta()` on the schema property but allows configuration to be kept separate from the schema definition. Fields accept the same properties as Zod `.meta()`: `flags`, `alias`, `negative`, `description`, `examples`, `deprecated`, `hidden`, `group`, `count`, `variadic`, `conflicts`, `implies`, `requires`, `requiredIf`, `requiredUnless`, `sensitive` — plus `complete`, which only works here since functions don't survive `.meta()`.
 
 ### autoAlias
 
@@ -566,6 +570,45 @@ Help shows `(conflicts with --table)` and `(implies --no-color)`.
 - `atLeastOne` only requires one of them: `At least one of "--email", "--slack" is required`.
 - Like `conflicts`, only options the user provided count (command line, stdin, env, config), not schema defaults.
 - `.globalArgs(schema, { exactlyOne })` applies the group in every command of the subtree, unless a command defines one of its fields itself.
+
+### Dependent options
+
+`requires`, `requiredIf` and `requiredUnless` make an option required depending on the others:
+
+```typescript
+z.object({
+  user: z.string().optional().meta({ requires: 'password' }),
+  password: z.string().optional(),
+  token: z.string().optional().meta({ requiredUnless: ['user', 'key'] }),
+  key: z.string().optional(),
+  format: z.enum(['file', 'url', 'stdout']).default('stdout'),
+  output: z.string().optional().meta({ requiredIf: [{ format: 'file' }, { format: 'url', ci: true }] }),
+  ci: z.boolean().optional(),
+})
+```
+
+- `--user me` alone fails with `Option "--user" requires "--password"`.
+- Without `--user` or `--key`: `Option "--token" is required unless one of "--user", "--key" is used`.
+- `--format file` without `--output`: `Option "--output" is required when "--format" is "file"`. Every value of an object must match; with an array, any object.
+- They're checked after `implies` and coercion: implied values count, and `requiredIf` compares typed values (`{ port: 80 }` matches `--port 80`). Schema defaults don't count.
+- Each issue's path is the missing option. With `interactive` covering it, the missing option is prompted instead.
+- They work in `.globalArgs()` fields too. Help shows `(requires --password)`, `(required if --format=file or --format=url and --ci)` and `(required unless --user or --key)`.
+
+## Sensitive Values
+
+`sensitive: true` marks a secret such as a token or password:
+
+```typescript
+z.object({
+  token: z.string().meta({ sensitive: true, description: 'API token' }),
+})
+```
+
+- Interactive prompts ask for it without echo (`type: 'password'`) and never prefill it.
+- Help, generated docs and man pages don't show its default or examples.
+- MCP, serve and `tool()` input schemas mark it `writeOnly` without `default` or `examples`.
+- Padrone's own error messages never include option values.
+- Extensions that log or record args can call `redactArgs(command, args)` (from `'padrone'`): a copy with sensitive fields, nested and global ones included, replaced by `'[redacted]'`.
 
 ## Completion Values
 

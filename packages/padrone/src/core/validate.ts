@@ -3,6 +3,7 @@ import type { AnyPadroneCommand, InterceptorValidateResult, PadroneGlobalArgsMet
 import { camelToKebab } from '../util/shell-utils.ts';
 import {
   applyFieldRules,
+  checkFieldRequirements,
   coerceArgs,
   createOptionArityLookup,
   detectUnknownArgs,
@@ -98,6 +99,9 @@ function mergeFieldRules(own: FieldRules, globals: FieldRules, globalOnly: (key:
     variadic: new Set([...own.variadic, ...[...globals.variadic].filter(globalOnly)]),
     conflicts: { ...pick(globals.conflicts), ...own.conflicts },
     implies: { ...pick(globals.implies), ...own.implies },
+    requires: { ...pick(globals.requires), ...own.requires },
+    requiredIf: { ...pick(globals.requiredIf), ...own.requiredIf },
+    requiredUnless: { ...pick(globals.requiredUnless), ...own.requiredUnless },
     // A global group applies when the command overrides none of its fields
     exactlyOne: [...own.exactlyOne, ...globals.exactlyOne.filter((group) => group.every(globalOnly))],
     atLeastOne: [...own.atLeastOne, ...globals.atLeastOne.filter((group) => group.every(globalOnly))],
@@ -361,12 +365,13 @@ type FindCommandFn = (name: string, commands?: AnyPadroneCommand[]) => AnyPadron
 /**
  * Preprocesses raw arguments: maps positional arguments and performs auto-coercion.
  * External data sources (stdin, env, config) are handled by extensions before this runs.
+ * `missing` lists the options that `requires`, `requiredIf` or `requiredUnless` made required and weren't provided.
  */
 export function buildCommandArgs(
   command: AnyPadroneCommand,
   rawArgs: Record<string, unknown>,
   positionalArgs: string[],
-): { args: Record<string, unknown>; issues?: StandardSchemaV1.Issue[] } {
+): { args: Record<string, unknown>; issues?: StandardSchemaV1.Issue[]; missing?: string[] } {
   let preprocessedArgs = preprocessArgs(rawArgs, { flags: {}, aliases: {} });
   let issues: StandardSchemaV1.Issue[] | undefined;
 
@@ -411,7 +416,8 @@ export function buildCommandArgs(
     ];
   }
 
-  const ruled = applyFieldRules(preprocessedArgs, getCommandOptionInfo(command).rules);
+  const { rules } = getCommandOptionInfo(command);
+  const ruled = applyFieldRules(preprocessedArgs, rules);
   preprocessedArgs = ruled.args;
   if (ruled.issues.length > 0) (issues ??= []).push(...ruled.issues.map((message) => ({ path: [], message })));
 
@@ -419,7 +425,10 @@ export function buildCommandArgs(
   preprocessedArgs = command.argsSchema ? coerceArgs(own, command.argsSchema) : own;
   if (globals && globalSchema) preprocessedArgs = { ...coerceArgs(globals, globalSchema), ...preprocessedArgs };
 
-  return { args: preprocessedArgs, issues };
+  const required = checkFieldRequirements(preprocessedArgs, rules);
+  if (required.length === 0) return { args: preprocessedArgs, issues };
+  (issues ??= []).push(...required);
+  return { args: preprocessedArgs, issues, missing: [...new Set(required.map((issue) => issue.path[0]!))] };
 }
 
 /**

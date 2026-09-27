@@ -78,6 +78,20 @@ z.string().meta({
 })
 ```
 
+Options can depend on each other, and secrets can be kept out of help and prompts:
+
+```typescript
+z.object({
+  user: z.string().optional().meta({ requires: 'password' }),              // --user needs --password
+  password: z.string().optional().meta({ sensitive: true }),               // masked prompt, no help default
+  format: z.enum(['file', 'stdout']).default('stdout'),
+  output: z.string().optional().meta({ requiredIf: { format: 'file' } }),  // needed with --format file
+  token: z.string().optional().meta({ requiredUnless: 'user' }),           // needed unless --user is given
+})
+```
+
+See [Dependent options](/padrone/reference/args-meta/#dependent-options) and [Sensitive values](/padrone/reference/args-meta/#sensitive-values).
+
 > **Note:** Single-character short flags use `flags`, not `alias`. The `alias` field is for multi-character long alternatives. By default, camelCase names automatically get kebab-case aliases (e.g., `dryRun` → `--dry-run`). For booleans, `negative` defines custom keyword(s) that set the option to `false` and disables the default `--no-` prefix (see [Arguments Metadata reference](/padrone/reference/args-meta/#custom-negation)).
 
 ## Positional Arguments

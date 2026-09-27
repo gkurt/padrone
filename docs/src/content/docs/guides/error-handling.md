@@ -14,7 +14,9 @@ PadroneError (base)
 ├── RoutingError    — unknown command, unexpected arguments
 ├── ValidationError — schema validation failures
 ├── ConfigError     — config file loading/validation failures
-└── ActionError     — errors thrown from action handlers
+├── ActionError     — errors thrown from action handlers
+├── PromptCancelledError   — the user cancelled a prompt (Ctrl+C, Esc); exit code 130
+└── PromptUnavailableError — ctx.prompt can't ask here and has no default
 ```
 
 ## Throwing Errors in Actions
@@ -165,4 +167,6 @@ try {
 | `ValidationError` | `validate` | Schema validation failures |
 | `ConfigError` | `config` | Config file not found, invalid format |
 | `ActionError` | `execute` | Thrown from user action handlers |
+| `PromptCancelledError` | — | A prompt was cancelled (exit code 130; `isPromptCancel(err)`) |
+| `PromptUnavailableError` | — | `ctx.prompt` without an interactive terminal (or in a serve/MCP/`tool()` call) and no `default` |
 | `PadroneError` | any | Base class for custom errors |

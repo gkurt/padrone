@@ -1,5 +1,6 @@
 import type { Schema } from 'ai';
 import type { ShellType } from '../feature/completion.ts';
+import { createPrompt } from '../feature/prompt.ts';
 import { createReplIterator } from '../feature/repl-loop.ts';
 import { generateHelp } from '../output/help.ts';
 import type {
@@ -120,6 +121,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
           signal: executeCtx.signal,
           context: executeCtx.context,
           caller: 'run',
+          prompt: createPrompt(executeCtx),
         });
         const result = commandObj.action!(executeCtx.args as any, actionCtx);
         return { result };

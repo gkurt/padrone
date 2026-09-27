@@ -42,7 +42,10 @@ export type TestCliBuilder = {
   args(input: string): TestCliBuilder;
   /** Set environment variables visible to the command. */
   env(vars: Record<string, string | undefined>): TestCliBuilder;
-  /** Provide mock answers for interactive prompts. Keys are field names. */
+  /**
+   * Provide mock answers for interactive prompts. Keys are field names, and prompt names for `ctx.prompt` (a `group()` step's key,
+   * its `name`, else its message). `PROMPT_CANCEL` as an answer cancels that prompt.
+   */
   prompt(answers: Record<string, unknown>): TestCliBuilder;
   /** Provide mock stdin data (simulates piped input). */
   stdin(data: string): TestCliBuilder;

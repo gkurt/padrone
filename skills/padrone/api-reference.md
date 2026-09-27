@@ -66,6 +66,14 @@ throw new ActionError('Missing environment', {
 });
 ```
 
+#### `PromptCancelledError extends PadroneError`
+
+Thrown by prompts (`ctx.prompt`, interactive fields) when the user cancels (Ctrl+C, Esc). Exit code 130. `isPromptCancel(value)` is true for it and for the `PROMPT_CANCEL` symbol a custom `runtime.prompt` resolves with to cancel.
+
+#### `PromptUnavailableError extends PadroneError`
+
+Thrown by `ctx.prompt` when it can't ask (no interactive terminal, `--no-interactive`, or a `serve`/`mcp`/`tool` call) and the prompt has no `default`.
+
 ### Exported Types
 
 ```ts
@@ -88,6 +96,12 @@ import type {
   PadroneCliPreferences,
   PadroneReplPreferences,
   PadroneRuntime,
+  PadronePrompt,                 // ctx.prompt / createPrompt(ctx)
+  PadronePromptGroup,
+  PadroneCredentials,            // ctx.context.credentials
+  PadroneCredentialsOptions,
+  PadroneCredentialBackend,
+  PadroneCommandRunner,
   UpdateCheckConfig,
   InferArgsInput,
   InferArgsOutput,
@@ -193,8 +207,26 @@ Defines the command handler. Called with no args to create a passthrough command
 ```
 
 - `args`: Validated output from the schema
-- `ctx`: `{ runtime, command, program, progress, context }`
+- `ctx`: `{ runtime, command, program, progress, context, prompt }`
 - `base`: Previous handler when overriding an existing command
+
+`ctx.prompt` asks through `runtime.prompt` (interceptors: `createPrompt(ctx)`):
+
+```ts
+await ctx.prompt.text({ message: 'Name?', default: 'app', validate: (v) => (v ? undefined : 'Required') }); // or text('Name?')
+await ctx.prompt.password('Token');
+await ctx.prompt.confirm({ message: 'Continue?', default: true });
+await ctx.prompt.select({ message: 'Env', choices: ['dev', { value: 'prod', label: 'Production', hint: 'careful' }] }); // 'dev' | 'prod'
+await ctx.prompt.multiselect({ message: 'Features', choices: ['a', 'b'], required: true });
+await ctx.prompt.group({
+  name: () => ctx.prompt.text('Name?'),            // question named 'name' (testCli().prompt({ name: 'x' }))
+  lang: () => ctx.prompt.select({ message: 'Lang', choices: ['ts', 'js'] }),
+  strict: ({ results }) => (results.lang === 'ts' ? ctx.prompt.confirm('Strict?') : undefined), // unknown unless group<{…}>()
+});
+ctx.prompt.available; // false without a terminal / for remote callers: prompts return `default` or throw PromptUnavailableError
+```
+
+Cancelling throws `PromptCancelledError`; `''` is an empty answer, not a cancel. A question's `config.name` is its `name`, else the group key, else the message.
 
 ### `.dryRun(handler)`
 
@@ -270,6 +302,8 @@ Re-paths all nested commands. Drops the mounted program's version. Preserves int
   // Positional shell completion (padroneCompletion), like cobra's ValidArgsFunction; a positional field's own `complete` wins
   complete?: (ctx: { prefix, args, command, position, field?, positionals, runtime, context }) =>
     (string | { value, description? })[] | { values, directive?: 'files' | 'dirs' | 'commands' | 'nofiles' | `ext:${string}` },
+  // padroneConfirm(): false never asks, true asks, a string / (args) => string is the question (overrides `when`)
+  confirm?: boolean | string | ((args) => string),
   // This command only: replace the usage line, add text before/after
   help?: { usage?: string; before?: string; after?: string }
     // Or a function for this command and its subcommands (nearest wins); return HelpInfo or the final string
@@ -373,7 +407,7 @@ Custom I/O adapter for non-terminal environments.
   env?: () => Record<string, string | undefined>,
   format?: 'text' | 'ansi' | 'console' | 'markdown' | 'html' | 'json' | 'auto',
   interactive?: 'supported' | 'unsupported' | 'forced' | 'disabled',
-  prompt?: (config) => Promise<unknown>,
+  prompt?: (config) => Promise<unknown>,  // resolve PROMPT_CANCEL (or throw PromptCancelledError) on cancel
   readLine?: (prompt: string) => Promise<string | null>,
   terminal?: { columns?, rows?, isTTY?, stderrIsTTY? },  // isTTY: stdout; stderrIsTTY: stderr (log colors)
   setExitCode?: (code: number) => void,  // cli() calls it on error; default sets process.exitCode
@@ -403,6 +437,29 @@ import { padroneUpdateCheck } from 'padrone';
 ```
 
 Never delays the exit: the notice uses the latest version cached by an earlier run, and a stale cache is refreshed in a detached process (in-process on Deno / Node single-executable apps). The old `~/.config/<name>-update-check.json` is moved to the new cache location. Uses the program's `version`, or the version of the package its script belongs to. `packageName`/`registry` default to `padroneUpgrade()`'s. Skipped in CI (`CI` other than `0`/`false`), when stdout isn't a TTY, with `NO_UPDATE_NOTIFIER` or `--no-update-check`. Shows the notice after command output.
+
+### `padroneCredentials(options?)` extension
+
+Secret storage for actions, like `gh auth` / keytar: `ctx.context.credentials.get(name)`, `set(name, secret)`, `delete(name)`, `backend()` (all async).
+
+```ts
+import { padroneCredentials } from 'padrone';
+
+.extend(padroneCredentials({
+  service?: string,         // keychain service, default: program name
+  backend?: 'auto' | 'keychain' | 'file' | PadroneCredentialBackend, // default 'auto'
+  file?: string,            // file backend path, default: credentials.json in program.dirs.data
+  remote?: boolean,         // let serve/mcp/tool calls use credentials (default false: they reject)
+  runner?: PadroneCommandRunner, // (command, argv, { input }) => { code, stdout, stderr }; for tests
+  platform?: string,        // default process.platform
+}))
+```
+
+`'auto'`: macOS `security` (secret written via `security -i` on stdin, hex `-X`; names are visible in `ps`, and can't contain quotes/backslashes), Linux `secret-tool` (libsecret; secret on stdin; keytar's `service`/`account` attributes), else the file (`0600` in a `0700` dir, plain text; always on Windows). `'keychain'` fails without a working keychain. Tools are spawned with argv, never a shell. Tests pass a fake `runner` and a `file`/`XDG_DATA_HOME` in a temp dir so they never touch the real keychain or HOME.
+
+### `padroneConfirm(options?)` extension
+
+Asks before `mutation: true` commands in `cli()`/REPL (`--yes`/`-y` or `<PROGRAM>_YES=1` skips). Options: `message`, `when`, `flags`, `env`, `nonInteractive: 'fail' | 'yes' | 'no'` (without a terminal: fail with a `--yes` hint (default), run, or abort). `.configure({ confirm })` per command: `false` never asks, a string or `(args) => string` is the question. Cancelling aborts.
 
 ### `.async()`
 
@@ -694,7 +751,7 @@ const builder = testCli(program);
 |---|---|
 | `.args(input)` | Set CLI input string |
 | `.env(vars)` | Set environment variables |
-| `.prompt(answers)` | Mock interactive prompt answers |
+| `.prompt(answers)` | Mock prompt answers by field or prompt name (`PROMPT_CANCEL` cancels) |
 | `.stdin(data)` | Mock piped stdin |
 | `.context(value)` | Context commands receive, as passed to `cli()` |
 | `.run(input?)` | Execute and return `TestCliResult` |
@@ -748,6 +805,7 @@ type PadroneActionContext<TContext = unknown> = {
   program: AnyPadroneProgram;
   progress: PadroneProgress;
   context: TContext;
+  prompt: PadronePrompt;
 };
 
 type PadroneCommandResult<T> = {

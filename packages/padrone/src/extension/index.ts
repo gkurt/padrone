@@ -14,6 +14,8 @@ export type {
 export { defineConfig, padroneConfig } from './config.ts';
 export type { PadroneConfirmOptions } from './confirm.ts';
 export { padroneConfirm } from './confirm.ts';
+export type { PadroneCredentials, PadroneCredentialsOptions, WithCredentials } from './credentials.ts';
+export { padroneCredentials } from './credentials.ts';
 export type { PadroneEnvOptions } from './env.ts';
 export { padroneEnv } from './env.ts';
 export type { PadroneFormatColumns, PadroneFormatOptions, PadroneOutputFormat } from './format.ts';

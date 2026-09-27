@@ -146,6 +146,25 @@ export class SignalError extends PadroneError {
   }
 }
 
+/** Thrown by prompts (`ctx.prompt`, interactive fields) when the user cancels with Ctrl+C or Esc. Exits with 130, like SIGINT. */
+export class PromptCancelledError extends PadroneError {
+  constructor(message = 'Cancelled', options?: PadroneErrorOptions) {
+    super(message, { exitCode: 130, ...options });
+    this.name = 'PromptCancelledError';
+  }
+}
+
+/**
+ * Thrown by `ctx.prompt` when it can't ask and the prompt has no `default`: no interactive terminal (CI, piped input,
+ * `--no-interactive`, `interactive: 'unsupported'`) or a remote caller (`serve`, `mcp`, `tool`).
+ */
+export class PromptUnavailableError extends PadroneError {
+  constructor(message: string, options?: PadroneErrorOptions) {
+    super(message, options);
+    this.name = 'PromptUnavailableError';
+  }
+}
+
 /** Maps a signal name to its conventional exit code (128 + signal number). */
 export function signalExitCode(signal: PadroneSignal): number {
   const codes: Record<string, number> = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };

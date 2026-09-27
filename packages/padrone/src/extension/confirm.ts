@@ -1,5 +1,6 @@
 import { ActionError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
+import { askRuntime, canPrompt, isPromptCancel } from '../feature/prompt.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
 import type { WithAsync } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
@@ -10,11 +11,12 @@ import { frameworkFlags, programEnvVar, toFlag } from './utils.ts';
 export type PadroneConfirmOptions = {
   /**
    * The question asked before running. Defaults to `Run "<command path>"?`.
-   * A function receives the command and its validated args.
+   * A function receives the command and its validated args. A command's `.configure({ confirm: 'Drop all tables?' })` wins.
    */
   message?: string | ((command: AnyPadroneCommand, args: unknown) => string);
   /**
    * Which commands ask for confirmation. Defaults to those configured with `mutation: true`.
+   * A command's `.configure({ confirm })` overrides it (`false` never asks).
    * `padroneUpgrade()`'s command only gets here when there's something to install (not `--check`, not up to date).
    */
   when?: (command: AnyPadroneCommand, args: unknown) => boolean;
@@ -25,6 +27,11 @@ export type PadroneConfirmOptions = {
    * `no` and `off`). Defaults to `<PROGRAM>_YES` (`my-cli` → `MY_CLI_YES`); `false` for none.
    */
   env?: string | false;
+  /**
+   * What happens when a confirmation is needed but there's no terminal to ask in (CI, piped input, `--no-interactive`):
+   * `'fail'` (default) throws an error that names `--yes`, `'yes'` runs the command, `'no'` aborts it as if answered no.
+   */
+  nonInteractive?: 'fail' | 'yes' | 'no';
 };
 
 const DEFAULT_CONFIRM_FLAGS = ['yes', 'y'] as const;
@@ -39,6 +46,8 @@ const flagDisplay = (name: string) => (name.length > 1 ? `--${name}` : `-${name}
 function createConfirmInterceptor(options: PadroneConfirmOptions) {
   const confirmFlags = options.flags ?? DEFAULT_CONFIRM_FLAGS;
   const when = options.when ?? ((command: AnyPadroneCommand) => !!command.mutation);
+  const asks = (command: AnyPadroneCommand, args: unknown) =>
+    command.confirm === undefined ? when(command, args) : command.confirm !== false;
 
   return defineInterceptor(
     {
@@ -58,7 +67,7 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
           return next();
         },
         execute(ctx, next) {
-          if (confirmed || ctx.dryRun || !CONFIRM_CALLERS.has(ctx.caller) || !when(ctx.command, ctx.args)) return next();
+          if (confirmed || ctx.dryRun || !CONFIRM_CALLERS.has(ctx.caller) || !asks(ctx.command, ctx.args)) return next();
 
           const { runtime, command } = ctx;
           const envVar = options.env === false ? undefined : (options.env ?? programEnvVar(getRootCommand(command).name, 'YES'));
@@ -66,16 +75,13 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
           if (envValue && toFlag(envValue)) return next();
 
           const path = command.path || command.name;
+          const aborted = () => new ActionError('Aborted', { command: path });
           // `--interactive` / `--no-interactive` (from the interactive extension) or eval's `interactive` option decide first;
           // otherwise prompts need an interactive runtime whose stdin isn't piped
-          const canPrompt =
-            !!runtime.prompt &&
-            runtime.interactive !== 'unsupported' &&
-            (ctx.interactive ??
-              ctx.evalInteractive ??
-              (runtime.interactive === 'forced' || (runtime.interactive !== 'disabled' && runtime.stdin?.isTTY !== false)));
-          const flag = confirmFlags.find((f) => f.length > 1) ?? confirmFlags[0];
-          if (!canPrompt) {
+          if (!canPrompt(ctx)) {
+            if (options.nonInteractive === 'yes') return next();
+            if (options.nonInteractive === 'no') throw aborted();
+            const flag = confirmFlags.find((f) => f.length > 1) ?? confirmFlags[0];
             const setEnv = envVar && `set ${envVar}=1`;
             const how = flag ? `pass ${flagDisplay(flag)}${setEnv ? ` (or ${setEnv})` : ''}` : setEnv;
             throw new ActionError(`"${path}" needs confirmation${how ? `: ${how} to run it without a prompt` : ''}`, {
@@ -84,12 +90,24 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
             });
           }
 
+          const own = command.confirm;
           const message =
-            typeof options.message === 'function' ? options.message(command, ctx.args) : (options.message ?? `Run "${path}"?`);
-          return runtime.prompt!({ name: 'confirm', message, type: 'confirm', default: false }).then((answer) => {
-            if (answer !== true) throw new ActionError('Aborted', { command: path });
-            return next();
-          });
+            typeof own === 'string'
+              ? own
+              : typeof own === 'function'
+                ? own(ctx.args)
+                : typeof options.message === 'function'
+                  ? options.message(command, ctx.args)
+                  : (options.message ?? `Run "${path}"?`);
+          return askRuntime(runtime, { name: 'confirm', message, type: 'confirm', default: false }).then(
+            (answer) => {
+              if (answer !== true) throw aborted();
+              return next();
+            },
+            (err: unknown) => {
+              throw isPromptCancel(err) ? aborted() : err;
+            },
+          );
         },
       };
     },
@@ -100,18 +118,19 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
 
 /**
  * Extension that asks for confirmation before running commands that change things
- * (`.configure({ mutation: true })`, or those picked by `when`), like `rm -i` or `terraform apply`.
+ * (`.configure({ mutation: true })`, those picked by `when`, or `.configure({ confirm })`), like `rm -i` or `terraform apply`.
  *
  * - `--yes` / `-y` skips the question, and so does `<PROGRAM>_YES=1` in the environment (`env` renames it).
  * - Without a terminal to ask in (CI, piped input or output, `interactive: 'unsupported'`, `--no-interactive`), the command fails
- *   unless `--yes` is passed (or the variable set).
+ *   unless `--yes` is passed (or the variable set); `nonInteractive: 'yes' | 'no'` runs or aborts it instead.
  * - Only `cli()` and the REPL ask; `eval()`, `run()`, serve, MCP and `tool()` run the command directly.
+ * - Cancelling the question (Ctrl+C, Esc) aborts like answering no.
  *
  * ```ts
  * createPadrone('my-cli')
  *   .extend(padroneConfirm())
- *   .command('drop', (c) => c.configure({ mutation: true }).action(() => dropDatabase()))
- * // my-cli drop      → Run "drop"? (y/N)
+ *   .command('drop', (c) => c.configure({ mutation: true, confirm: 'Drop all tables?' }).action(() => dropDatabase()))
+ * // my-cli drop      → Drop all tables? (y/N)
  * // my-cli drop -y   → runs without asking
  * ```
  */

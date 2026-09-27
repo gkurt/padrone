@@ -2,6 +2,7 @@ import { type PadronePageOptions, pageWithRuntime } from '../feature/pager.ts';
 import { openInEditor, openWithSystem, type PadroneEditorOptions } from '../feature/system.ts';
 import { readStreamAsText } from '../util/stream.ts';
 import { isCI } from '../util/utils.ts';
+import { PromptCancelledError } from './errors.ts';
 import type {
   InteractiveMode,
   InteractivePromptConfig,
@@ -18,26 +19,29 @@ import { REPL_SIGINT } from './runtime.ts';
  */
 async function defaultTerminalPrompt(config: InteractivePromptConfig): Promise<unknown> {
   const Enquirer = (await import('enquirer')).default;
+  return runEnquirerPrompt((question) => Enquirer.prompt(question as any), config);
+}
 
-  const question: Record<string, unknown> = {
-    type: config.type,
-    name: config.name,
-    message: config.message,
-  };
+/**
+ * Asks one question with Enquirer's `prompt`. Choices are named by their values' string forms (so is a select's default),
+ * and Enquirer's cancellation (Ctrl+C / Esc reject with `''`) becomes a `PromptCancelledError`.
+ */
+export async function runEnquirerPrompt(
+  prompt: (question: Record<string, unknown>) => Promise<unknown>,
+  config: InteractivePromptConfig,
+): Promise<unknown> {
+  // Enquirer stores answers by dotted path, so `config.name` (`db.host`) isn't used as the key
+  const question: Record<string, unknown> = { type: config.type, name: 'value', message: config.message };
+  const initial = config.default;
+  if (initial !== undefined) question.initial = config.choices ? (Array.isArray(initial) ? initial.map(String) : String(initial)) : initial;
+  if (config.choices) question.choices = config.choices.map((c) => ({ name: String(c.value), message: c.label }));
 
-  if (config.default !== undefined) {
-    question.initial = config.default;
+  try {
+    return ((await prompt(question)) as Record<string, unknown>).value;
+  } catch (err) {
+    if (err === '' || err === undefined) throw new PromptCancelledError();
+    throw err;
   }
-
-  if (config.choices) {
-    question.choices = config.choices.map((c) => ({
-      name: String(c.value),
-      message: c.label,
-    }));
-  }
-
-  const response = (await Enquirer.prompt(question as any)) as Record<string, unknown>;
-  return response[config.name];
 }
 
 export function createTerminalReplSession(config: ReplSessionConfig) {

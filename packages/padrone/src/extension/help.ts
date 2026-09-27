@@ -5,6 +5,7 @@ import { thenMaybe } from '../core/results.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import { formatIssueMessages } from '../core/validate.ts';
 import { pageText, resolvePager } from '../feature/pager.ts';
+import { askRuntime } from '../feature/prompt.ts';
 import type { HelpDetail, HelpFormat, HelpInfo } from '../output/formatter.ts';
 import { generateHelp, getHelpTopics } from '../output/help.ts';
 import { formatHelpSearch, type HelpSearchResult, searchHelp } from '../output/help-search.ts';
@@ -235,7 +236,7 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
               .filter((c) => !c.hidden && c.name)
               .map((c) => ({ label: c.description ? `${c.name} — ${c.title ?? c.description}` : c.name, value: c.name }));
             const label = command.path || command.name;
-            return ctx.runtime.prompt!({ name: 'command', message: `Which "${label}" command?`, type: 'select', choices }).then(
+            return askRuntime(ctx.runtime, { name: 'command', message: `Which "${label}" command?`, type: 'select', choices }).then(
               (picked) => {
                 const name = String(picked);
                 const withPicked = Array.isArray(input) ? [...input, name] : input ? `${input} ${name}` : [name];

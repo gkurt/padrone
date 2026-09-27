@@ -30,13 +30,8 @@ export async function runWrap(args: WrapArgs, ctx: PadroneActionContext) {
     output('⚠ The `wrap` command is experimental. Generated code may require manual adjustments.');
     output('');
 
-    if (ctx.runtime.prompt) {
-      const proceed = await ctx.runtime.prompt({
-        name: 'confirm',
-        message: 'Do you want to continue?',
-        type: 'confirm',
-        default: true,
-      });
+    if (ctx.prompt.available) {
+      const proceed = await ctx.prompt.confirm({ name: 'confirm', message: 'Do you want to continue?', default: true });
       if (!proceed) {
         output('Aborted.');
         return;

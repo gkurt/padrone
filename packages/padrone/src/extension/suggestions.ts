@@ -5,6 +5,7 @@ import { defineInterceptor } from '../core/interceptors.ts';
 import { parseCliInputToParts, tokenizeInput } from '../core/parse.ts';
 import { thenMaybe } from '../core/results.ts';
 import { createParseResolver, getDryRunFlagKeys, getKnownOptionNames } from '../core/validate.ts';
+import { askRuntime } from '../feature/prompt.ts';
 import { getHelpTopics } from '../output/help.ts';
 import type {
   AnyPadroneBuilder,
@@ -199,7 +200,7 @@ function createSuggestionsInterceptor(options: PadroneSuggestionsOptions) {
           const input = replacement && replaceTerm(overrides?.input ?? ctx.input, suggestion.term, replacement, ctx.command);
           if (!input) throw enriched;
           const message = `Unknown command "${suggestion.term}". Run "${replacement}" instead?`;
-          return ctx.runtime.prompt!({ name: 'suggestion', message, type: 'confirm', default: true }).then((yes) => {
+          return askRuntime(ctx.runtime, { name: 'suggestion', message, type: 'confirm', default: true }).then((yes) => {
             if (yes !== true) throw enriched;
             return attempt({ input }, tries + 1);
           });

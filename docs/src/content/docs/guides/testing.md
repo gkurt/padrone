@@ -36,7 +36,7 @@ test('greet command', async () => {
 |--------|-------------|
 | `.args(input)` | Set the CLI input string |
 | `.env(vars)` | Set environment variables |
-| `.prompt(answers)` | Provide mock answers for interactive prompts |
+| `.prompt(answers)` | Provide mock answers for interactive prompts, by field name or `ctx.prompt` question name (`PROMPT_CANCEL` cancels one) |
 | `.config(files)` | Provide mock config file contents |
 | `.stdin(data)` | Provide mock stdin data (piped input) |
 | `.context(value)` | The context commands receive (`ctx.context`), as passed to `cli()` |

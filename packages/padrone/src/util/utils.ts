@@ -6,6 +6,12 @@ export function getRootCommand(cmd: AnyPadroneCommand): AnyPadroneCommand {
   return current;
 }
 
+/** Whether the environment is CI: `CI` or `CONTINUOUS_INTEGRATION` set to anything but `0` or `false`, like is-in-ci. */
+export function isCI(env: Record<string, string | undefined>): boolean {
+  const on = (value?: string) => !!value && value !== '0' && value.toLowerCase() !== 'false';
+  return on(env.CI) || on(env.CONTINUOUS_INTEGRATION);
+}
+
 async function readVersionFromPackageJson(): Promise<string> {
   try {
     const fs = await import('node:fs');

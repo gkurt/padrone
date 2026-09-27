@@ -236,6 +236,21 @@ export function runInterceptorChain<TCtx extends object, TResult>(
   return next(ctx);
 }
 
+/** Runs the error chain. An error interceptor that throws replaces the error, so shutdown still runs. */
+function runErrorChain(
+  interceptors: ResolvedInterceptor[],
+  ctx: InterceptorErrorContext,
+  error: unknown,
+): InterceptorErrorResult | Promise<InterceptorErrorResult> {
+  const thrown = (e: unknown): InterceptorErrorResult => ({ error: e });
+  try {
+    const result = runInterceptorChain('error', interceptors, ctx, (): InterceptorErrorResult => ({ error }));
+    return result instanceof Promise ? result.catch(thrown) : result;
+  } catch (e) {
+    return thrown(e);
+  }
+}
+
 /**
  * Wraps a pipeline with start → error → shutdown lifecycle hooks.
  * - `start` interceptors wrap the pipeline (onion pattern, root interceptors only).
@@ -306,7 +321,7 @@ export function wrapWithLifecycle<T>(
       caller,
       ...effectivePipelineState,
     });
-    const errorResult = runInterceptorChain('error', interceptors, ctx, (): InterceptorErrorResult => ({ error }));
+    const errorResult = runErrorChain(interceptors, ctx, error);
     return thenMaybe(errorResult, (er) => {
       if (er.error !== undefined) {
         const s = runShutdown(er.error);
@@ -418,7 +433,7 @@ export function wrapWithCommandLifecycle<T>(
       caller,
       ...pipelineState,
     });
-    const errorResult = runInterceptorChain('error', interceptors, ctx, (): InterceptorErrorResult => ({ error }));
+    const errorResult = runErrorChain(interceptors, ctx, error);
     return thenMaybe(errorResult, (er) => {
       if (er.error !== undefined) {
         const s = runShutdown(er.error);

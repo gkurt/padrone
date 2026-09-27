@@ -16,8 +16,8 @@ export const asyncStreamRegistry = new Map<number, AsyncStreamMeta>();
  * When used with `stdin`, padrone pipes stdin data as an `AsyncIterable` instead of
  * buffering it. Each line is validated against the item schema (if provided) as it arrives.
  *
- * @param itemSchema - Optional item schema for per-item validation.
- *   Non-string schemas cause each stdin line to be `JSON.parse`'d before validation.
+ * @param itemSchema - Optional item schema that validates each stdin line (a string). It must parse the line
+ *   itself, e.g. `jsonCodec(schema)` from `padrone/zod` for JSON lines.
  *
  * @example
  * ```ts
@@ -26,8 +26,8 @@ export const asyncStreamRegistry = new Map<number, AsyncStreamMeta>();
  * // String lines
  * z.object({ lines: z.custom<AsyncIterable<string>>().meta(asyncStream()) })
  *
- * // Typed items — each line JSON.parse'd and validated
- * z.object({ records: z.custom<AsyncIterable<{ name: string }>>().meta(asyncStream(recordSchema)) })
+ * // Typed items — each line validated (and parsed) by the item schema
+ * z.object({ records: z.custom<AsyncIterable<{ name: string }>>().meta(asyncStream(jsonCodec(recordSchema))) })
  * ```
  */
 export function asyncStream<T = string>(itemSchema?: PadroneSchema<T>): AsyncStreamMeta {
@@ -49,7 +49,7 @@ interface StdinSource {
  * When no stdin is available (TTY / undefined), yields nothing.
  *
  * - No item schema: yields raw string lines
- * - With item schema: `JSON.parse`s each line, validates, then yields
+ * - With item schema: validates each line and yields the schema's output
  */
 export function createStdinStream(stdin: StdinSource | undefined, itemSchema?: StandardSchemaV1): AsyncIterable<unknown> {
   if (!stdin) return emptyAsyncIterable;

@@ -1,3 +1,5 @@
+import { canAnimate } from './progress-renderer.ts';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -163,13 +165,13 @@ function finishedLine(state: PadroneTaskState, indent: string): string {
 
 /**
  * Draws tasks on stderr: a live list with spinners on a TTY, redrawn as tasks progress.
- * Without a TTY, each task is printed once it finishes.
+ * Without a TTY (or with `TERM=dumb`, or in CI), each task is printed once it finishes.
  */
 export const createTerminalTaskList: PadroneTaskListRenderer = (tasks) => {
   const proc = globalThis.process as NodeJS.Process | undefined;
   const stderr = proc?.stderr;
 
-  if (!stderr?.isTTY) {
+  if (!stderr || !canAnimate(stderr)) {
     const printed = new Set<PadroneTaskState>();
     const flush = (list: readonly PadroneTaskState[], indent: string) => {
       for (const state of list) {

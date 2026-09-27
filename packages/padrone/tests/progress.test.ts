@@ -918,9 +918,14 @@ describe('progress', () => {
       Object.defineProperty(stderr, 'columns', { value: 80, configurable: true, writable: true });
       stderr.write = (chunk: string) => writes.push(String(chunk)) > 0;
       stdout.write = (chunk: string) => stdoutWrites.push(String(chunk)) > 0;
+      // The renderer doesn't animate in CI or on a dumb terminal
+      const env = { CI: process.env.CI, TERM: process.env.TERM };
+      delete process.env.CI;
+      delete process.env.TERM;
       try {
         await fn(writes, stdoutWrites);
       } finally {
+        for (const [key, value] of Object.entries(env)) if (value !== undefined) process.env[key] = value;
         Object.defineProperty(stderr, 'isTTY', { value: original.isTTY, configurable: true, writable: true });
         Object.defineProperty(stderr, 'columns', { value: original.columns, configurable: true, writable: true });
         stderr.write = original.write;

@@ -28,7 +28,7 @@ Running `app deploy` shows a spinner with "Deploying..." that auto-succeeds when
 
 Use `padroneProgress()` to configure automatic progress indicators. Register it with `.extend()` on a command. The indicator starts before validation and is automatically stopped on success or failure. With `run()`, which skips validation, it starts right before the action.
 
-When stderr is not a TTY (piped output, CI), the built-in renderer doesn't animate and only prints the final success or error line, using the latest message.
+When stderr is not a TTY (piped output), in CI, or with `TERM=dumb`, the built-in renderer doesn't animate and only prints the final success or error line, using the latest message.
 
 ### Simple Message
 
@@ -457,7 +457,7 @@ Options: `concurrent` runs tasks at the same time (`true` for all, or a number a
 
 When auto-progress is active, `runtime.output` and `runtime.error` are automatically wrapped to pause/resume the indicator. This prevents garbled output when writing to the terminal while a spinner or bar is animating.
 
-Manual calls to `ctx.context.progress.pause()` and `ctx.context.progress.resume()` are available if you need explicit control.
+Manual calls to `ctx.context.progress.pause()` and `ctx.context.progress.resume()` are available if you need explicit control; output written while paused doesn't bring the indicator back before `resume()`.
 
 ## How It Works Under the Hood
 

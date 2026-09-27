@@ -3,7 +3,7 @@ import type { ResolvedPadroneRuntime } from '#src/core/runtime.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { UpdateCheckConfig } from '../feature/update-check.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
-import { getRootCommand, getVersion } from '../util/utils.ts';
+import { getRootCommand } from '../util/utils.ts';
 import { isUpgradeCommand } from './upgrade.ts';
 import { frameworkFlags } from './utils.ts';
 
@@ -28,14 +28,14 @@ function createUpdateCheckInterceptor(config: UpdateCheckConfig) {
         // Only people running the CLI see the notice, never right after upgrading; `--no-update-check` skips the request too
         if (suppressed || ctx.caller !== 'cli' || isUpgradeCommand(command)) return;
 
+        // Without a configured version, the fallbacks (`npm_package_version`, `./package.json`) describe the project in the
+        // working directory, not this program
         const rootCommand = getRootCommand(command);
+        const currentVersion = rootCommand.version;
+        if (!currentVersion) return;
         const runtime = ctx.runtime;
-        check = Promise.resolve(getVersion(rootCommand.version))
-          .then((currentVersion) =>
-            import('../feature/update-check.ts').then(({ createUpdateChecker }) =>
-              createUpdateChecker(rootCommand.name, currentVersion, config, runtime),
-            ),
-          )
+        check = import('../feature/update-check.ts')
+          .then(({ createUpdateChecker }) => createUpdateChecker(rootCommand.name, currentVersion, config, runtime))
           .catch(() => undefined);
       };
 
@@ -69,6 +69,7 @@ function createUpdateCheckInterceptor(config: UpdateCheckConfig) {
  * - Checks for newer versions on npm (or custom registry) in the background
  * - Shows an update notification after command execution
  * - Respects `--no-update-check` flag to suppress
+ * - Needs the program's `version` (`.configure({ version })`); without one nothing is checked
  *
  * Usage:
  * ```ts

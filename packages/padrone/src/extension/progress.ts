@@ -234,6 +234,28 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
       let activeTaskList: ReturnType<PadroneTaskListRenderer> | undefined;
       /** A streamed result is still being consumed: it finishes the indicator itself. */
       let streaming = false;
+      /** Output, prompts and a manual `pause()` hide what's drawn; it's shown again once none of them holds it. */
+      let holds = 0;
+      let manuallyPaused = false;
+      const drawn = () => activeTaskList ?? indicator;
+      const hold = () => {
+        if (holds++ === 0) drawn()?.pause();
+      };
+      const release = () => {
+        if (holds > 0 && --holds === 0) drawn()?.resume();
+      };
+      const manual = {
+        pause() {
+          if (manuallyPaused) return;
+          manuallyPaused = true;
+          hold();
+        },
+        resume() {
+          if (!manuallyPaused) return;
+          manuallyPaused = false;
+          release();
+        },
+      };
 
       /** `progress.tasks()`: hides the indicator while the list is drawn. */
       const tasksFor =
@@ -245,12 +267,13 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
           const outer = activeTaskList;
           (outer ?? indicator)?.pause();
           activeTaskList = list;
+          if (holds > 0) list.pause();
           try {
             await runTaskList(tasks, options ?? {}, states as never, () => list.update(), signal);
           } finally {
             list.done();
             activeTaskList = outer;
-            (outer ?? indicator)?.resume();
+            if (holds === 0) (outer ?? indicator)?.resume();
           }
         };
 
@@ -260,37 +283,38 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
       const start = (ctx: ProgressPhaseContext, message: string) => {
         const { silent, renderer, options } = resolve(ctx);
         if (silent || indicator) return;
-        const active = renderer(message, options);
-        indicator = active;
+        indicator = renderer(message, options);
 
         const { runtime } = ctx;
         const originalOutput = runtime.output;
         const originalError = runtime.error;
         const originals = { prompt: runtime.prompt, editor: runtime.editor, page: runtime.page };
         // While a task list is drawn, output pauses the list instead of the (already hidden) indicator
-        const drawn = () => activeTaskList ?? active;
         runtime.output = (...args: unknown[]) => {
-          const current = drawn();
-          current.pause();
-          originalOutput(...args);
-          current.resume();
+          hold();
+          try {
+            originalOutput(...args);
+          } finally {
+            release();
+          }
         };
         runtime.error = (text: string) => {
-          const current = drawn();
-          current.pause();
-          originalError(text);
-          current.resume();
+          hold();
+          try {
+            originalError(text);
+          } finally {
+            release();
+          }
         };
         // Prompts (e.g. `padroneConfirm()`), the editor and the pager take over the terminal: the indicator is hidden meanwhile
         const hiddenDuring =
           <TArgs extends unknown[], TResult>(fn: (...args: TArgs) => Promise<TResult>) =>
           async (...args: TArgs): Promise<TResult> => {
-            const current = drawn();
-            current.pause();
+            hold();
             try {
               return await fn.apply(runtime, args);
             } finally {
-              current.resume();
+              release();
             }
           };
         if (originals.prompt) runtime.prompt = hiddenDuring(originals.prompt);
@@ -373,7 +397,8 @@ function progressInterceptor(config: string | PadroneProgressConfig) {
 
           let result: InterceptorExecuteResult | Promise<InterceptorExecuteResult>;
           try {
-            result = next({ context: { progress: { ...(indicator ?? noopIndicator), tasks: tasksFor(ctx.signal) } } });
+            const progress = indicator ? { ...indicator, ...manual } : noopIndicator;
+            result = next({ context: { progress: { ...progress, tasks: tasksFor(ctx.signal) } } });
           } catch (err) {
             return onError(err);
           }

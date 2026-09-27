@@ -51,7 +51,7 @@ function installerFromPath(path: string): PadroneInstaller | undefined {
   if (p.includes('/cellar/')) return 'brew';
   if (p.includes('/.bun/')) return 'bun';
   if (/\/pnpm\/|\/pnpm-global\//.test(p)) return 'pnpm';
-  if (/\/\.yarn\/|\/yarn\/global\//.test(p)) return 'yarn';
+  if (/\/\.yarn\/|\/yarn\/(data\/)?global\//.test(p)) return 'yarn';
   if (p.includes('/node_modules/')) return 'npm';
   return undefined;
 }
@@ -127,6 +127,14 @@ export function isUpgradeCommand(command: AnyPadroneCommand): boolean {
 
 type UpgradeArgs = { check?: boolean; to?: string; channel?: string; force?: boolean };
 
+/** `upgrade --check` only reads, so `padroneConfirm()` doesn't ask first. */
+export function isUpgradeCheck(command: AnyPadroneCommand, args: unknown): boolean {
+  return isUpgradeCommand(command) && !!(args as UpgradeArgs | undefined)?.check;
+}
+
+const checkMessage = (p: { upToDate: boolean; packageName: string; current: string; version: string }) =>
+  p.upToDate ? `${p.packageName} is up to date (${p.current})` : `Update available: ${p.current} → ${p.version}`;
+
 // ── Extension ────────────────────────────────────────────────────────────
 
 /**
@@ -184,8 +192,7 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
         .async()
         .action(async (args, ctx) => {
           const p = await plan(args, ctx.command, ctx.runtime);
-          if (args.check)
-            return p.upToDate ? `${p.packageName} is up to date (${p.current})` : `Update available: ${p.current} → ${p.version}`;
+          if (args.check) return checkMessage(p);
           if (p.upToDate && !args.force) return `${p.packageName} is up to date (${p.current})`;
 
           const planned = await describe(options.installer, p);
@@ -199,6 +206,7 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
         })
         .dryRun(async (args, ctx) => {
           const p = await plan(args, ctx.command, ctx.runtime);
+          if (args.check) return checkMessage(p);
           if (p.upToDate && !args.force) return `${p.packageName} is up to date (${p.current})`;
           const command = await describe(options.installer, p);
           return command

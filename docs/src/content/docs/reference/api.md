@@ -639,7 +639,7 @@ program.extend(padroneUpdateCheck({
 | `disableEnvVar` | `string` | auto | Env var name that disables update checking |
 | `updateCommand` | `string \| (packageName, latestVersion) => string` | `npm update -g <name>` | Command suggested in the notice |
 
-Non-blocking (the registry request times out after 3 seconds) and caches check timestamps. Skipped in CI, when stdout isn't a TTY, when `NO_UPDATE_NOTIFIER` or the `disableEnvVar` variable is set, with `--no-update-check`, and for the `padroneUpgrade()` command.
+Non-blocking (the registry request times out after 3 seconds) and caches check timestamps. Needs the program's `version` (`.configure({ version })`); without one nothing is checked. Skipped in CI (`CI` set to anything but `0`/`false`), when stdout isn't a TTY, when `NO_UPDATE_NOTIFIER` or the `disableEnvVar` variable is set, with `--no-update-check`, and for the `padroneUpgrade()` command.
 
 ---
 
@@ -674,7 +674,7 @@ my-cli upgrade --dry-run    # show the install command without running it
 | `command` | `string` | `'upgrade'` | Command name |
 | `exec` | `(command: string[]) => Promise<number>` | spawn with inherited stdio | Runs the installer command |
 
-The command is a `mutation`, so `padroneConfirm()` asks before upgrading. `--force` reinstalls when already up to date.
+The command is a `mutation`, so `padroneConfirm()` asks before upgrading (but not for `--check`). `--force` reinstalls when already up to date.
 
 ---
 

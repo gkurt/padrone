@@ -100,7 +100,7 @@ const issueKey = (segment: PropertyKey | StandardSchemaV1.PathSegment) => String
 /**
  * Prompt a single field (or an object's key, at `path`) and validate it against the schema that owns it.
  * Re-prompts with a warning until the user provides a valid value. A blank answer leaves an optional field unset,
- * takes the default, or is asked again for a required field.
+ * takes the default, or is asked again for a required field; with `keep` (a masked prompt's current value) it keeps that value.
  */
 async function promptWithValidation(
   path: string[],
@@ -110,6 +110,7 @@ async function promptWithValidation(
   runtime: ResolvedPadroneRuntime,
   propSchema: Record<string, any> | undefined,
   optional: boolean,
+  keep?: unknown,
 ): Promise<unknown> {
   const name = path.join('.');
   let promptConfig = config;
@@ -118,6 +119,7 @@ async function promptWithValidation(
   while (true) {
     const typed = await runtime.prompt!(promptConfig);
     const blank = typeof typed === 'string' && !typed.trim();
+    if (blank && keep !== undefined) return keep;
     if (blank && optional) return undefined;
     if (blank && config.default === undefined) {
       runtime.error(`A value for "${name}" is required`);
@@ -245,14 +247,17 @@ export async function promptInteractiveFields(
     const name = path.join('.');
     const config = detectPromptConfig(name, prop, path.length === 1 ? fieldDescriptions[field] : undefined);
     const current = getNestedValue(result, path);
-    if (sensitive.has(field)) {
+    const isSensitive = sensitive.has(field) || isSensitiveField(undefined, prop);
+    if (isSensitive) {
       if (config.type === 'input') config.type = 'password';
       config.default = undefined;
     } else if (force && current !== undefined) {
       // When forced, use the current value as the default
       config.default = current;
     }
-    const value = await promptWithValidation(path, config, result, schemaFor(field), runtime, prop, optional);
+    // A blank answer to a forced masked prompt keeps the value given
+    const keep = isSensitive && force ? current : undefined;
+    const value = await promptWithValidation(path, config, result, schemaFor(field), runtime, prop, optional, keep);
     if (value !== undefined || path.length === 1) result = withValueAt(result, path, value);
   };
   const promptField = (field: string) => promptAt(field, [field], jsonProperties[field], !requiredFields.has(field));

@@ -15,6 +15,7 @@ import type {
 } from '../types/index.ts';
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
+import { releaseProcessSignals } from './signal.ts';
 import { frameworkFlags, isRemoteCaller, passthroughSchema, toFlag } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -89,6 +90,7 @@ function createReplInterceptor(defaults?: PadroneReplPreferences, disabled?: boo
         const program = ctx.program;
         if (!program?.repl) return next();
 
+        releaseProcessSignals(ctx.signal);
         // Return a Promise so the pipeline awaits the REPL result (skipping execute, so auto-output doesn't print it)
         return program
           .repl(replPreferences(defaults, replInfo.scope, ctx.runtime, callerContext))
@@ -100,6 +102,7 @@ function createReplInterceptor(defaults?: PadroneReplPreferences, disabled?: boo
         if (!root || ctx.command !== findCommandByName('repl', root.commands)) return next();
         if (isRemoteCaller(ctx.caller)) throw new ActionError('The REPL needs a terminal');
         const { scope } = ctx.args as ReplArgs;
+        releaseProcessSignals(ctx.signal);
         return ctx.program
           .repl(replPreferences(defaults, scope, ctx.runtime, callerContext))
           .drain()

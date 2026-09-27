@@ -347,6 +347,7 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
  * skipping a repeat of the last one. History is a convenience: files that can't be read or written are ignored.
  */
 async function openHistoryFile(file: string, size: number): Promise<{ entries: string[]; add: (entry: string) => void }> {
+  if (size <= 0) return { entries: [], add: () => {} };
   const [fs, path] = await Promise.all([import('node:fs'), import('node:path')]).catch(() => []);
   let entries: string[] = [];
   try {
@@ -357,7 +358,8 @@ async function openHistoryFile(file: string, size: number): Promise<{ entries: s
     entries = [...entries, entry].slice(-size);
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, `${entries.join('\n')}\n`, 'utf-8');
+      // Private like shell history: commands can carry tokens and passwords
+      fs.writeFileSync(file, `${entries.join('\n')}\n`, { encoding: 'utf-8', mode: 0o600 });
     } catch {}
   };
   return { entries, add };

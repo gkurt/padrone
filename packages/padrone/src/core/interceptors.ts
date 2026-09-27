@@ -300,7 +300,21 @@ export function wrapWithLifecycle<T>(
   deferredShutdowns.set(effectivePipelineState, deferred);
   const runDeferred = () => deferred.splice(0).reduce<unknown>((prev, task) => thenMaybe(prev, task), undefined);
 
-  const runShutdown = (error?: unknown, result?: unknown) => thenMaybe(runDeferred(), () => runOwnShutdown(error, result));
+  // A throwing command-level shutdown doesn't skip the root's (e.g. a tracing span or temp files); its error is rethrown after
+  const runShutdown = (error?: unknown, result?: unknown) => {
+    const own = () => runOwnShutdown(error, result);
+    const rethrowAfterOwn = (e: unknown) =>
+      thenMaybe(own(), () => {
+        throw e;
+      });
+    let pending: unknown;
+    try {
+      pending = runDeferred();
+    } catch (e) {
+      return rethrowAfterOwn(e);
+    }
+    return pending instanceof Promise ? pending.then(own, rethrowAfterOwn) : own();
+  };
   const runOwnShutdown = (error?: unknown, result?: unknown) => {
     if (!hasShutdown) return;
     const ctx: InterceptorShutdownContext = withEmit({

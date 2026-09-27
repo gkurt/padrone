@@ -2,8 +2,9 @@ import { ActionError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
 import type { WithAsync } from '../util/type-utils.ts';
+import { getRootCommand } from '../util/utils.ts';
 import { isUpgradeCheck } from './upgrade.ts';
-import { frameworkFlags } from './utils.ts';
+import { frameworkFlags, programEnvVar, toFlag } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,11 @@ export type PadroneConfirmOptions = {
   when?: (command: AnyPadroneCommand, args: unknown) => boolean;
   /** Flags that skip the question: long names and single characters. Defaults to `['yes', 'y']`. */
   flags?: readonly string[];
+  /**
+   * Environment variable that answers yes for every command, like `--yes`, for scripts and CI (any value but `''`, `0`, `false`,
+   * `no` and `off`). Defaults to `<PROGRAM>_YES` (`my-cli` → `MY_CLI_YES`); `false` for none.
+   */
+  env?: string | false;
 };
 
 const DEFAULT_CONFIRM_FLAGS = ['yes', 'y'] as const;
@@ -53,6 +59,10 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
           if (confirmed || ctx.dryRun || !CONFIRM_CALLERS.has(ctx.caller) || !when(ctx.command, ctx.args)) return next();
 
           const { runtime, command } = ctx;
+          const envVar = options.env === false ? undefined : (options.env ?? programEnvVar(getRootCommand(command).name, 'YES'));
+          const envValue = envVar ? runtime.env()[envVar] : undefined;
+          if (envValue && toFlag(envValue)) return next();
+
           const path = command.path || command.name;
           // `--interactive` / `--no-interactive` (from the interactive extension) or eval's `interactive` option decide first;
           // otherwise prompts need an interactive runtime whose stdin isn't piped
@@ -64,7 +74,9 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
               (runtime.interactive === 'forced' || (runtime.interactive !== 'disabled' && runtime.stdin?.isTTY !== false)));
           const flag = confirmFlags.find((f) => f.length > 1) ?? confirmFlags[0];
           if (!canPrompt) {
-            throw new ActionError(`"${path}" needs confirmation${flag ? `: pass ${flagDisplay(flag)} to run it without a prompt` : ''}`, {
+            const setEnv = envVar && `set ${envVar}=1`;
+            const how = flag ? `pass ${flagDisplay(flag)}${setEnv ? ` (or ${setEnv})` : ''}` : setEnv;
+            throw new ActionError(`"${path}" needs confirmation${how ? `: ${how} to run it without a prompt` : ''}`, {
               command: path,
               suggestions: flag ? [`Add ${flagDisplay(flag)}`] : [],
             });
@@ -88,9 +100,9 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
  * Extension that asks for confirmation before running commands that change things
  * (`.configure({ mutation: true })`, or those picked by `when`), like `rm -i` or `terraform apply`.
  *
- * - `--yes` / `-y` skips the question.
+ * - `--yes` / `-y` skips the question, and so does `<PROGRAM>_YES=1` in the environment (`env` renames it).
  * - Without a terminal to ask in (CI, piped input or output, `interactive: 'unsupported'`, `--no-interactive`), the command fails
- *   unless `--yes` is passed.
+ *   unless `--yes` is passed (or the variable set).
  * - Only `cli()` and the REPL ask; `eval()`, `run()`, serve, MCP and `tool()` run the command directly.
  *
  * ```ts

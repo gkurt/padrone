@@ -1,11 +1,12 @@
+import { findCommandByName } from '#src/core/commands.ts';
 import { PadroneError } from '#src/core/errors.ts';
 import { defineInterceptor } from '#src/core/interceptors.ts';
 import { tokenizeInput } from '#src/core/parse.ts';
 import { thenMaybe } from '#src/core/results.ts';
-import type { AnyPadroneBuilder, CommandTypesBase } from '#src/types/index.ts';
+import { getCommandFieldRules, parseCommand } from '#src/core/validate.ts';
+import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '#src/types/index.ts';
 import { fileErrorReason, readTextFile } from '#src/util/files.ts';
-import { inputTokens } from './aliases.ts';
-import { isRemoteCaller } from './utils.ts';
+import { inputTokens, isRemoteCaller } from './utils.ts';
 
 export type PadroneResponseFilesOptions = {
   /** The character that marks a response file argument. Defaults to `'@'`. */
@@ -24,9 +25,13 @@ export function parseResponseFile(text: string): string[] {
 
 /**
  * Replaces each `@file` token before `--` with the file's arguments (nested response files expand too, up to 10 levels);
- * `@@text` passes `@text`. A missing file is an error.
+ * `@@text` passes `@text`. A missing file is an error. Tokens for which `keep` (given the tokens before them) is true stay as they are.
  */
-export function expandResponseFiles(tokens: readonly string[], prefix = '@'): string[] | Promise<string[]> {
+export function expandResponseFiles(
+  tokens: readonly string[],
+  prefix = '@',
+  keep?: (before: readonly string[]) => boolean,
+): string[] | Promise<string[]> {
   const out: string[] = [];
   let afterDoubleDash = false;
 
@@ -47,7 +52,7 @@ export function expandResponseFiles(tokens: readonly string[], prefix = '@'): st
   const expand = (list: readonly string[], depth: number): void | Promise<void> => {
     for (let i = 0; i < list.length; i++) {
       const token = list[i]!;
-      if (afterDoubleDash || !token.startsWith(prefix)) {
+      if (afterDoubleDash || !token.startsWith(prefix) || keep?.(out)) {
         if (token === '--') afterDoubleDash = true;
         out.push(token);
         continue;
@@ -69,6 +74,27 @@ export function expandResponseFiles(tokens: readonly string[], prefix = '@'): st
   return thenMaybe(expand(tokens, 0), () => out);
 }
 
+const MARKER = 'padrone0response0file0value';
+
+/** Whether the next token would be the value of an option with `fromFile` meta (`--body @notes.md`), which reads the file itself. */
+function isFromFileValue(before: readonly string[], root: AnyPadroneCommand): boolean {
+  if (!before.at(-1)?.startsWith('-')) return false;
+  const { command, rawArgs } = parseCommand([...before, MARKER], root, findCommandByName);
+  return [...getCommandFieldRules(command).fromFile].some((field) => {
+    const value = rawArgs[field];
+    return value === MARKER || (Array.isArray(value) && value.includes(MARKER));
+  });
+}
+
+const RESPONSE_FILES_ID = 'padrone:response-files';
+const prefixes = new WeakMap<object, string>();
+
+/** The prefix of the response files extension registered on `root`, if any. */
+export function responseFilesPrefix(root: AnyPadroneCommand): string | undefined {
+  const registered = root.interceptors?.findLast(({ meta }) => meta.id === RESPONSE_FILES_ID);
+  return registered && !registered.meta.disabled ? prefixes.get(registered.factory) : undefined;
+}
+
 /**
  * Extension for response files, like javac's or clap's argfiles: `my-cli @args.txt deploy` reads the arguments in
  * `args.txt` (one or more per line, quoted like a shell line; blank lines and `#` comments skipped) in place of `@args.txt`.
@@ -81,17 +107,16 @@ export function expandResponseFiles(tokens: readonly string[], prefix = '@'): st
  */
 export function padroneResponseFiles(options: PadroneResponseFilesOptions = {}): <T extends CommandTypesBase>(builder: T) => T {
   const prefix = options.prefix || '@';
-  const interceptor = defineInterceptor(
-    { id: 'padrone:response-files', name: 'padrone:response-files', order: -1600, async: true },
-    () => ({
-      parse(ctx, next) {
-        if (isRemoteCaller(ctx.caller)) return next();
-        const tokens = inputTokens(ctx.input, ctx.command);
-        const end = tokens.indexOf('--');
-        if (!(end === -1 ? tokens : tokens.slice(0, end)).some((token) => token.startsWith(prefix))) return next();
-        return thenMaybe(expandResponseFiles(tokens, prefix), (input) => next({ input }));
-      },
-    }),
-  );
+  const interceptor = defineInterceptor({ id: RESPONSE_FILES_ID, name: RESPONSE_FILES_ID, order: -1600, async: true }, () => ({
+    parse(ctx, next) {
+      if (isRemoteCaller(ctx.caller)) return next();
+      const tokens = inputTokens(ctx.input, ctx.command);
+      const end = tokens.indexOf('--');
+      if (!(end === -1 ? tokens : tokens.slice(0, end)).some((token) => token.startsWith(prefix))) return next();
+      const keep = (before: readonly string[]) => isFromFileValue(before, ctx.command);
+      return thenMaybe(expandResponseFiles(tokens, prefix, keep), (input) => next({ input }));
+    },
+  }));
+  prefixes.set(interceptor, prefix);
   return ((builder: AnyPadroneBuilder) => builder.intercept(interceptor)) as any;
 }

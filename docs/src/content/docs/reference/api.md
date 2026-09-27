@@ -124,7 +124,7 @@ program.arguments(
   - `interactive`: `true | string[]` — fields to prompt when missing (see [Interactive Prompting](/padrone/guides/interactive-prompting/))
   - `optionalInteractive`: `true | string[]` — optional fields offered after required prompts
   - `autoAlias`: `boolean` — auto-generate kebab-case aliases for camelCase names (default: `true`)
-  - `stdin`: `string | { field, as }` — read from stdin into an argument field
+  - `stdin`: `string | { field, trim }` — read from stdin into an argument field (see [Stdin Configuration](#stdin-configuration))
 
 When `interactive` or `optionalInteractive` is set, the command becomes async — `parse()` and `cli()` return Promises.
 
@@ -692,6 +692,9 @@ program.extend(padroneAliases({ aliases: { co: 'checkout' } }));
 my-cli co main                                  # → my-cli checkout main
 my-cli alias set pr "checkout pr/\$1 --force"   # $1, $2, … take the words after the alias
 my-cli pr 42                                    # → my-cli checkout pr/42 --force
+my-cli alias set co checkout --force            # no quotes needed: every word after the name is the expansion
+my-cli alias set each 'run --all $@ --verbose'  # $@ takes the words no $N takes
+my-cli alias set prod 'deploy @prod.args'       # @file words expand with padroneResponseFiles()
 my-cli alias list
 my-cli alias delete pr
 ```
@@ -703,7 +706,7 @@ my-cli alias delete pr
 | `file` | `string` | `aliases.json` in `program.dirs.config` | Where users' aliases are kept |
 | `command` | `string \| false` | `'alias'` | Name of the management command (`set`, `list`/`ls`, `delete`/`rm`), or `false` for none |
 
-A command always wins over an alias of the same name, and `alias set` refuses names of existing commands. Words after the alias that no `$N` uses are appended; fewer words than its `$N` placeholders take is an error (`Alias "pr" needs 1 argument`). Given as several words, a word with spaces stays one word (`alias set co checkout "my branch"`). `alias set` and `alias delete` are mutation commands (POST-only in serve, `destructiveHint` in MCP).
+A command always wins over an alias of the same name, and `alias set` refuses names of existing commands. Words after the alias that no `$N` uses go where `$@` is, or are appended when the alias has no `$@`; fewer words than its `$N` placeholders take is an error (`Alias "pr" needs 1 argument`). With [`padroneResponseFiles()`](#padroneresponsefilesoptions), the alias's own `@file` words expand as response files (before its placeholders are filled; the words typed after it were already expanded). An unknown command suggests alias names too (`Did you mean "publish"?`). `alias set` takes every word after the name as the expansion, options included (`alias set co checkout --force`); given as several words, a word with spaces stays one word (`alias set co checkout "my branch"`). `alias set` and `alias delete` are mutation commands (POST-only in serve, `destructiveHint` in MCP).
 
 ---
 
@@ -726,7 +729,7 @@ my-cli @deploy.args deploy   # deploy.args: --env staging
 - Paths are relative to the working directory. Response files can reference others, up to 10 levels deep.
 - A missing file (or a bare `@`) is an error. Write `@@text` for an argument that starts with `@` (`@@scope/pkg` → `@scope/pkg`); arguments after `--` are never expanded.
 - Expanded in `cli()`, `eval()` and the REPL; serve, MCP and `tool()` calls never read response files.
-- Options with [`fromFile`](/padrone/reference/args-meta/#values-from-files) see the expanded arguments, so write `--body=@notes.md` (never expanded, as it starts with `--`) or `--body @@notes.md` to read a file, or pick another `prefix`.
+- The value of an option with [`fromFile`](/padrone/reference/args-meta/#values-from-files) is left to it: `--body @notes.md` (and `--body=@notes.md`) reads the file into `body`, and `--body @@x` passes `@x`. A positional `fromFile` value is still expanded as a response file; write `@@path` there, or pick another `prefix`.
 
 **Configuration:**
 | Property | Type | Default | Description |
@@ -1282,6 +1285,12 @@ echo "hello" | myapp
 # args.data = "hello\n" (the text as piped, trailing newline included)
 ```
 
+To drop surrounding whitespace (the trailing newline of `echo`), use `{ field, trim: true }`. Number and boolean fields are always trimmed, so `echo 21 | myapp double` works:
+
+```typescript
+.arguments(z.object({ token: z.string() }), { stdin: { field: 'token', trim: true } })
+```
+
 ### Reading Lines
 
 When the target field is an array type, stdin is automatically read line-by-line:
@@ -1356,6 +1365,8 @@ z.custom<AsyncIterable<MyType>>().meta(asyncStream(myItemSchema))
 ### Stdin Behavior
 
 - Only reads when stdin is piped (not a TTY) and the target field wasn't provided via CLI flags or positionally
+- A lone `-` as the field's value (`myapp cat -`, `--data -`) reads stdin, even from a terminal, like `cat -`
+- `trim: true` trims the text (each line, for arrays); number and boolean fields are trimmed anyway
 - A `stdin` field makes the command async (like interactive fields): `eval()`/`parse()` return a Promise, no `.async()` needed
 - Read mode is inferred from the schema: `string` fields read all stdin as text, `string[]` fields read line-by-line, `zodAsyncStream()`/`asyncStream()` fields stream lazily
 - Resolution priority: CLI args > stdin > env vars > config files > defaults
@@ -1459,11 +1470,11 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable). Logs go to stderr with colored level labels; `stdout: true` sends `trace`/`debug`/`info` to stdout, and `format: 'json'` writes JSON lines (`logger.info({ userId }, 'signed in')` adds fields) |
 | `padroneJson(options?)` | `--json` flag: prints the result as JSON (iterator items one per line). `--jq <expr>` filters it (a built-in jq subset, or pass `jq: (input, expr) => outputs` for a full implementation) and `--template '{{.name}}'` formats it; both imply `--json`. Errors in `cli()` print as `{ "error": { ... } }` on stdout under JSON output. `fields: true` lets `--json=name,url` keep only those fields (`fields: 'required'`: also `--json name,url`, and a bare `--json` fails listing the fields); `availableFields` declares them |
 | `padroneFormat(options?)` | `--output`/`-o <format>`: `text` (default), `json` (like `--json`), `yaml`, `csv`, `tsv`, `table`. Options: `formats`, `default`, `flags`, and `tableFlags` for `--columns a,b`, `--sort [-]column` and `--no-header`. String results print as text under yaml/csv/tsv/table (other non-objects under csv/tsv/table); `--json`/`--jq`/`--template` take precedence |
-| `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and without a terminal (CI, piped stdin or stdout, `--no-interactive`) the command fails unless `--yes` is given. Options: `message`, `when`, `flags` |
+| `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and so does `<PROGRAM>_YES=1` in the environment (`env` renames the variable, `false` turns it off). Without a terminal (CI, piped stdin or stdout, `--no-interactive`) the command fails unless one of those is given. Options: `message`, `when`, `flags`, `env` |
 | `padroneTiming()` | Execution timing |
 | `padroneUpdateCheck(config)` | Background version checking |
 | `padroneUpgrade(options?)` | `upgrade` command: self-update with the package manager the program was installed with (`--check`, `--to`, `--channel`) |
-| `padroneAliases(options?)` | User-defined command aliases (`alias set|list|delete`), expanded before routing |
+| `padroneAliases(options?)` | User-defined command aliases (`alias set|list|delete`), expanded before routing (`$1`…`$N` and `$@` placeholders) |
 | `padroneResponseFiles(options?)` | Response files: `@file` arguments expand into the file's arguments (`@@` escapes, `prefix` option) |
 
 The following extensions live in their own subpath imports to keep optional dependencies and large transitive surfaces out of the main bundle:
@@ -1485,7 +1496,7 @@ The following extensions are applied automatically by `createPadrone()` and can 
 | `padroneVersion(options?)` | `version` | Version command and `--version` flag (on any command; single-character flags on the root only). `version --verbose` adds the runtime, platform, architecture and shell (an object under `--json`). Options: `flags` renames the version flags (default `['version', 'v', 'V']`); `info` adds fields to `--verbose` |
 | `padroneRepl()` | `repl` | REPL command and `--repl` flag |
 | `padroneColor()` | `color` | `--color`/`--no-color` support |
-| `padroneSuggestions(options?)` | `suggestions` | "Did you mean?" suggestions. `run: 'prompt'` asks whether to run the closest command after an unknown one in `cli()`/REPL |
+| `padroneSuggestions(options?)` | `suggestions` | "Did you mean?" suggestions for unknown commands (and `padroneAliases()` names) and options (including extensions' `--json`, `--yes`, …). `run: 'prompt'` asks whether to run the closest command after an unknown one in `cli()`/REPL |
 | `padroneSignalHandling()` | `signal` | Signal handling and AbortSignal |
 | `padroneAutoOutput(options?)` | `autoOutput` | Auto-print results and errors. `errorStack: true` (or the `DEBUG` env variable) prints stack traces with their `cause` chain |
 | `padroneStdin()` | `stdin` | Stdin piping support |

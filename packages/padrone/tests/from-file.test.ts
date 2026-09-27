@@ -199,13 +199,14 @@ describe('padroneResponseFiles', () => {
     expect((result.result as any)?.rest).toEqual([`@${args}`]);
   });
 
-  it('leaves --option=@file to fromFile fields', async () => {
+  it('leaves the values of fromFile options to fromFile', async () => {
     const both = createPadrone('app')
       .runtime(quiet)
       .extend(padroneResponseFiles())
       .command('post', (c) => c.arguments(z.object({ body: z.string() }), { fields: { body: { fromFile: true } } }).action((a) => a.body));
     expect((await both.eval(['post', `--body=@${tagA}`])).result).toBe('alpha');
-    expect((await both.eval(['post', '--body', `@@@${tagA}`])).result).toBe(`@${tagA}`);
+    expect((await both.eval(['post', '--body', `@${tagA}`])).result).toBe('alpha');
+    expect((await both.eval(['post', '--body', `@@${tagA}`])).result).toBe(`@${tagA}`);
   });
 
   it('supports a custom prefix', async () => {

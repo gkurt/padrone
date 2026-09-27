@@ -72,7 +72,7 @@ describe('padroneAliases placeholders', () => {
 });
 
 describe('interactive prompts', () => {
-  it("doesn't prompt for object fields, which a text answer can't fill", async () => {
+  it("doesn't prompt for lists of objects, which a text answer can't fill", async () => {
     const prompt = mock(async (config: InteractivePromptConfig) => (config.name === 'name' ? 'app' : 'localhost'));
     const program = createPadrone('app')
       .runtime({ ...quiet, prompt, interactive: 'supported' })
@@ -84,8 +84,8 @@ describe('interactive prompts', () => {
           .action((args) => args),
       );
     const result = await program.eval('init');
-    expect(prompt.mock.calls.map(([config]) => config.name)).toEqual(['name']);
-    expect(result.argsResult?.issues?.map((i) => i.path?.[0])).toEqual(['db', 'hosts']);
+    expect(prompt.mock.calls.map(([config]) => config.name)).toEqual(['name', 'db.host']);
+    expect(result.argsResult?.issues?.map((i) => i.path?.[0])).toEqual(['hosts']);
   });
 
   it('leaves an optional field unset when the answer is empty', async () => {

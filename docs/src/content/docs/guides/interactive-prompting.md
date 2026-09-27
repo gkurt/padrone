@@ -73,6 +73,8 @@ Only `name` and `template` will be prompted if missing. Other missing fields rel
 
 When set to `true`, all fields listed in the schema's `required` array that are missing will be prompted. Fields with defaults or `.optional()` are not prompted, unless `requires`, `requiredIf` or `requiredUnless` made them required for this run.
 
+A blank answer to a required field is asked again ("A value for "name" is required"), or takes the field's default when the prompt has one.
+
 Fields marked `sensitive: true` are asked with a `password` prompt (no echo) and never prefilled with their current or default value.
 
 ## `optionalInteractive` — Optional Fields
@@ -133,7 +135,7 @@ Padrone detects the appropriate prompt type from each field's JSON schema:
 | `z.string()` | Text input | `Project name: _` |
 | Any other type | Text input | `Value: _` |
 
-Numbers are coerced from the answer, and arrays of strings or numbers take comma-separated values (`a, b`). Object fields (and arrays of objects) are never prompted, since a text answer can't fill them; validation reports them when missing.
+Numbers are coerced from the answer, and arrays of strings or numbers take comma-separated values (`a, b`). Object fields are prompted key by key (`db.host`, then `db.port`): their required keys that are still missing, or all their keys when none is required (a blank answer leaves an optional key unset). Arrays of objects are never prompted, since a text answer can't fill them; validation reports them when missing.
 
 ### Prompt messages
 
@@ -171,7 +173,7 @@ createPadrone('my-cli', {
 });
 ```
 
-Neither asks with `--no-interactive`. `padroneConfirm()` asks before `mutation: true` commands; where it can't ask (CI, piped stdin or stdout, `--no-interactive`) the command fails unless `--yes` is given. For free-form text, `ctx.runtime.editor(template)` opens the user's editor and resolves with what they saved.
+Neither asks with `--no-interactive`. `padroneConfirm()` asks before `mutation: true` commands; where it can't ask (CI, piped stdin or stdout, `--no-interactive`) the command fails unless `--yes` is given or `<PROGRAM>_YES=1` is set (`padroneConfirm({ env: 'MY_VAR' })` renames it). For free-form text, `ctx.runtime.editor(template)` opens the user's editor and resolves with what they saved.
 
 ## Non-Interactive Runtimes
 

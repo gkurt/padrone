@@ -287,7 +287,8 @@ export function suggestSimilar(input: string, candidates: string[]): string[] {
 
   for (const candidate of candidates) {
     const candidateLower = candidate.toLowerCase();
-    if (candidate === input) continue;
+    // An empty name (a default command) is never worth suggesting
+    if (!candidate || candidate === input) continue;
     // Differs only in case (`Deploy` for `deploy`)
     if (candidateLower === lower) {
       matches.push({ candidate, score: 0 });

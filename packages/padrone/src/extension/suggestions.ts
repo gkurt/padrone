@@ -4,7 +4,7 @@ import { RoutingError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { parseCliInputToParts, tokenizeInput } from '../core/parse.ts';
 import { thenMaybe } from '../core/results.ts';
-import { createParseResolver, getKnownOptionNames } from '../core/validate.ts';
+import { createParseResolver, getDryRunFlagKeys, getKnownOptionNames } from '../core/validate.ts';
 import { getHelpTopics } from '../output/help.ts';
 import type {
   AnyPadroneBuilder,
@@ -70,11 +70,15 @@ function similarCommands(
   return { term, similar: suggestSimilar(term, candidateNames) };
 }
 
-function enrichRoutingError(err: unknown, rootCommand: AnyPadroneCommand): unknown {
+/** Parse-context key under which the aliases extension passes the alias names, suggested for an unknown top-level command. */
+export const aliasNamesKey: unique symbol = Symbol('padrone:alias-names');
+
+function enrichRoutingError(err: unknown, rootCommand: AnyPadroneCommand, aliasNames: readonly string[] = []): unknown {
   if (!(err instanceof RoutingError) || err.suggestions?.length) return err;
   // `help <unknown>` may have meant a help topic
   const topics = isTopicLookupError(err) ? getHelpTopics(rootCommand).map(([name]) => name) : [];
-  const found = similarCommands(err, rootCommand, topics);
+  const aliases = findSourceCommand(err.command, rootCommand) === rootCommand ? aliasNames : [];
+  const found = similarCommands(err, rootCommand, [...topics, ...aliases]);
   const suggestionText = found ? formatSuggestions(found.similar) : '';
   if (!suggestionText) return err;
 
@@ -125,6 +129,30 @@ function hiddenOptionNames(command: AnyPadroneCommand): Set<string> {
   collect(globals?.schema, globals?.meta?.fields);
   collect(command.argsSchema, command.meta?.fields);
   return new Set([...hidden].filter(([, isHidden]) => isHidden).map(([name]) => name));
+}
+
+/**
+ * Long options that interceptors on the command chain declare (`--json`, `--yes`, `--interactive`), and `--dry-run` where
+ * the command has a dry-run handler. Help's own options (`--detail`, `--all`, …) are left out, as they only work with `--help`,
+ * and so is `--version` on subcommands, where a mistyped option is rarely meant for it.
+ */
+function extensionOptionNames(command: AnyPadroneCommand): string[] {
+  const helpCommand = findCommandByName('help', getRootCommand(command).commands);
+  const helpFlags = new Set(helpCommand?.flagNames ?? ['help']);
+  const seen = new Set<string>();
+  const names = new Set<string>(getDryRunFlagKeys(command).includes('dry-run') ? ['dry-run'] : []);
+  for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
+    for (const { meta } of [...(current.interceptors ?? [])].reverse()) {
+      if (current !== command && meta.inherit === false) continue;
+      if (meta.id && seen.has(meta.id)) continue;
+      if (meta.id) seen.add(meta.id);
+      if (meta.disabled || !meta.options || (meta.id === 'padrone:version' && command.parent)) continue;
+      for (const name of Object.keys(meta.options)) {
+        if (name.length > 1 && (meta.id !== 'padrone:help' || helpFlags.has(name))) names.add(name);
+      }
+    }
+  }
+  return [...names];
 }
 
 const MARKER = 'padrone0suggestion0term';
@@ -180,9 +208,10 @@ function createSuggestionsInterceptor(options: PadroneSuggestionsOptions) {
   return defineInterceptor({ id: 'padrone:suggestions', name: 'padrone:suggestions', order: -500 }, () => ({
     parse(ctx, next) {
       // Each accepted suggestion fixes one term, so a few attempts cover typos at several levels
+      const aliasNames = (ctx as { [aliasNamesKey]?: readonly string[] })[aliasNamesKey];
       const attempt = (overrides: { input?: PadroneInput } | undefined, tries: number): ReturnType<typeof next> => {
         const fail = (err: unknown) => {
-          const enriched = enrichRoutingError(err, ctx.command);
+          const enriched = enrichRoutingError(err, ctx.command, aliasNames);
           if (options.run !== 'prompt' || tries >= 5 || !(err instanceof RoutingError) || !canAsk(ctx)) throw enriched;
           const suggestion = similarCommands(err, ctx.command);
           const replacement = suggestion?.similar[0];
@@ -219,7 +248,8 @@ function createSuggestionsInterceptor(options: PadroneSuggestionsOptions) {
         const optionNames = () => {
           const hidden = hiddenOptionNames(ctx.command);
           const names = getKnownOptionNames(ctx.command).filter((name) => !hidden.has(name));
-          return ctx.command.meta?.autoAlias === false ? names : [...new Set(names.map((name) => camelToKebab(name) ?? name))];
+          const own = ctx.command.meta?.autoAlias === false ? names : names.map((name) => camelToKebab(name) ?? name);
+          return [...new Set([...own, ...extensionOptionNames(ctx.command)])];
         };
         const enriched = enrichIssuesWithSuggestions(v.argsResult.issues, optionNames);
         return { ...v, argsResult: { ...v.argsResult, issues: enriched } } as typeof v;

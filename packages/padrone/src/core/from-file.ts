@@ -1,8 +1,8 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
-import { isProvidedPositionally, isRemoteCaller } from '#src/extension/utils.ts';
+import { isRemoteCaller } from '#src/extension/utils.ts';
 import type { AnyPadroneCommand } from '#src/types/index.ts';
 import { fileErrorReason, readTextFile } from '#src/util/files.ts';
-import { parsePositionalConfig } from './args.ts';
+import { getStdinConfig, parsePositionalConfig } from './args.ts';
 import { resolveStdinAlways } from './default-runtime.ts';
 import type { PadroneRuntime } from './runtime.ts';
 import { getCommandFieldRules } from './validate.ts';
@@ -13,7 +13,7 @@ type Slot = { field: string; source: string; set: (value: string) => void };
 const isStdin = (source: string) => source === '-' || source === '@-';
 
 /** The field each positional value lands in, following `meta.positional` (a variadic one takes what the fields after it leave). */
-function positionalFields(command: AnyPadroneCommand, count: number): (string | undefined)[] {
+export function positionalFields(command: AnyPadroneCommand, count: number): (string | undefined)[] {
   const config = command.meta?.positional ? parsePositionalConfig(command.meta.positional) : [];
   const fields: (string | undefined)[] = [];
   let index = 0;
@@ -59,11 +59,13 @@ export function readFileValues(
     .map((slot) => ({ path: [slot.field], message: 'Expected a file path after "@"' }));
   const stdinSlots = slots.filter((slot) => isStdin(slot.source));
   if (stdinSlots.length > 1) issues.push({ path: [], message: 'Only one value can be read from stdin ("-")' });
-  const stdinField = command.meta?.stdin;
-  const stdinFieldGiven =
-    !!stdinField && (rawArgs[stdinField] !== undefined || isProvidedPositionally(command, stdinField, positionalArgs));
-  if (stdinSlots.length > 0 && stdinField && !stdinFieldGiven) {
-    issues.push({ path: [stdinSlots[0]!.field], message: `Cannot read stdin ("-"): the command reads stdin into "${stdinField}"` });
+  // The stdin field reads stdin unless given a value other than `-`
+  const stdinField = getStdinConfig(command.meta)?.field;
+  const stdinValue = stdinField && (rawArgs[stdinField] ?? positionalArgs[positional.indexOf(stdinField)]);
+  const stdinFieldReads = !!stdinField && (stdinValue === undefined || String(stdinValue) === '-');
+  const otherStdinSlot = stdinSlots.find((slot) => slot.field !== stdinField);
+  if (otherStdinSlot && stdinFieldReads) {
+    issues.push({ path: [otherStdinSlot.field], message: `Cannot read stdin ("-"): the command reads stdin into "${stdinField}"` });
   }
   if (issues.length > 0) return issues;
 

@@ -1,8 +1,22 @@
 import { extractSchemaMetadata, getJsonSchema, isSensitiveField, parsePositionalConfig, REDACTED } from '../core/args.ts';
-import { getGlobalArgs } from '../core/commands.ts';
+import { findCommandByName, getGlobalArgs } from '../core/commands.ts';
 import { REMOTE_CALLERS } from '../core/interceptors.ts';
+import { tokenizeInput } from '../core/parse.ts';
 import { getKnownOptionNames } from '../core/validate.ts';
 import type { AnyPadroneCommand, PadroneFieldMeta, PadroneInput, PadroneSchema } from '../types/index.ts';
+
+/** An environment variable named after the program: `my-cli` and `YES` → `MY_CLI_YES`. */
+export function programEnvVar(programName: string, suffix: string): string {
+  return `${programName.replace(/[^a-z0-9]+/gi, '_').toUpperCase()}_${suffix}`;
+}
+
+/** The input as argv tokens (without a leading program name in a string from `eval()` / the REPL). */
+export function inputTokens(input: PadroneInput | undefined, root: AnyPadroneCommand): string[] {
+  if (input === undefined) return [];
+  if (Array.isArray(input)) return input;
+  const tokens = [...tokenizeInput(input)];
+  return tokens[0] === root.name && !findCommandByName(root.name, root.commands) ? tokens.slice(1) : tokens;
+}
 
 /**
  * Access to the framework flags an extension reads from `rawArgs` (`--color`, `--version`, …).

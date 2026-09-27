@@ -7,6 +7,7 @@ import type {
   PadroneSpinnerConfig,
   PadroneSpinnerPreset,
 } from '../core/runtime.ts';
+import { displayWidth } from '../output/primitives.ts';
 import { isCI } from '../util/utils.ts';
 
 // ---------------------------------------------------------------------------
@@ -188,9 +189,6 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
     };
   }
 
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: ANSI escape stripping requires matching ESC
-  const ansiPattern = /\x1b\[[0-9;]*m/g;
-
   const showTime = options?.time ?? false;
   let etaEnabled = options?.eta ?? false;
 
@@ -220,12 +218,10 @@ export function createTerminalProgress(message: string, options?: PadroneProgres
     prevLineCount = 0;
   };
 
-  /** Count how many terminal rows `str` occupies, accounting for line wrapping. */
+  /** Count how many terminal rows `str` occupies: each of its lines, wrapped at the terminal's width. */
   const lineCount = (str: string): number => {
     const cols = stderr.columns || 80;
-    // Strip ANSI escape sequences for accurate width measurement
-    const visible = str.replace(ansiPattern, '');
-    return Math.max(1, Math.ceil(visible.length / cols));
+    return str.split('\n').reduce((rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line) / cols)), 0);
   };
 
   const render = () => {

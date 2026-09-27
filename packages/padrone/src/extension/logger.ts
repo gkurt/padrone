@@ -132,15 +132,21 @@ function parseRedactPath(path: string): RedactPath {
   });
 }
 
-/** A copy of `value` with `path` censored; objects along the path are copied, never mutated. */
+/**
+ * A copy of `value` with `path` censored; objects along the path are copied (keeping their prototype), never mutated.
+ * Errors are left alone: they're logged by name, message and stack.
+ */
 function redactAt(value: unknown, path: RedactPath, censor: string): unknown {
   if (path.length === 0) return censor;
-  if (!Array.isArray(value) && !isPlainObject(value)) return value;
+  if (!value || typeof value !== 'object' || value instanceof Error) return value;
   const [head, ...rest] = path;
   const record = value as Record<string, unknown>;
   const keys = head === WILDCARD ? Object.keys(record) : Object.hasOwn(record, head!) ? [head as string] : [];
   if (keys.length === 0) return value;
-  const copy = (Array.isArray(value) ? [...value] : { ...record }) as Record<string, unknown>;
+  const copy = (Array.isArray(value) ? [...value] : Object.setPrototypeOf({ ...record }, Object.getPrototypeOf(record))) as Record<
+    string,
+    unknown
+  >;
   for (const key of keys) copy[key] = redactAt(record[key], rest, censor);
   return copy;
 }

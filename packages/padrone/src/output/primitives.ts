@@ -53,7 +53,8 @@ const cellLines = (text: string) => text.split(/\r?\n/);
 
 const toJson = (value: unknown) => safeJsonStringify(value, 2) ?? 'null';
 
-function truncate(text: string, max: number): string {
+/** `text` cut to `max` terminal columns, ending in `…` when it's cut. */
+export function truncate(text: string, max: number): string {
   if (max <= 0 || displayWidth(text) <= max) return text;
   if (max <= 1) return '…';
   let result = '';

@@ -1,3 +1,4 @@
+import { truncate } from '../output/primitives.ts';
 import { canAnimate } from './progress-renderer.ts';
 
 // ---------------------------------------------------------------------------
@@ -320,7 +321,10 @@ export const createTerminalTaskList: PadroneTaskListRenderer = (tasks, options) 
   const render = () => {
     if (paused || finished) return;
     const columns = stderr.columns || 80;
-    const block = lines(tasks, '').map((line) => (line.length >= columns ? `${line.slice(0, columns - 2)}…` : line));
+    // One row per line, so `clear()` erases all of them
+    const block = lines(tasks, '')
+      .flatMap((line) => line.split('\n'))
+      .map((line) => truncate(line, columns - 1));
     clear();
     write(block.join('\n'));
     lineCount = block.length;

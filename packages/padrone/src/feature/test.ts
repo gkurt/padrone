@@ -46,6 +46,8 @@ export type TestCliBuilder = {
   prompt(answers: Record<string, unknown>): TestCliBuilder;
   /** Provide mock stdin data (simulates piped input). */
   stdin(data: string): TestCliBuilder;
+  /** The context commands receive (`ctx.context`), as passed to `cli()` / `eval()`. */
+  context(value: unknown): TestCliBuilder;
   /**
    * Execute a single command via `eval()` and return the result with captured I/O.
    * @param input - Optional CLI input string. Overrides `.args()` if provided.
@@ -110,9 +112,9 @@ export type TestCliBuilder = {
  * Avoids strict variance issues with `AnyPadroneProgram`.
  */
 type TestableProgram = {
-  eval: (input: string, prefs?: Record<string, unknown>) => any;
+  eval: (input: string, prefs?: any) => any;
   runtime: (runtime: PadroneRuntime) => TestableProgram;
-  repl: (options?: { greeting?: false; hint?: false }) => AsyncIterable<any>;
+  repl: (options?: any) => AsyncIterable<any>;
 };
 
 export function testCli(program: TestableProgram): TestCliBuilder {
@@ -120,6 +122,7 @@ export function testCli(program: TestableProgram): TestCliBuilder {
   let envVars: Record<string, string | undefined> | undefined;
   let promptAnswers: Record<string, unknown> | undefined;
   let stdinData: string | undefined;
+  let context: unknown;
 
   const builder: TestCliBuilder = {
     args(args: string) {
@@ -138,6 +141,10 @@ export function testCli(program: TestableProgram): TestCliBuilder {
       stdinData = data;
       return builder;
     },
+    context(value) {
+      context = value;
+      return builder;
+    },
 
     async run(runInput?: string) {
       const stdout: unknown[] = [];
@@ -146,7 +153,7 @@ export function testCli(program: TestableProgram): TestCliBuilder {
       const runtime = buildRuntime(stdout, stderr, { envVars, promptAnswers, stdinData });
       const testProgram = program.runtime(runtime);
 
-      const evalResult = await testProgram.eval(runInput ?? input ?? '', {});
+      const evalResult = await testProgram.eval(runInput ?? input ?? '', context === undefined ? {} : { context });
       if (evalResult.error) {
         stderr.push(evalResult.error instanceof Error ? evalResult.error.message : String(evalResult.error));
       }
@@ -166,7 +173,7 @@ export function testCli(program: TestableProgram): TestCliBuilder {
       const testProgram = program.runtime(runtime);
       const results: Omit<TestCliResult, 'stdout' | 'stderr'>[] = [];
 
-      for await (const r of testProgram.repl({ greeting: false, hint: false })) {
+      for await (const r of testProgram.repl({ greeting: false, hint: false, ...(context !== undefined && { context }) })) {
         results.push({
           command: r.command!,
           args: r.args,

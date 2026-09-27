@@ -1027,3 +1027,44 @@ describe('--repl flag ownership', () => {
     expect(prompts[0]).toBe('test/db/seed ❯ ');
   });
 });
+
+describe('REPL context', () => {
+  function createContextProgram(inputs: (string | null)[], argv: string[] = []) {
+    const seen: unknown[] = [];
+    const program = createPadrone('test')
+      .context<{ user: string }>()
+      .runtime({ readLine: mockReadLine(inputs), output: () => {}, error: () => {}, argv: () => argv })
+      .command('whoami', (c) => c.action((_args, ctx) => seen.push(ctx.context.user)))
+      .command('admin', (c) =>
+        c
+          .context((ctx) => ({ ...ctx, user: `${ctx.user} (admin)` }))
+          .command('whoami', (c) => c.action((_args, ctx) => seen.push(ctx.context.user))),
+      );
+    return { program, seen };
+  }
+
+  it('repl() passes its context to each command', async () => {
+    const { program, seen } = createContextProgram(['whoami', 'admin whoami', null]);
+    await program.repl({ context: { user: 'alice' } }).drain();
+    expect(seen).toEqual(['alice', 'alice (admin)']);
+  });
+
+  it('the repl command passes on the context given to cli()', async () => {
+    const { program, seen } = createContextProgram(['whoami', 'admin whoami', null], ['repl']);
+    const result = await program.cli({ context: { user: 'bob' } }).drain();
+    expect(result.error).toBeUndefined();
+    expect(seen).toEqual(['bob', 'bob (admin)']);
+  });
+
+  it('--repl passes on the context given to cli()', async () => {
+    const { program, seen } = createContextProgram(['whoami', null], ['--repl']);
+    await program.cli({ context: { user: 'carol' } }).drain();
+    expect(seen).toEqual(['carol']);
+  });
+
+  it('run("repl") passes on its context', async () => {
+    const { program, seen } = createContextProgram(['whoami', null]);
+    await program.run('repl', {}, { context: { user: 'dave' } }).result;
+    expect(seen).toEqual(['dave']);
+  });
+});

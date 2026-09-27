@@ -634,6 +634,23 @@ describe('Interactive', () => {
       expect(promptFn).toHaveBeenCalledTimes(1);
     });
 
+    it('coerces typed answers like CLI input', async () => {
+      const promptFn = createMockPrompt({ id: '42', tags: ['1', '2'] });
+
+      const program = createPadrone('test')
+        .runtime({ interactive: 'supported', prompt: promptFn })
+        .command('show', (c) =>
+          c
+            .arguments(z.object({ id: z.number().int(), tags: z.array(z.number()) }), { interactive: ['id', 'tags'] })
+            .action((args) => args),
+        );
+
+      const result = await program.eval('show');
+
+      expect(result.args).toEqual({ id: 42, tags: [1, 2] });
+      expect(promptFn).toHaveBeenCalledTimes(2);
+    });
+
     it('should re-prompt with invalid value as default', async () => {
       const configs: InteractivePromptConfig[] = [];
       let callCount = 0;

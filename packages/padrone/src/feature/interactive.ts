@@ -1,4 +1,4 @@
-import { getJsonSchema } from '../core/args.ts';
+import { coerceArgs, getJsonSchema } from '../core/args.ts';
 import { getGlobalArgs } from '../core/commands.ts';
 import { hasInteractiveConfig } from '../core/results.ts';
 import type { InteractivePromptConfig, ResolvedPadroneRuntime } from '../core/runtime.ts';
@@ -62,9 +62,12 @@ async function promptWithValidation(
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const value = await runtime.prompt!(promptConfig);
+    const answer = await runtime.prompt!(promptConfig);
 
-    if (!schema) return value;
+    if (!schema) return answer;
+
+    // Typed answers are strings: coerce them like CLI input (`'2'` → `2` for a number field)
+    const value = coerceArgs({ [field]: answer }, schema)[field];
 
     // Validate the full object with the new value to catch field-level issues
     const testData = { ...currentData, [field]: value };

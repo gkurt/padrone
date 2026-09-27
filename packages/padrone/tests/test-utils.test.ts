@@ -195,6 +195,22 @@ describe('testCli', () => {
     });
   });
 
+  describe('context', () => {
+    const program = createPadrone('test')
+      .context<{ user: string }>()
+      .command('whoami', (c) => c.action((_args, ctx) => ctx.context.user));
+
+    it('passes the context to run()', async () => {
+      const result = await testCli(program).context({ user: 'alice' }).run('whoami');
+      expect(result.result).toBe('alice');
+    });
+
+    it('passes the context to repl()', async () => {
+      const { results } = await testCli(program).context({ user: 'bob' }).repl(['whoami']);
+      expect(results[0]!.result).toBe('bob');
+    });
+  });
+
   describe('builder reuse', () => {
     it('should allow running multiple commands from the same builder', async () => {
       const program = createPadrone('test').command('greet', (c) =>

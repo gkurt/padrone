@@ -280,7 +280,11 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
         const scopedInput = scopePath ? (evalInput ? `${scopePath} ${evalInput}` : scopePath) : evalInput;
 
         try {
-          const replEvalPrefs: PadroneEvalPreferences = { caller: 'repl', ...(evalRuntime && { runtime: evalRuntime }) };
+          const replEvalPrefs: PadroneEvalPreferences = {
+            caller: 'repl',
+            ...(evalRuntime && { runtime: evalRuntime }),
+            ...(options?.context !== undefined && { context: options.context }),
+          };
           const result = await evalCommand(scopedInput, replEvalPrefs);
           if (result.error) {
             const msg = result.error instanceof Error ? result.error.message : String(result.error);

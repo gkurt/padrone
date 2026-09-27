@@ -75,7 +75,7 @@ When set to `true`, all fields listed in the schema's `required` array that are 
 
 A blank answer to a required field is asked again ("A value for "name" is required"), or takes the field's default when the prompt has one.
 
-Fields marked `sensitive: true` are asked with a `password` prompt (no echo) and never prefilled with their current or default value.
+Fields marked `sensitive: true` (nested keys like `db.password` too) are asked with a `password` prompt (no echo) and never prefilled with their current or default value. Under forced prompting (`-i`), a blank answer to such a prompt keeps the value already given.
 
 ## `optionalInteractive` — Optional Fields
 

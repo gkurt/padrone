@@ -454,7 +454,7 @@ for await (const result of program.repl({
   completion: true,
   context: { db },          // the context each command receives
   historyFile: true,        // keep history in program.dirs.state/repl_history (or a path)
-  historySize: 1000,        // most entries kept
+  historySize: 1000,        // most entries kept (0: none); the file is created with mode 0600
 })) {
   // handle each result
 }
@@ -515,7 +515,7 @@ const tool = program.tool();
 
 ### `.mcp(prefs?)` *(experimental)*
 
-Starts a Model Context Protocol server (2025-11-25 spec). Exposes all non-hidden commands as MCP tools.
+Starts a Model Context Protocol server (2025-11-25 spec). Exposes all commands as MCP tools, except hidden and built-in ones (`builtin: true`).
 
 ```ts
 // HTTP (default) — Streamable HTTP with session management and SSE support
@@ -525,25 +525,25 @@ await program.mcp({ port: 3000, host: '127.0.0.1' });
 await program.mcp({ transport: 'stdio' });
 ```
 
-Options: `transport` (`'http'` | `'stdio'`), `port`, `host`, `basePath`, `name`, `version`, `cors` (`string | false`).
+Options: `transport` (`'http'` | `'stdio'`), `port`, `host`, `basePath`, `name`, `version`, `cors` (`string | false`), `maxBodySize` (bytes, default 4 MiB; larger bodies get 413).
 
-Object results are also returned as `structuredContent`; `.configure({ outputSchema })` (an object schema) is advertised as the tool's `outputSchema`. Over HTTP, a request whose `Origin` isn't a loopback origin (`localhost`, `127.0.0.1`, `[::1]`) or the explicitly set `cors` origin gets 403, and `DELETE` (session termination) aborts that session's calls in flight.
+Object results are also returned as `structuredContent`; `.configure({ outputSchema })` (an object schema) is advertised as the tool's `outputSchema`. Over HTTP, a request whose `Origin` isn't a loopback origin (`localhost`, `127.0.0.1`, `[::1]`) or the explicitly set `cors` origin gets 403 (so does a non-loopback `Host` when bound to a loopback host), and `DELETE` (session termination) aborts that session's calls in flight.
 
 Also available as a built-in CLI command: `myapp mcp [http|stdio] --port 3000`
 
 ### `.serve(prefs?)` *(experimental)*
 
-Starts a REST HTTP server. Each command becomes an endpoint (`users list` → `/users/list`). Commands with `mutation: true` accept POST only; others accept GET and POST.
+Starts a REST HTTP server. Each command becomes an endpoint (`users list` → `/users/list`); hidden and built-in commands are left out. Commands with `mutation: true` accept POST only; others accept GET and POST.
 
 ```ts
 await program.serve({ port: 3000, basePath: '/api/' });
 ```
 
-Options: `port`, `host`, `basePath`, `cors` (`string | false`), `builtins` (`{ health, help, schema, docs }`), `onRequest`, `onError`.
+Options: `port`, `host`, `basePath`, `cors` (`string | false`; also the one cross-site `Origin` accepted, `'*'` any), `maxBodySize` (bytes, default 4 MiB; 413 `payload_too_large`), `builtins` (`{ health, help, schema, docs }`), `onRequest`, `onError`.
 
 Built-in endpoints: `/_health`, `/_help`, `/_schema`, `/_docs` (Scalar OpenAPI viewer), `/_openapi`.
 
-Responses hold `result`, `output` (printed lines) and `stderr` (what the command wrote to stderr), each left out when empty. `sensitive` fields are rejected in GET query strings (400) and left out of the OpenAPI GET parameters; a command with a required sensitive field is POST-only in the spec.
+Responses hold `result`, `output` (printed lines) and `stderr` (what the command wrote to stderr), each left out when empty. Like MCP, a request whose `Origin` isn't loopback, its own host or `cors` gets 403, and so does a non-loopback `Host` when bound to a loopback host. `sensitive` fields (and objects or arrays holding one) are rejected in GET query strings (400) and left out of the OpenAPI GET parameters; a command with a required sensitive field is POST-only in the spec.
 
 Also available as a built-in CLI command: `myapp serve --port 3000`
 

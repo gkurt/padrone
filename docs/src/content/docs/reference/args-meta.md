@@ -135,7 +135,7 @@ Groups of options of which exactly one, or at least one, must be given. See [Opt
 
 ### stdin
 
-Read from stdin and inject the data into a specified argument field. Only reads when stdin is piped (not a TTY) and the field wasn't already provided via CLI flags, or when its value is a lone `-` (`cat -`, `--data -`; read even from a terminal). The read mode is inferred from the schema: `string` fields read all stdin as text, `string[]` fields read line-by-line. `{ field, trim: true }` trims the text (each line, for arrays); number and boolean fields are always trimmed, so `echo 21 | my-cli double` works.
+Read from stdin and inject the data into a specified argument field. Only reads when stdin is piped (not a TTY, including a custom `runtime.stdin` with `isTTY: true`) and the field wasn't already provided via CLI flags, or when its value is a lone `-` (`cat -`, `--data -`; read even from a terminal). The read mode is inferred from the schema: `string` fields read all stdin as text, `string[]` fields read line-by-line. `{ field, trim: true }` trims the text (each line, for arrays); number and boolean fields are always trimmed, so `echo 21 | my-cli double` works.
 
 ```typescript
 // Read all stdin as text into 'data' field
@@ -554,7 +554,7 @@ z.object({
 ```
 
 - `--body @notes.md` reads `notes.md` (UTF-8, as is; relative to the working directory). A file that can't be read is a validation error, e.g. `body: Cannot read "notes.md": file not found`.
-- `--body -` (or `@-`) reads stdin, through the runtime's `stdin`. Only one value per run can read stdin, and not when the command's `stdin` field would read it too.
+- `--body -` (or `@-`) reads stdin, through the runtime's `stdin`. Only one value per run can read stdin, and not when the command's `stdin` field would read it too (it doesn't read a terminal, unless it's a stream field or given `-`).
 - `--body @@me` passes `@me`: a leading `@@` escapes the `@`. Other values are taken as given.
 - For array options, each value is read on its own: `--tag @a.txt --tag b`.
 - An object, record or array-of-objects option reads a JSON file: `--db @db.json` parses the file's JSON into the object (see [Supported Types](/padrone/guides/commands-arguments/#supported-types)).

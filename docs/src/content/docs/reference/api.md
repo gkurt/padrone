@@ -269,7 +269,7 @@ program.extend(
 - `options.prefix`: Read every option from a prefixed variable, like yargs' `.env('MY_APP')`: `padroneEnv({ prefix: 'MY_APP' })` reads `--dry-run` / `dryRun` from `MY_APP_DRY_RUN`, and a double underscore reaches into objects like viper and .NET (`MY_APP_DB__HOST` → `db.host`, `MY_APP_DB__MAX_CONNS` → `db.maxConns`). Variables named in `vars` take precedence. Shown in help.
 - `options.allowEmpty`: Read variables set to an empty string (`APP_PORT=`) as empty values. By default they count as unset, like viper, so an exported but empty variable doesn't fail validation or override a config value (default: `false`)
 - `options.builtins`: Also fill the options of built-in commands (`help`, `version`, `config`, `serve`, …, anything marked `builtin: true`); by default `APP_KEY` doesn't fill `config get`'s `key` (default: `false`)
-- `options.modes`, `local`, `dir`, `override`, `base`: `.env` file loading. Later files win, then `$VAR` / `${VAR}` references expand against the merged values and the process env (which wins unless `override`); single-quoted values aren't expanded
+- `options.modes`, `local`, `dir`, `override`, `base`: `.env` file loading. Later files win, then `$VAR` / `${VAR}` references expand against the merged values and the process env (which wins unless `override`); single-quoted values aren't expanded. In an unquoted value, `#` after a space or tab starts a comment, and a quote that's never closed is read as an unquoted value
 
 Env values are applied after CLI args and stdin, but before config file values. A validation error about a value from a variable names it: `port: Invalid input: expected number, received string (from APP_PORT)`. Can be applied at the program level (inherited by all commands) or at the command level.
 
@@ -972,7 +972,7 @@ program.help('', { format: 'markdown' });
 
 > **Experimental**: This API is experimental and may change in future releases.
 
-Start a Model Context Protocol server, exposing all commands as MCP tools.
+Start a Model Context Protocol server, exposing all commands as MCP tools (except hidden and built-in ones).
 
 ```typescript
 // Start with defaults (HTTP on port 3000)
@@ -998,11 +998,12 @@ await program.mcp({
 | `basePath` | `string` | `'/mcp'` | HTTP endpoint path |
 | `name` | `string` | program name | Server name reported to clients |
 | `version` | `string` | program version | Server version reported to clients |
-| `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable |
+| `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable. Also the one non-loopback `Origin` accepted (`'*'` any) |
+| `maxBodySize` | `number` | 4 MiB | Largest HTTP request body in bytes; a larger one gets 413 |
 
 **Returns:** `Promise<void>` (resolves when the server shuts down)
 
-The HTTP transport implements the [2025-11-25 Streamable HTTP spec](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http) with session management, SSE support (via `Accept: text/event-stream`), and CORS headers.
+The HTTP transport implements the [2025-11-25 Streamable HTTP spec](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http) with session management, SSE support (via `Accept: text/event-stream`), and CORS headers. A request with a non-loopback `Origin` (other than `cors`) gets 403, and so does a non-loopback `Host` header when bound to a loopback host (DNS rebinding).
 
 Also available as a built-in CLI command: `myapp mcp [http|stdio] --port 3000 --host 0.0.0.0`
 
@@ -1012,7 +1013,7 @@ Also available as a built-in CLI command: `myapp mcp [http|stdio] --port 3000 --
 
 > **Experimental**: This API is experimental and may change in future releases.
 
-Start a REST HTTP server that exposes commands as endpoints. Each command becomes a route (`users list` → `/users/list`). Commands with `mutation: true` only accept POST; others accept both GET and POST.
+Start a REST HTTP server that exposes commands as endpoints. Each command becomes a route (`users list` → `/users/list`); hidden and built-in commands are left out. Commands with `mutation: true` only accept POST; others accept both GET and POST.
 
 ```typescript
 // Start with defaults (port 3000)
@@ -1035,7 +1036,8 @@ await program.serve({
 | `port` | `number` | `3000` | HTTP port |
 | `host` | `string` | `'127.0.0.1'` | HTTP host |
 | `basePath` | `string` | `'/'` | Base path prefix for all routes |
-| `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable |
+| `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable. Also the one non-loopback, cross-site `Origin` accepted (`'*'` any) |
+| `maxBodySize` | `number` | 4 MiB | Largest request body in bytes; a larger one gets 413 (`payload_too_large`) |
 | `builtins.health` | `boolean` | `true` | Enable `GET /_health` endpoint |
 | `builtins.help` | `boolean` | `true` | Enable `GET /_help` and `GET /_help/:command` |
 | `builtins.schema` | `boolean` | `true` | Enable `GET /_schema` and `GET /_schema/:command` |
@@ -1049,6 +1051,7 @@ await program.serve({
 - **GET requests**: Query parameters are converted to CLI flags → `eval()`
 - **POST requests**: JSON body is serialized to CLI flags → `eval()`
 - **Mutation commands**: Only accept POST (returns 405 for GET)
+- **Origin/Host checks**: a request whose `Origin` isn't loopback, its own host, or `cors` gets 403, like MCP; bound to a loopback host, so does a non-loopback `Host` header
 
 **Built-in endpoints:**
 | Endpoint | Description |
@@ -1145,7 +1148,7 @@ for await (const result of program.repl({
   - `hint`: Hint text below greeting (`false` to suppress)
   - `history`: Initial history entries
   - `historyFile`: Keep history between sessions in this file (`true`: `repl_history` in `program.dirs.state`)
-  - `historySize`: Most history entries kept (default: `1000`)
+  - `historySize`: Most history entries kept (default: `1000`; `0` keeps none). The file is created readable only by the user (`0600`)
   - `completion`: Enable tab completion (default: `true`)
   - `spacing`: Output separators (before/after command output)
   - `outputPrefix`: Prefix for output lines
@@ -1380,7 +1383,7 @@ z.custom<AsyncIterable<MyType>>().meta(asyncStream(myItemSchema))
 
 ### Stdin Behavior
 
-- Only reads when stdin is piped (not a TTY) and the target field wasn't provided via CLI flags or positionally
+- Only reads when stdin is piped (not a TTY, including a custom `runtime.stdin` with `isTTY: true`) and the target field wasn't provided via CLI flags or positionally
 - A lone `-` as the field's value (`myapp cat -`, `--data -`) reads stdin, even from a terminal, like `cat -`
 - `trim: true` trims the text (each line, for arrays); number and boolean fields are trimmed anyway
 - A `stdin` field makes the command async (like interactive fields): `eval()`/`parse()` return a Promise, no `.async()` needed
@@ -1513,7 +1516,7 @@ The following extensions are applied automatically by `createPadrone()` and can 
 | `padroneRepl()` | `repl` | REPL command and `--repl` flag |
 | `padroneColor()` | `color` | `--color`/`--no-color` support; an unknown `--color=<theme>` is an error listing the themes |
 | `padroneSuggestions(options?)` | `suggestions` | "Did you mean?" suggestions for unknown commands (and `padroneAliases()` names) and options (including extensions' `--json`, `--yes`, …). `run: 'prompt'` asks whether to run the closest command after an unknown one in `cli()`/REPL |
-| `padroneSignalHandling(options?)` | `signal` | Signal handling and AbortSignal. A second Ctrl+C within `forceExitMs` (default `2000`; `0` turns it off) force-exits; `onForceExit(signal)` runs right before. Configure the builtin with `builtins: { signal: { forceExitMs, onForceExit } }` |
+| `padroneSignalHandling(options?)` | `signal` | Signal handling and AbortSignal. A second Ctrl+C within `forceExitMs` (default `2000`; `0` turns it off) force-exits (only after a first process signal, not when a caller's `signal` aborted the run); inside the REPL, Ctrl+C belongs to the command running; `onForceExit(signal)` runs right before. Configure the builtin with `builtins: { signal: { forceExitMs, onForceExit } }` |
 | `padroneAutoOutput(options?)` | `autoOutput` | Auto-print results and errors. `errorStack: true` (or the `DEBUG` env variable) prints stack traces with their `cause` chain |
 | `padroneStdin()` | `stdin` | Stdin piping support |
 | `padroneInteractive()` | `interactive` | Interactive prompting |

@@ -41,7 +41,7 @@ myapp mcp --port 8080 --host 0.0.0.0
 
 When you run `myapp mcp`, Padrone:
 
-1. Collects all non-hidden commands that have an action or schema
+1. Collects all commands that have an action or schema, except hidden and built-in ones (`config`, `alias`, `upgrade`, …)
 2. Exposes each as an MCP tool with a JSON Schema derived from your Zod definitions, named by its path (`db.migrate`); a root command with an action is named after the program
 3. Handles the JSON-RPC protocol (initialize, tools/list, tools/call, ping, etc.), with a session per client over HTTP
 4. Adds a `help` tool that returns the program's or a command's help (named `padrone_help` when a command is already called `help`)
@@ -93,12 +93,13 @@ The `.mcp()` method, `padroneMcp(defaults)` and the `mcp` command accept these o
 | `name` | `string` | program name | Server name |
 | `version` | `string` | program version | Server version |
 | `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable. Also the origin allowed past the `Origin` check (below) |
+| `maxBodySize` | `number` | 4 MiB | Largest request body in bytes; a larger one gets 413 |
 
 ### Transports
 
 **Streamable HTTP** (default) — Starts an HTTP server. Responds with `application/json` or `text/event-stream` (SSE) based on the client's `Accept` header, per the MCP spec. Includes session management with `MCP-Session-Id` headers. Protocol versions `2025-11-25`, `2025-06-18` and `2025-03-26` are accepted; JSON-RPC batches are rejected, as the spec no longer has them. A `DELETE` request ends a session and aborts its tool calls still in flight (through `ctx.signal`).
 
-To guard against DNS rebinding, a request with an `Origin` header (which browsers send) is rejected with 403 unless the origin is a loopback one (`http://localhost:5173`, `http://127.0.0.1`, `http://[::1]:8080`) or the one set with `cors`. Setting `cors: '*'` explicitly allows any origin; the default only sends the `*` CORS header. Clients that aren't browsers send no `Origin` and aren't affected.
+To guard against DNS rebinding, a request with an `Origin` header (which browsers send) is rejected with 403 unless the origin is a loopback one (`http://localhost:5173`, `http://127.0.0.1`, `http://[::1]:8080`) or the one set with `cors`. Setting `cors: '*'` explicitly allows any origin; the default only sends the `*` CORS header. Clients that aren't browsers send no `Origin` and aren't affected. When bound to a loopback host, a request whose `Host` header isn't a loopback name is rejected with 403 too.
 
 ```typescript
 // A web app on another origin may call the server
@@ -151,7 +152,7 @@ myapp serve --base-path /api/
 
 When you run `myapp serve`, Padrone:
 
-1. Collects all non-hidden commands that have an action or schema
+1. Collects all commands that have an action or schema, except hidden and built-in ones (`config`, `alias`, `upgrade`, …)
 2. Maps each to a URL path (e.g., `users list` → `/users/list`)
 3. For each request, converts query params (GET) or JSON body (POST) to CLI flags and calls `eval()`. Nested objects are passed as dotted query params (`?db.host=localhost`), repeated params fill arrays, `_` gives positional values, a param without a value is an empty string (`?name=`) or turns a boolean on (`?verbose`), and `null` in a JSON body means unset
 4. Returns structured JSON responses
@@ -185,7 +186,7 @@ The `mutation` flag also affects MCP (sets `annotations.destructiveHint`) and Ve
 
 ### Sensitive Fields
 
-Fields marked `sensitive: true` are `writeOnly` in the schemas, and can't be sent in a GET query string, where they'd end up in URLs and server logs: the server answers 400 for them (by name, alias, flag, dotted path, or `_` for a sensitive positional), and the OpenAPI spec leaves them out of the GET parameters. Send them in a POST body. A command with a required sensitive field has no GET operation in the spec.
+Fields marked `sensitive: true` are `writeOnly` in the schemas, and can't be sent in a GET query string, where they'd end up in URLs and server logs: the server answers 400 for them (by name, alias, flag, dotted path, a whole object or array holding one, or `_` for a sensitive positional), and the OpenAPI spec leaves them out of the GET parameters. Send them in a POST body. A command with a required sensitive field has no GET operation in the spec.
 
 ```typescript
 .command('login', (c) =>
@@ -215,10 +216,13 @@ await program.serve({
 | `port` | `number` | `3000` | HTTP port |
 | `host` | `string` | `'127.0.0.1'` | HTTP host |
 | `basePath` | `string` | `'/'` | Base path prefix for all routes |
-| `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable |
+| `cors` | `string \| false` | `'*'` | CORS allowed origin, or `false` to disable. Also the origin allowed past the `Origin` check (below) |
+| `maxBodySize` | `number` | 4 MiB | Largest request body in bytes; a larger one gets 413 (`payload_too_large`) |
 | `builtins` | `object` | all `true` | Toggle built-in endpoints (health, help, schema, docs) |
 | `onRequest` | `function` | — | Hook to run before each request (auth, rate-limiting) |
 | `onError` | `function` | — | Custom error response handler |
+
+Like MCP, a request with an `Origin` header is rejected with 403 unless the origin is a loopback one, the page's own (its host is the request's `Host`, like `/_docs` opened on a LAN address), or the one set with `cors` (`'*'` allows any), so other websites can't run commands. When bound to a loopback host, a request whose `Host` header isn't a loopback name is rejected with 403 (DNS rebinding).
 
 ### Built-in Endpoints
 
@@ -259,7 +263,7 @@ await program.serve({
 { "ok": false, "error": "action_error", "message": "Database unavailable" }
 ```
 
-Validation errors go through `onError` when it's set. Arguments reach the command intact: strings with spaces or quotes, arrays (empty ones too, and items like `[x]`), nested objects (as `--a.b=`, or as JSON when dotted keys can't express them: record keys with dots, arrays inside, empty objects), arrays of objects (as JSON) and `false` for booleans with a custom `negative` keyword or none. An empty POST body means no arguments. Serve, MCP and `tool()` callers can't pick a config file: `--config`/`-c` is an unknown option for them, so they can't make the server read local files.
+Validation errors go through `onError` when it's set. Arguments reach the command intact: strings with spaces or quotes, arrays (empty ones too, and items like `[x]`), nested objects (as `--a.b=`, or as JSON when dotted keys can't express them: record keys with dots, arrays inside, empty objects), arrays of objects (as JSON) and `false` for booleans with a custom `negative` keyword or none. An empty POST body means no arguments. Serve, MCP and `tool()` callers can't pick a config file: `--config`/`-c` is an unknown option for them, so they can't make the server read local files. The `config`, `alias`, `completion`, `man`, `serve`, `mcp` and `upgrade` commands refuse them ("… is only available on the command line").
 
 The `serve` command is hidden from help. Leave out `padroneServe()` to go without it; `program.serve()` works either way.
 

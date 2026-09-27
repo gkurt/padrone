@@ -35,8 +35,8 @@ myapp mcp --port 8080 --host 0.0.0.0
 When you run `myapp mcp`, Padrone:
 
 1. Collects all non-hidden commands that have an action or schema
-2. Exposes each as an MCP tool with a JSON Schema derived from your Zod definitions
-3. Handles the JSON-RPC protocol (initialize, tools/list, tools/call, ping, etc.)
+2. Exposes each as an MCP tool with a JSON Schema derived from your Zod definitions, named by its path (`db.migrate`); a root command with an action is named after the program
+3. Handles the JSON-RPC protocol (initialize, tools/list, tools/call, ping, etc.), with a session per client over HTTP
 
 For example, a CLI with `greet` and `deploy` commands becomes two MCP tools that AI assistants can discover and call.
 
@@ -202,10 +202,17 @@ await program.serve({
 { "ok": false, "error": "validation", "issues": [{ "path": ["name"], "message": "Required" }] }
 ```
 
-**Not found (404):**
+**Bad request (400):** input the command can't take, such as an extra positional value, or a body that isn't a JSON object
+```json
+{ "ok": false, "error": "bad_request", "message": "Unexpected arguments for 'users': extra" }
+```
+
+**Not found (404):** no command at that path (or a path outside `basePath`)
 ```json
 { "ok": false, "error": "not_found", "message": "Command not found: users update" }
 ```
+
+Validation errors go through `onError` when it's set. Arguments reach the command intact: strings with spaces or quotes, arrays, nested objects (as `--a.b=`) and booleans with a custom `negative` keyword. An empty POST body means no arguments.
 
 ### Disabling Serve
 

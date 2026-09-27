@@ -249,16 +249,17 @@ function preprocessMappings(data: Record<string, unknown>, mappings: Record<stri
 
 /**
  * Apply values to arguments using "set if not present" semantics.
- * Existing values take precedence — only fills in undefined or missing keys.
+ * Existing values take precedence — only fills in undefined or missing keys. Nested objects are filled key by key,
+ * so `--db.host=x` keeps `db.port` from a config file.
  */
 export function applyValues(data: Record<string, unknown>, values: Record<string, unknown>): Record<string, unknown> {
   const result = { ...data };
 
   for (const [key, value] of Object.entries(values)) {
-    if (key in result && result[key] !== undefined) continue;
-    if (value !== undefined) {
-      result[key] = value;
-    }
+    if (value === undefined || key === '__proto__') continue;
+    const existing = result[key];
+    if (existing === undefined) result[key] = value;
+    else if (isPlainObject(existing) && isPlainObject(value)) result[key] = applyValues(existing, value);
   }
 
   return result;

@@ -1,3 +1,5 @@
+import { extractSchemaMetadata, getJsonSchema, parsePositionalConfig } from '../core/args.ts';
+import { getGlobalArgs } from '../core/commands.ts';
 import { getKnownOptionNames } from '../core/validate.ts';
 import type { AnyPadroneCommand, PadroneInput, PadroneSchema } from '../types/index.ts';
 
@@ -7,13 +9,25 @@ import type { AnyPadroneCommand, PadroneInput, PadroneSchema } from '../types/in
  */
 export function frameworkFlags(rawArgs: Record<string, unknown>, command: AnyPadroneCommand) {
   const owned = new Set(getKnownOptionNames(command));
+  const get = (key: string) => (owned.has(key) ? undefined : rawArgs[key]);
   return {
     has: (key: string) => !owned.has(key) && key in rawArgs,
-    get: (key: string) => (owned.has(key) ? undefined : rawArgs[key]),
+    get,
+    /** A boolean flag's value: `--yes` → `true`, `--no-yes`, `--yes=false` / `0` / `no` / `off` → `false`, absent → `undefined`. */
+    flag: (key: string): boolean | undefined => toFlag(get(key)),
     delete: (...keys: string[]) => {
       for (const key of keys) if (!owned.has(key)) delete rawArgs[key];
     },
   };
+}
+
+const FALSE_WORDS = new Set(['false', '0', 'no', 'off']);
+
+/** A raw boolean flag value (`true`, `'false'`, `'off'`, …) as a boolean; `undefined` stays `undefined`. */
+export function toFlag(value: unknown): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string') return !FALSE_WORDS.has(value.toLowerCase());
+  return value !== false;
 }
 
 /**
@@ -155,4 +169,60 @@ export function markErrorReported(error: unknown): void {
 /** Whether an error was already printed by an extension. */
 export function isErrorReported(error: unknown): boolean {
   return !!error && typeof error === 'object' && reportedErrors.has(error);
+}
+
+/** Whether a positional value lands in `field` (a variadic positional before it may take them all, so this errs toward yes). */
+export function isProvidedPositionally(command: AnyPadroneCommand, field: string, positionalArgs: readonly string[]): boolean {
+  const positional = command.meta?.positional;
+  const index = positional ? parsePositionalConfig(positional).findIndex((p) => p.name === field) : -1;
+  return index >= 0 && positionalArgs.length > index;
+}
+
+function isLooseSchema(schema: PadroneSchema | undefined): boolean {
+  if (!schema) return false;
+  try {
+    const json = getJsonSchema(schema);
+    return json.type !== 'object' || !json.properties || (json.additionalProperties !== undefined && json.additionalProperties !== false);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Values from an outside source (a config file, environment variables) keyed for the command, before they fill `rawArgs`:
+ * aliases and kebab-case names (`dry-run`) map to option names, keys the command doesn't know are dropped (unless its schema
+ * allows extra keys), `null` means unset, and positionals already given on the command line are left to the command line.
+ */
+export function valuesForCommand(
+  command: AnyPadroneCommand,
+  values: Record<string, unknown>,
+  positionalArgs: readonly string[],
+): Record<string, unknown> {
+  const known = new Set(getKnownOptionNames(command));
+  const aliases: Record<string, string> = {};
+  const collect = (schema: PadroneSchema | undefined, meta: { fields?: any; autoAlias?: boolean } | undefined) => {
+    if (!schema) return;
+    try {
+      const metadata = extractSchemaMetadata(schema, meta?.fields, meta?.autoAlias);
+      Object.assign(aliases, metadata.flags, metadata.aliases);
+    } catch {}
+  };
+  const globals = getGlobalArgs(command);
+  if (globals) collect(globals.schema, globals.meta);
+  collect(command.argsSchema, command.meta);
+  const loose = command.argsSchema ? isLooseSchema(command.argsSchema) : false;
+
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (value === null || value === undefined) continue;
+    const name = known.has(key) ? key : aliases[key];
+    if (name === undefined) {
+      if (loose) result[key] = value;
+      continue;
+    }
+    if (isProvidedPositionally(command, name, positionalArgs)) continue;
+    // The option's own name wins over an alias given alongside it
+    if (!(name in result) || name === key) result[name] = value;
+  }
+  return result;
 }

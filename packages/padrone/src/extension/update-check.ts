@@ -1,8 +1,9 @@
 import { thenMaybe } from '#src/core/results.ts';
+import type { ResolvedPadroneRuntime } from '#src/core/runtime.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { UpdateCheckConfig } from '../feature/update-check.ts';
-import type { AnyPadroneBuilder, CommandTypesBase } from '../types/index.ts';
-import { getVersion } from '../util/utils.ts';
+import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
+import { getRootCommand, getVersion } from '../util/utils.ts';
 import { frameworkFlags } from './utils.ts';
 
 // ── Interceptor ─────────────────────────────────────────────────────────
@@ -12,27 +13,42 @@ function createUpdateCheckInterceptor(config: UpdateCheckConfig) {
     { id: 'padrone:update-check', name: 'padrone:update-check', order: 1000, options: { 'update-check': 'flag' } },
     () => {
       let check: Promise<(() => void) | undefined> | undefined;
+      let flagsRead = false;
+
+      const readFlags = (
+        ctx: { caller: string; runtime: ResolvedPadroneRuntime },
+        rawArgs: Record<string, unknown>,
+        command: AnyPadroneCommand,
+      ) => {
+        flagsRead = true;
+        const flags = frameworkFlags(rawArgs, command);
+        const suppressed = flags.flag('update-check') === false;
+        flags.delete('update-check');
+        // Only people running the CLI see the notice; `--no-update-check` skips the request too
+        if (suppressed || ctx.caller !== 'cli') return;
+
+        const rootCommand = getRootCommand(command);
+        const runtime = ctx.runtime;
+        check = Promise.resolve(getVersion(rootCommand.version))
+          .then((currentVersion) =>
+            import('../feature/update-check.ts').then(({ createUpdateChecker }) =>
+              createUpdateChecker(rootCommand.name, currentVersion, config, runtime),
+            ),
+          )
+          .catch(() => undefined);
+      };
 
       return {
         parse(ctx, next) {
           return thenMaybe(next(), (res) => {
-            const flags = frameworkFlags(res.rawArgs, res.command);
-            const suppressed = flags.get('update-check') === false;
-            flags.delete('update-check');
-            // Only people running the CLI see the notice; `--no-update-check` skips the request too
-            if (suppressed || ctx.caller !== 'cli') return res;
-
-            const rootCommand = ctx.command;
-            const runtime = ctx.runtime;
-            check = Promise.resolve(getVersion(rootCommand.version))
-              .then((currentVersion) =>
-                import('../feature/update-check.ts').then(({ createUpdateChecker }) =>
-                  createUpdateChecker(rootCommand.name, currentVersion, config, runtime),
-                ),
-              )
-              .catch(() => undefined);
+            readFlags(ctx, res.rawArgs, res.command);
             return res;
           });
+        },
+        // Registered on a command: its parse handler doesn't run
+        validate(ctx, next) {
+          if (!flagsRead) readFlags(ctx, ctx.rawArgs, ctx.command);
+          return next();
         },
         shutdown(_ctx, next) {
           // Printed once the check settles, after the command's own output, without holding up the result

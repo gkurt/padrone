@@ -2,6 +2,7 @@ import { buildReplCompleter, findCommandByName, getCommandRuntime } from '../cor
 import { createTerminalReplSession } from '../core/default-runtime.ts';
 import { REPL_SIGINT, type ReplSessionConfig } from '../core/runtime.ts';
 import { formatIssueMessages } from '../core/validate.ts';
+import { shouldUseAnsi } from '../output/styling.ts';
 import type { AnyPadroneCommand, PadroneEvalPreferences, PadroneReplPreferences } from '../types/index.ts';
 import { getVersion } from '../util/utils.ts';
 
@@ -17,17 +18,18 @@ export type ReplDeps = {
 export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferences): AsyncIterable<any> & { drain: () => Promise<any> } {
   const { existingCommand, evalCommand, replActiveRef } = deps;
 
-  if (replActiveRef.value) {
-    const runtime = getCommandRuntime(existingCommand);
-    runtime.error('REPL is already running. Nested REPL sessions are not supported.');
-    return (async function* () {})() as any;
-  }
+  const overrides = options?.runtime && Object.fromEntries(Object.entries(options.runtime).filter(([, v]) => v !== undefined));
+  const runtime = overrides ? { ...getCommandRuntime(existingCommand), ...overrides } : getCommandRuntime(existingCommand);
 
-  const runtime = getCommandRuntime(existingCommand);
+  if (replActiveRef.value) {
+    runtime.error('REPL is already running. Nested REPL sessions are not supported.');
+    const empty = (async function* () {})();
+    return Object.assign(empty, { drain: async () => ({ value: [] }) }) as any;
+  }
 
   const programName = existingCommand.name || 'padrone';
   const env = runtime.env();
-  const useAnsi = runtime.format === 'ansi' || (runtime.format === 'auto' && !env.NO_COLOR && !env.CI && runtime.terminal?.isTTY === true);
+  const useAnsi = runtime.format === 'ansi' || (runtime.format === 'auto' && shouldUseAnsi(env, runtime.terminal?.isTTY));
 
   // Track command history for .history built-in
   const commandHistory: string[] = [];
@@ -236,25 +238,17 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
                 .join('\n')
           : undefined;
 
-        // Temporarily patch runtime on all commands so handler output gets prefixed.
-        // Commands store parent refs from build time, so we patch each command directly.
-        const savedRuntimes: { cmd: AnyPadroneCommand; runtime: typeof existingCommand.runtime }[] = [];
-        if (prefixLines) {
-          const prefixedRuntime = {
-            ...existingCommand.runtime,
-            output: (...args: unknown[]) => {
-              const first = args[0];
-              runtime.output(typeof first === 'string' ? prefixLines(first) : first, ...args.slice(1));
-            },
-            error: (text: string) => runtime.error(prefixLines(text)),
-          };
-          const patchAll = (cmd: AnyPadroneCommand) => {
-            savedRuntimes.push({ cmd, runtime: cmd.runtime });
-            cmd.runtime = prefixedRuntime;
-            cmd.commands?.forEach(patchAll);
-          };
-          patchAll(existingCommand);
-        }
+        // The session's runtime overrides, with handler output prefixed
+        const evalRuntime = prefixLines
+          ? {
+              ...overrides,
+              output: (...args: unknown[]) => {
+                const first = args[0];
+                runtime.output(typeof first === 'string' ? prefixLines(first) : first, ...args.slice(1));
+              },
+              error: (text: string) => runtime.error(prefixLines(text)),
+            }
+          : overrides;
 
         // Resolve before/after spacing from the shorthand or object form
         const sp = options?.spacing;
@@ -286,7 +280,7 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
         const scopedInput = scopePath ? (evalInput ? `${scopePath} ${evalInput}` : scopePath) : evalInput;
 
         try {
-          const replEvalPrefs: PadroneEvalPreferences | undefined = { caller: 'repl' };
+          const replEvalPrefs: PadroneEvalPreferences = { caller: 'repl', ...(evalRuntime && { runtime: evalRuntime }) };
           const result = await evalCommand(scopedInput, replEvalPrefs);
           if (result.error) {
             const msg = result.error instanceof Error ? result.error.message : String(result.error);
@@ -300,7 +294,6 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
           const msg = err instanceof Error ? err.message : String(err);
           runtime.error(prefixLines ? prefixLines(msg) : msg);
         } finally {
-          for (const { cmd, runtime: saved } of savedRuntimes) cmd.runtime = saved;
           emitSpacing(spacingAfter);
         }
       }

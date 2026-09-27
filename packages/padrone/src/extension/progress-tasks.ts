@@ -82,8 +82,20 @@ export async function runTaskList(
   const errors: unknown[] = [];
   let next = 0;
 
+  const fail = (state: MutableTaskState, err: unknown) => {
+    state.status = 'failed';
+    state.message = err instanceof Error ? err.message : String(err);
+    errors.push(err);
+  };
+
   const runOne = async (task: PadroneTask, state: MutableTaskState) => {
-    const skip = typeof task.skip === 'function' ? await task.skip() : task.skip;
+    let skip: boolean | string | undefined;
+    try {
+      skip = typeof task.skip === 'function' ? await task.skip() : task.skip;
+    } catch (err) {
+      fail(state, err);
+      return notify();
+    }
     if (skip) {
       state.status = 'skipped';
       if (typeof skip === 'string') state.message = skip;
@@ -116,9 +128,7 @@ export async function runTaskList(
         state.status = 'skipped';
         state.message = err.reason;
       } else {
-        state.status = 'failed';
-        state.message = err instanceof Error ? err.message : String(err);
-        errors.push(err);
+        fail(state, err);
       }
     }
     notify();
@@ -197,7 +207,7 @@ export const createTerminalTaskList: PadroneTaskListRenderer = (tasks) => {
   };
 
   const render = () => {
-    if (paused) return;
+    if (paused || finished) return;
     const columns = stderr.columns || 80;
     const block = lines(tasks, '').map((line) => (line.length >= columns ? `${line.slice(0, columns - 2)}…` : line));
     clear();

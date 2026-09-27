@@ -51,7 +51,8 @@ describe('signal handling', () => {
 
       const result = await program.eval('cmd');
       expect(receivedSignal!.aborted).toBe(true);
-      expect(receivedSignal!.reason).toBe('SIGINT');
+      expect(receivedSignal!.reason).toBeInstanceOf(SignalError);
+      expect(receivedSignal!.reason.signal).toBe('SIGINT');
       expect(result.signal).toBe('SIGINT');
       expect(result.exitCode).toBe(130);
     });

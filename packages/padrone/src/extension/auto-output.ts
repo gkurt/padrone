@@ -13,7 +13,7 @@ import type {
   InterceptorExecuteResult,
 } from '../types/index.ts';
 import { safeJsonStringify } from '../util/json.ts';
-import { getJsonOutputFilter, isErrorReported, markErrorReported } from './utils.ts';
+import { getJsonOutputFilter, isErrorReported, isRemoteCaller, markErrorReported } from './utils.ts';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -136,6 +136,20 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
         const autoOutput = (value: unknown): unknown => {
           if (value == null) return value;
 
+          // Serve, MCP and tool calls return the result through their transport: collect streams without printing
+          if (isRemoteCaller(ctx.caller)) return outputAndCollect(value, () => {});
+
+          const json = ctx.runtime.format === 'json' && TERMINAL_CALLERS.has(ctx.caller);
+
+          // `--jq` / `--template` turn each value into lines of their own
+          const filter = json ? getJsonOutputFilter(ctx.runtime) : undefined;
+          if (filter) {
+            const writeLines = (v: unknown) => {
+              for (const line of filter(v)) ctx.runtime.output(line);
+            };
+            return outputAndCollect(value, writeLines);
+          }
+
           // Declarative output config: format the return value through the primitive
           if (outputConfig) {
             const rendered = formatDeclarativeOutput(value, outputConfig, outputCtx);
@@ -146,15 +160,7 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
           }
 
           // `format: 'json'` (e.g. from `--json`): values as JSON, iterator items one per line (NDJSON)
-          if (ctx.runtime.format === 'json' && TERMINAL_CALLERS.has(ctx.caller)) {
-            // `--jq` / `--template` turn each value into lines of their own
-            const filter = getJsonOutputFilter(ctx.runtime);
-            if (filter) {
-              const writeLines = (v: unknown) => {
-                for (const line of filter(v)) ctx.runtime.output(line);
-              };
-              return outputAndCollect(value, writeLines);
-            }
+          if (json) {
             const write = (space?: number) => (v: unknown) => ctx.runtime.output(safeJsonStringify(v, space) ?? String(v));
             return outputAndCollect(value, write(2), write());
           }

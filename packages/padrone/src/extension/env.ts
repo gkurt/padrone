@@ -13,6 +13,7 @@ import type {
 import type { LoadEnvFilesOptions } from '../util/dotenv.ts';
 import { loadEnvFiles } from '../util/dotenv.ts';
 import type { WithAsync } from '../util/type-utils.ts';
+import { valuesForCommand } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -125,15 +126,26 @@ export function padroneEnv(
     prefix !== undefined ? [...new Set([...Object.keys(vars ?? {}), ...getKnownOptionNames(command)])] : Object.keys(vars ?? {});
 
   const interceptor = defineInterceptor(
-    { id: 'padrone:env', name: 'padrone:env', order: -1000, ...(mapsArgs && { env: prefix !== undefined ? envVarNames : vars }) },
+    {
+      id: 'padrone:env',
+      name: 'padrone:env',
+      order: -1000,
+      async: hasFiles,
+      ...(mapsArgs && { env: prefix !== undefined ? envVarNames : vars }),
+    },
     () => ({
       validate(ctx: InterceptorValidateContext, next) {
         const processEnv = ctx.runtime.env();
 
         const applyEnv = (envFromFiles: Record<string, string>) => {
           const rawEnv = override ? { ...processEnv, ...envFromFiles } : { ...envFromFiles, ...processEnv };
-          const rawArgs = mapsArgs ? applyValues(ctx.rawArgs, readEnvVars(rawEnv, argsToRead(ctx.command), envVarNames)) : ctx.rawArgs;
-          const proceed = () => (mapsArgs ? next({ rawArgs }) : next());
+          const forCommand = (values: Record<string, unknown>) => valuesForCommand(ctx.command, values, ctx.positionalArgs);
+          const rawArgs = mapsArgs
+            ? applyValues(ctx.rawArgs, forCommand(readEnvVars(rawEnv, argsToRead(ctx.command), envVarNames)))
+            : ctx.rawArgs;
+          // Variables from `.env` files are visible to `runtime.env()` downstream (e.g. in the action)
+          const runtime = hasFiles ? { ...ctx.runtime, env: () => rawEnv } : ctx.runtime;
+          const proceed = (args = rawArgs) => next({ rawArgs: args, runtime });
 
           if (schema) {
             const envValidated = schema['~standard'].validate(rawEnv);
@@ -154,16 +166,13 @@ export function padroneEnv(
                 } as InterceptorValidateResult;
               }
               if (!result.value) return proceed();
-              return next({ rawArgs: applyValues(rawArgs, result.value as Record<string, unknown>) });
+              return proceed(applyValues(rawArgs, forCommand(result.value as Record<string, unknown>)));
             });
           }
 
-          // No schema — merge file env values directly into rawArgs (unless `vars` or `prefix` picks what to read)
+          // No schema — file variables named like the command's options fill them (unless `vars` or `prefix` picks what to read)
           if (mapsArgs) return proceed();
-          if (Object.keys(envFromFiles).length > 0) {
-            return next({ rawArgs: applyValues(ctx.rawArgs, envFromFiles) });
-          }
-          return next();
+          return proceed(applyValues(ctx.rawArgs, forCommand(envFromFiles)));
         };
 
         if (hasFiles) {

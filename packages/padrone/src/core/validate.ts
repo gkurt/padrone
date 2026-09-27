@@ -34,6 +34,11 @@ function collectInterceptorOptions(command: AnyPadroneCommand): Record<string, O
   return options;
 }
 
+/** Options interceptors on the command chain declare, with their arity (e.g. `{ config: 'value', help: 'flag' }`). */
+export function getInterceptorOptions(command: AnyPadroneCommand): Record<string, OptionArity> {
+  return collectInterceptorOptions(command);
+}
+
 /** Names of the options interceptors on the command chain declare (`meta.options`), which they read from `rawArgs` themselves. */
 export function getInterceptorOptionNames(command: AnyPadroneCommand): Set<string> {
   return new Set(Object.keys(collectInterceptorOptions(command)));

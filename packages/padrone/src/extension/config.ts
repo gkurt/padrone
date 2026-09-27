@@ -9,7 +9,7 @@ import type { WithAsync } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
 import type { ConfigSearchOptions } from './config-loader.ts';
 import { loadConfig } from './config-loader.ts';
-import { frameworkFlags } from './utils.ts';
+import { frameworkFlags, valuesForCommand } from './utils.ts';
 
 export type { ConfigSearchOptions } from './config-loader.ts';
 
@@ -74,6 +74,9 @@ export type PadroneConfigOptions = {
 
 // ── Extension ────────────────────────────────────────────────────────────
 
+/** Inside env (-1000), so env values win, and outside interactive (-999), so values from config aren't prompted for. */
+const CONFIG_ORDER = -999.5;
+
 /**
  * Extension that handles config file loading, validation, and merging into command arguments.
  *
@@ -85,7 +88,8 @@ export type PadroneConfigOptions = {
  * - Optional schema validation and transformation of config data
  * - Directly accesses the file system (gracefully no-ops in non-CLI environments)
  *
- * Config values have the lowest precedence (CLI > stdin > env > config).
+ * Config values have the lowest precedence (CLI > stdin > env > config). Only keys the command has options for are applied
+ * (option names, aliases or kebab-case names), so a program-wide config file works for every command; `null` means unset.
  *
  * Not included in the default built-in extensions — must be explicitly added:
  * ```ts
@@ -98,7 +102,7 @@ export type PadroneConfigOptions = {
  */
 export function padroneConfig(options?: PadroneConfigOptions): <T extends CommandTypesBase>(builder: T) => WithAsync<T> {
   if (options?.disabled) {
-    const disabled = defineInterceptor({ id: 'padrone:config', name: 'padrone:config', order: -999, disabled: true }, () => ({}));
+    const disabled = defineInterceptor({ id: 'padrone:config', name: 'padrone:config', order: CONFIG_ORDER, disabled: true }, () => ({}));
     return ((builder: AnyPadroneBuilder) => builder.intercept(disabled)) as any;
   }
 
@@ -114,7 +118,8 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
     {
       id: 'padrone:config',
       name: 'padrone:config',
-      order: -999,
+      order: CONFIG_ORDER,
+      async: true,
       ...(flagEnabled && { options: { config: 'value', c: 'value' } }),
       ...(inherit === false && { inherit: false }),
     },
@@ -162,14 +167,12 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
                 });
               }
               const validatedData = result.value as Record<string, unknown>;
-              const mergedRawArgs = applyValues(ctx.rawArgs, validatedData);
-              return next({ rawArgs: mergedRawArgs });
+              return next({ rawArgs: applyValues(ctx.rawArgs, valuesForCommand(ctx.command, validatedData, ctx.positionalArgs)) });
             });
           }
 
-          // No schema — pass through as-is
-          const mergedRawArgs = applyValues(ctx.rawArgs, configData);
-          return next({ rawArgs: mergedRawArgs });
+          // No schema — the keys this command has options for
+          return next({ rawArgs: applyValues(ctx.rawArgs, valuesForCommand(ctx.command, configData, ctx.positionalArgs)) });
         };
 
         return thenMaybe(configDataOrPromise, applyConfig);

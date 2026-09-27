@@ -32,8 +32,7 @@ function createTimingInterceptor(enabledByDefault: boolean) {
     const readFlags = (rawArgs: Record<string, unknown>, command: AnyPadroneCommand) => {
       flagsRead = true;
       const flags = frameworkFlags(rawArgs, command);
-      if (flags.has('timing')) enabled = flags.get('timing') !== false;
-      if (flags.has('time')) enabled = flags.get('time') !== false;
+      enabled = flags.flag('timing') ?? flags.flag('time') ?? enabled;
       flags.delete('timing', 'time');
     };
 

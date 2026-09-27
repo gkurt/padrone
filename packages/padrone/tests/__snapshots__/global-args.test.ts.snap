@@ -7,7 +7,7 @@ Commands:
   [default]  
   status     
 
-Run "deploy [command] --help" for more information on a command.
+Run "app deploy [command] --help" for more information on a command.
 
 Arguments:
   env  

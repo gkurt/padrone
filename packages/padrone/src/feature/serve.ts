@@ -1,5 +1,6 @@
 import { buildInputSchema, type CollectedEndpoint, collectEndpoints, serializeArgsToFlags } from '../core/commands.ts';
 import { RoutingError, ValidationError } from '../core/errors.ts';
+import { formatIssueMessages } from '../core/validate.ts';
 import { generateHelp } from '../output/help.ts';
 import type { AnyPadroneCommand, AnyPadroneProgram } from '../types/index.ts';
 import { readStreamAsText } from '../util/stream.ts';
@@ -35,11 +36,6 @@ function toUrlPath(name: string): string {
   return name.replace(/\./g, '/');
 }
 
-/** Convert a URL path segment back to a command path (slash → space). */
-function toCommandPath(urlPath: string): string {
-  return urlPath.replace(/\//g, ' ');
-}
-
 function jsonResponse(body: unknown, status = 200, headers?: Record<string, string>): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -47,14 +43,14 @@ function jsonResponse(body: unknown, status = 200, headers?: Record<string, stri
   });
 }
 
-function errorToStatus(error: unknown): number {
-  if (error instanceof RoutingError) return 404;
-  if (error instanceof ValidationError) return 400;
-  return 500;
+/** Normalizes a base path to start and end with `/` (`api` → `/api/`). */
+function normalizeBasePath(basePath = '/'): string {
+  return `/${basePath}/`.replace(/\/{2,}/g, '/');
 }
 
 function errorToResponse(error: unknown): Response {
-  const status = errorToStatus(error);
+  // The route was already matched, so a routing error here means bad input (e.g. an extra positional value)
+  const status = error instanceof ValidationError || error instanceof RoutingError ? 400 : 500;
   if (error instanceof ValidationError) {
     return jsonResponse(
       {
@@ -67,7 +63,7 @@ function errorToResponse(error: unknown): Response {
     );
   }
   if (error instanceof RoutingError) {
-    return jsonResponse({ ok: false, error: 'not_found', message: error.message, suggestions: error.suggestions }, status);
+    return jsonResponse({ ok: false, error: 'bad_request', message: error.message, suggestions: error.suggestions }, status);
   }
   const message = error instanceof Error ? error.message : String(error);
   return jsonResponse({ ok: false, error: 'action_error', message }, status);
@@ -83,14 +79,14 @@ function buildOpenApiSpec(existingCommand: AnyPadroneCommand, endpoints: Collect
       content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean', const: true }, result: {} } } } },
     },
     '400': {
-      description: 'Validation error',
+      description: 'Validation error or bad request',
       content: {
         'application/json': {
           schema: {
             type: 'object',
             properties: {
               ok: { type: 'boolean', const: false },
-              error: { type: 'string', const: 'validation' },
+              error: { type: 'string', enum: ['validation', 'bad_request'] },
               message: { type: 'string' },
               issues: { type: 'array', items: { type: 'object', properties: { path: { type: 'array' }, message: { type: 'string' } } } },
             },
@@ -200,7 +196,7 @@ export function createServeHandler(
   evalCommand: AnyPadroneProgram['eval'],
   prefs?: PadroneServePreferences,
 ): (req: Request) => Promise<Response> {
-  const basePath = (prefs?.basePath ?? '/').replace(/\/$/, '/');
+  const basePath = normalizeBasePath(prefs?.basePath);
   const corsOrigin = prefs?.cors !== false ? (prefs?.cors ?? '*') : undefined;
   const builtins = { health: true, help: true, schema: true, docs: true, ...prefs?.builtins };
 
@@ -226,10 +222,12 @@ export function createServeHandler(
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
   }
 
-  async function evalAndRespond(commandString: string, request: Request): Promise<Response> {
+  const handleError = (error: unknown, request: Request) => (prefs?.onError ? prefs.onError(error, request) : errorToResponse(error));
+
+  async function evalAndRespond(input: string[], request: Request): Promise<Response> {
     const output: string[] = [];
     const errors: string[] = [];
-    const result = await evalCommand(commandString || (undefined as any), {
+    const result = await evalCommand(input.length ? input : (undefined as any), {
       caller: 'serve',
       // Aborts the command when the client disconnects
       signal: request.signal,
@@ -241,22 +239,29 @@ export function createServeHandler(
       },
     });
 
-    if (result.error) {
-      return prefs?.onError ? prefs.onError(result.error, request) : errorToResponse(result.error);
-    }
+    if (result.error) return handleError(result.error, request);
 
     if (result.argsResult?.issues) {
-      const issues = (result.argsResult.issues as { path?: PropertyKey[]; message: string }[]).map((i) => ({
-        path: i.path?.map(String),
-        message: i.message,
-      }));
-      return jsonResponse({ ok: false, error: 'validation', issues }, 400);
+      const { issues } = result.argsResult;
+      return handleError(new ValidationError(`Validation error:\n${formatIssueMessages(issues)}`, issues as any), request);
     }
 
     return jsonResponse({ ok: true, result: result.result ?? null });
   }
 
   return async function handleRequest(req: Request): Promise<Response> {
+    try {
+      return await routeRequest(req);
+    } catch (error) {
+      try {
+        return addCorsHeaders(handleError(error, req));
+      } catch (handlerError) {
+        return addCorsHeaders(errorToResponse(handlerError));
+      }
+    }
+  };
+
+  async function routeRequest(req: Request): Promise<Response> {
     // CORS preflight
     if (req.method === 'OPTIONS') {
       return addCorsHeaders(new Response(null, { status: corsOrigin ? 204 : 405 }));
@@ -271,8 +276,11 @@ export function createServeHandler(
     const url = new URL(req.url, 'http://localhost');
     let pathname = url.pathname;
 
-    // Strip basePath prefix
-    if (basePath !== '/' && pathname.startsWith(basePath)) {
+    // Strip basePath prefix; anything outside it isn't ours
+    if (basePath !== '/') {
+      if (pathname !== basePath.slice(0, -1) && !pathname.startsWith(basePath)) {
+        return addCorsHeaders(jsonResponse({ ok: false, error: 'not_found', message: `Not found: ${pathname}` }, 404));
+      }
       pathname = pathname.slice(basePath.length - 1);
     }
     // Remove leading slash for route matching
@@ -350,34 +358,36 @@ export function createServeHandler(
       return addCorsHeaders(new Response(null, { status: 405, headers: { Allow: endpoint.command.mutation ? 'POST' : 'GET, POST' } }));
     }
 
-    // Build command string from request
-    const commandPath = toCommandPath(routePath);
+    // Args are passed as argv tokens, so values with spaces or quotes arrive intact
+    const commandPath = routePath.split('/').filter(Boolean);
     let argParts: string[];
 
     if (req.method === 'POST') {
+      let body: unknown;
       try {
-        const body = (await req.json()) as Record<string, unknown>;
-        argParts = serializeArgsToFlags(body);
+        const text = await req.text();
+        body = text.trim() ? JSON.parse(text) : {};
       } catch {
         return addCorsHeaders(jsonResponse({ ok: false, error: 'bad_request', message: 'Invalid JSON body' }, 400));
       }
-    } else {
-      // GET: query string → flags
-      argParts = [];
-      for (const [key, value] of url.searchParams.entries()) {
-        if (key === '_') {
-          // Positional args
-          argParts.push(value);
-        } else {
-          argParts.push(value === '' ? `--${key}` : `--${key}=${value}`);
-        }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return addCorsHeaders(jsonResponse({ ok: false, error: 'bad_request', message: 'The JSON body must be an object' }, 400));
       }
+      argParts = serializeArgsToFlags(body as Record<string, unknown>, endpoint.command);
+    } else {
+      // GET: query string → flags, `_` → positional values (after `--`, so values starting with `-` stay values)
+      argParts = [];
+      const positionals: string[] = [];
+      for (const [key, value] of url.searchParams.entries()) {
+        if (key === '_') positionals.push(value);
+        else argParts.push(value === '' ? `--${key}` : `--${key}=${value}`);
+      }
+      if (positionals.length) argParts.push('--', ...positionals);
     }
 
-    const commandString = [commandPath, ...argParts].filter(Boolean).join(' ');
-    const response = await evalAndRespond(commandString, req);
+    const response = await evalAndRespond([...commandPath, ...argParts], req);
     return addCorsHeaders(response);
-  };
+  }
 }
 
 /** Start the serve HTTP server. */
@@ -392,7 +402,7 @@ export async function startServeServer(
 
   const port = prefs?.port ?? 3000;
   const host = prefs?.host ?? '127.0.0.1';
-  const basePath = (prefs?.basePath ?? '/').replace(/\/$/, '/');
+  const basePath = normalizeBasePath(prefs?.basePath);
 
   const server = http.createServer(async (req, res) => {
     const url = `http://${host}:${port}${req.url}`;
@@ -405,21 +415,26 @@ export async function startServeServer(
     res.on('close', () => {
       if (!res.writableFinished) disconnected.abort('Client disconnected');
     });
-    const fetchReq = new Request(url, {
-      method: req.method,
-      headers,
-      signal: disconnected.signal,
-      body: req.method !== 'GET' && req.method !== 'HEAD' ? await readBody(req) : undefined,
-    });
+    try {
+      const fetchReq = new Request(url, {
+        method: req.method,
+        headers,
+        signal: disconnected.signal,
+        body: req.method !== 'GET' && req.method !== 'HEAD' ? await readBody(req) : undefined,
+      });
 
-    const response = await handler(fetchReq);
-    const resHeaders: Record<string, string> = {};
-    response.headers.forEach((v, k) => {
-      resHeaders[k] = v;
-    });
-    res.writeHead(response.status, resHeaders);
-    const body = await response.text();
-    res.end(body);
+      const response = await handler(fetchReq);
+      const resHeaders: Record<string, string> = {};
+      response.headers.forEach((v, k) => {
+        resHeaders[k] = v;
+      });
+      res.writeHead(response.status, resHeaders);
+      res.end(await response.text());
+    } catch (error) {
+      if (res.headersSent) return void res.end();
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, error: 'server_error', message: error instanceof Error ? error.message : String(error) }));
+    }
   });
 
   const { getCommandRuntime } = await import('../core/commands.ts');

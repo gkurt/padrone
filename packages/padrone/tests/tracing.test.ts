@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { createPadrone, padroneLogger } from 'padrone';
 import type { OtelSpan, OtelTracer, OtelTracerProvider } from 'padrone/tracing';
 import { padroneTracing } from 'padrone/tracing';
+import * as z from 'zod/v4';
 
 // ---------------------------------------------------------------------------
 // Mock OTEL primitives
@@ -501,5 +502,20 @@ describe('padroneTracing context propagation', () => {
     expect(parents.get('cli deploy')).toBeUndefined();
     expect(parents.get('build')).toBe('cli deploy');
     expect(parents.get('compile')).toBe('build');
+  });
+});
+
+describe('tracing validation failures', () => {
+  it('marks the span as failed when validation returns issues', () => {
+    const { provider, spans } = createMockProvider();
+    const program = createPadrone('app')
+      .runtime(createCapture().runtime)
+      .extend(padroneTracing({ provider }))
+      .command('deploy', (c) => c.arguments(z.object({ env: z.string() })).action(() => 'ok'));
+    const result = program.eval('deploy');
+    expect(result.argsResult?.issues).toBeDefined();
+    expect(spans[0]!._status?.code).toBe(2);
+    expect(spans[0]!._attributes['padrone.phase']).toBe('validate');
+    expect(spans[0]!._ended).toBe(true);
   });
 });

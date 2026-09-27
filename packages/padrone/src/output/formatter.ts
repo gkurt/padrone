@@ -90,6 +90,8 @@ export type HelpBuiltinInfo = {
   name: string;
   description?: string;
   sub?: { name: string; description?: string }[];
+  /** Short form for the collapsed `Global:` line (e.g. `help [command]`); entries without one are only listed with `--all`. */
+  summary?: string;
 };
 
 /**
@@ -271,7 +273,9 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
     // Skip hint when builtins are present — the builtins section shows a combined hint
     if (!info.builtins?.length) {
       lines.push('');
-      lines.push(styler.meta(`Run "${info.name} [command] --help" for more information on a command.`));
+      lines.push(
+        styler.meta(`Run "${info.usage.command} [command] ${info.usage.helpFlag ?? '--help'}" for more information on a command.`),
+      );
     }
 
     return lines;
@@ -494,14 +498,17 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
 
     if (!showAllBuiltins) {
       // Collapsed summary: show selected builtins on a single line with a combined hint
-      const highlights = ['help [command]', 'version', '[command] --repl'];
-      lines.push(`${styler.label('Global:')} ${styler.meta(highlights.join(', '))}`);
+      const highlights = builtins.flatMap((entry) => (entry.summary ? [entry.summary] : []));
+      if (highlights.length > 0) lines.push(`${styler.label('Global:')} ${styler.meta(highlights.join(', '))}`);
       const helpFlag = info.usage.helpFlag;
+      const hasHelpCommand = builtins.some((entry) => entry.summary?.startsWith('help'));
       const hint =
         info.usage.hasSubcommands && helpFlag
-          ? `Run "${info.name} [command] ${helpFlag}" for more information. Use "--all" for all global commands.`
-          : `Use "${info.name} help --all" for more information on global commands.`;
-      lines.push(styler.meta(hint));
+          ? `Run "${info.usage.command} [command] ${helpFlag}" for more information. Use "--all" for all global commands.`
+          : hasHelpCommand
+            ? `Use "${info.usage.command} help --all" for more information on global commands.`
+            : undefined;
+      if (hint) lines.push(styler.meta(hint));
       return lines;
     }
 

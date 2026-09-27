@@ -44,7 +44,7 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
       return {
         validate(ctx, next) {
           const flags = frameworkFlags(ctx.rawArgs, ctx.command);
-          confirmed = confirmFlags.some((flag) => flags.get(flag) !== undefined && flags.get(flag) !== false);
+          confirmed = confirmFlags.some((flag) => flags.flag(flag) === true);
           flags.delete(...confirmFlags);
           return next();
         },

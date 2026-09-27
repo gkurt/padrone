@@ -212,9 +212,10 @@ export async function createUpdateChecker(
   const cached = await readCache(cachePath);
   if (cached && Date.now() - cached.lastCheck < intervalMs) return notifier(cached.latestVersion);
 
+  // A failed check is cached too, so an offline machine doesn't wait for the registry on every run
   const latestVersion = await fetchLatestVersion(packageName, registry);
-  if (latestVersion) await writeCache(cachePath, { lastCheck: Date.now(), latestVersion });
-  return notifier(latestVersion);
+  await writeCache(cachePath, { lastCheck: Date.now(), latestVersion: latestVersion ?? cached?.latestVersion ?? '' });
+  return notifier(latestVersion ?? cached?.latestVersion);
 }
 
 function noop() {}

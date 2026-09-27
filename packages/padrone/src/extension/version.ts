@@ -2,6 +2,7 @@ import { thenMaybe } from '#src/core/results.ts';
 import { resolveCommand } from '../core/commands.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
+import { getInterceptorOptionNames } from '../core/validate.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneCommand, PadroneCommandConfig } from '../types/index.ts';
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
@@ -111,15 +112,27 @@ const createVersionInterceptor = (versionFlags: readonly string[]) =>
           const flags = frameworkFlags(res.rawArgs, res.command);
           const isRoot = !res.command.parent;
           // Single-character flags only on the root command: `-v` often means verbose on subcommands
-          const hasVersionFlag = versionFlags.some((flag) => (isRoot || flag.length > 1) && flags.get(flag));
-          if (!hasVersionFlag) return res;
+          const applicable = versionFlags.filter((flag) => isRoot || flag.length > 1);
+          const hasVersionFlag = applicable.some((flag) => flags.flag(flag));
+          // `--version=false` / `--no-version` is consumed without showing the version
+          if (!hasVersionFlag) {
+            flags.delete(...applicable.filter((flag) => flags.flag(flag) === false));
+            return res;
+          }
 
           // Route to the version command so its action handles the rest
           const versionCmd = getRootCommand(res.command).commands?.find((c) => c.name === 'version');
           if (!versionCmd) return res;
           resolveCommand(versionCmd);
+          // Keep the flags extensions read (`--json`, `--no-color`, …), minus the command's own options and the version flags
+          const extensionOptions = getInterceptorOptionNames(versionCmd);
+          const rawArgs: Record<string, unknown> = {};
+          for (const [key, value] of Object.entries(res.rawArgs)) {
+            if (flags.has(key) && extensionOptions.has(key) && !versionFlags.includes(key)) rawArgs[key] = value;
+          }
           const verbose = flags.get('verbose');
-          return { ...res, command: versionCmd, rawArgs: verbose !== undefined ? { verbose } : {}, positionalArgs: [] };
+          if (verbose !== undefined) rawArgs.verbose = verbose;
+          return { ...res, command: versionCmd, rawArgs, positionalArgs: [] };
         });
       },
     }),

@@ -50,11 +50,11 @@ exports[`docs generateDocs html snapshot for show command 1`] = `
 `;
 
 exports[`docs generateDocs man snapshot for show command 1`] = `
-".TH "SHOW" "1" "" "" ""
+".TH "PADRONE\\-TEST\\-SHOW" "1" "" "" ""
 .SH NAME
-show
+padrone\\-test\\-show
 .SH SYNOPSIS
-\\fBshow\\fR \\fIid\\fR [\\fIoptions\\fR]
+\\fBpadrone\\-test show\\fR \\fIid\\fR [\\fIoptions\\fR]
 .SH ARGUMENTS
 .TP
 \\fIid\\fR

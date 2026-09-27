@@ -73,7 +73,7 @@ function createJsonInterceptor(options: PadroneJsonOptions) {
       const flags = frameworkFlags(rawArgs, command);
       const jq = jqEnabled ? flags.get('jq') : undefined;
       const template = templateEnabled ? flags.get('template') : undefined;
-      const json = flags.has('json') ? flags.get('json') !== false : undefined;
+      const json = flags.flag('json');
       flags.delete(...Object.keys(flagOptions));
 
       // JSON first, so an invalid expression is reported as JSON too

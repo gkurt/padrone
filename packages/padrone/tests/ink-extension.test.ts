@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { Text } from 'ink';
+import { Text, useApp } from 'ink';
 import { createPadrone } from 'padrone';
 import { padroneInk } from 'padrone/ink';
 import React from 'react';
@@ -16,6 +16,38 @@ describe('padroneInk extension', () => {
 
     const result = await program.eval('greet');
     expect(result.result).toBeUndefined();
+  });
+
+  test('keeps sync commands sync', () => {
+    const program = createPadrone('test-tui')
+      .extend(padroneInk())
+      .command('plain', (c) => c.action(() => 'sync'));
+
+    const result = program.eval('plain');
+    expect(result).not.toBeInstanceOf(Promise);
+    expect(result.result).toBe('sync');
+  });
+
+  test("returns the last frame to remote callers with remote: 'exit'", async () => {
+    function Loader() {
+      const [data, setData] = React.useState<string | null>(null);
+      const { exit } = useApp();
+      React.useEffect(() => {
+        setTimeout(() => setData('loaded'), 10);
+      }, []);
+      React.useEffect(() => {
+        if (data) exit();
+      }, [data, exit]);
+      return React.createElement(Text, null, data ?? 'Loading...');
+    }
+
+    const program = createPadrone('test-tui')
+      .runtime({ output: () => {}, error: () => {} })
+      .extend(padroneInk({ remote: 'exit', remoteTimeout: 1000 }))
+      .command('load', (c) => c.action(() => React.createElement(Loader)));
+
+    const res = (await program.tool().execute!({ command: 'load' }, {} as never)) as { result: unknown };
+    expect(res.result).toBe('loaded');
   });
 
   test('passes through non-React results unchanged', async () => {

@@ -11,7 +11,7 @@ const signalMeta = { id: 'padrone:signal', name: 'padrone:signal', order: -2000 
 const signalInterceptor = defineInterceptor(signalMeta, () => {
   const abortController = new AbortController();
   let receivedSignal: PadroneSignal | undefined;
-  let lastSigintTime = 0;
+  let lastSignalTime = 0;
   let unsubscribe: (() => void) | undefined;
   const DOUBLE_SIGINT_MS = 2000;
 
@@ -37,19 +37,17 @@ const signalInterceptor = defineInterceptor(signalMeta, () => {
       if (upstream.aborted) onUpstreamAbort();
       else upstream.addEventListener('abort', onUpstreamAbort, { once: true });
       const unsubscribeProcess = ctx.runtime.onSignal?.((sig) => {
+        const elapsed = Date.now() - lastSignalTime;
+        lastSignalTime = Date.now();
         if (abortController.signal.aborted) {
-          if (sig === 'SIGINT') {
-            const elapsed = Date.now() - lastSigintTime;
-            if (elapsed > 0 && elapsed < DOUBLE_SIGINT_MS) {
-              runtimeExit?.(signalExitCode(sig));
-            }
-            lastSigintTime = Date.now();
-          }
+          // A second SIGINT within 2s, or a repeated SIGTERM/SIGHUP, force-exits a command that ignores the abort.
+          // The same signal twice in one millisecond is a duplicate delivery, which some runtimes do.
+          if (elapsed > 0 && (sig !== 'SIGINT' || elapsed < DOUBLE_SIGINT_MS)) runtimeExit?.(signalExitCode(sig));
           return;
         }
-        if (sig === 'SIGINT') lastSigintTime = Date.now();
         receivedSignal = sig;
-        abortController.abort(sig);
+        // A `SignalError` reason, so `signal.throwIfAborted()` or an aborted fetch exits with the signal's code
+        abortController.abort(new SignalError(sig));
       });
       unsubscribe = () => {
         unsubscribeProcess?.();
@@ -64,7 +62,7 @@ const signalInterceptor = defineInterceptor(signalMeta, () => {
     },
     error(_ctx, next) {
       return thenMaybe(next(), (er) => {
-        if (receivedSignal && er.error instanceof Error) {
+        if (receivedSignal && er.error !== undefined && !(er.error instanceof SignalError)) {
           er.error = new SignalError(receivedSignal, { cause: er.error });
         }
         return er;
@@ -85,7 +83,8 @@ const signalInterceptor = defineInterceptor(signalMeta, () => {
  * - Creates an `AbortController` whose signal is propagated to all downstream phases.
  * - Follows the caller's `signal` (`eval()`/`cli()` preferences), aborting when it aborts.
  * - Subscribes to `runtime.onSignal` to forward OS signals to the abort controller.
- * - Implements SIGINT double-tap: two SIGINTs within 2 seconds force-exits the process.
+ * - Aborts with a `SignalError` as the signal's `reason`.
+ * - Implements SIGINT double-tap: two SIGINTs within 2 seconds force-exits the process; so does a repeated SIGTERM or SIGHUP.
  * - Attaches `signal` and `exitCode` to results and errors when interrupted.
  * - Cleans up the signal subscription on completion or failure.
  *

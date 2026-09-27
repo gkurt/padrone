@@ -1,7 +1,7 @@
 import { findCommandByName } from '../core/commands.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { parseCliInputToParts } from '../core/parse.ts';
-import { withDrain } from '../core/results.ts';
+import { thenMaybe, withDrain } from '../core/results.ts';
 import { createParseResolver, getKnownOptionNames } from '../core/validate.ts';
 import type {
   AnyPadroneBuilder,
@@ -14,7 +14,7 @@ import type {
 } from '../types/index.ts';
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
-import { passthroughSchema } from './utils.ts';
+import { frameworkFlags, passthroughSchema, toFlag } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -50,10 +50,10 @@ export function padroneRepl(
           })
           .async()
           .action(async (args, ctx) => {
-            const prefs: PadroneReplPreferences = { ...defaults, scope: args.scope ?? defaults?.scope };
-            const repl = ctx.program.repl(prefs);
-            const { value } = await repl.drain();
-            return value;
+            // The session uses the runtime this run was given (e.g. `cli({ runtime })`). Nothing is returned,
+            // so auto-output doesn't print the session's results when it ends
+            const prefs: PadroneReplPreferences = { ...defaults, scope: args.scope ?? defaults?.scope, runtime: ctx.runtime };
+            await ctx.program.repl(prefs).drain();
           }),
       )
       .intercept(createReplInterceptor(defaults, disabled))) as any;
@@ -68,13 +68,20 @@ function createReplInterceptor(defaults?: PadroneReplPreferences, disabled?: boo
       const program = ctx.program;
       if (!program?.repl) return next();
 
-      const prefs: PadroneReplPreferences = { ...defaults, scope: replInfo.scope ?? defaults?.scope };
+      const prefs: PadroneReplPreferences = { ...defaults, scope: replInfo.scope ?? defaults?.scope, runtime: ctx.runtime };
 
-      // Return a Promise so the pipeline awaits the REPL result
+      // Return a Promise so the pipeline awaits the REPL result (skipping execute, so auto-output doesn't print it)
       return program
         .repl(prefs)
         .drain()
         .then((r: any) => withDrain({ command: ctx.command, args: undefined, result: r.value }));
+    },
+    // `--no-repl` / `--repl=false` reach parsing: consume them
+    parse(_ctx, next) {
+      return thenMaybe(next(), (res) => {
+        frameworkFlags(res.rawArgs, res.command).delete('repl');
+        return res;
+      });
     },
   }));
 }
@@ -85,8 +92,10 @@ function checkReplFlag(input: PadroneInput | undefined, rootCommand: AnyPadroneC
 
   const skipRootName = typeof input === 'string';
   const parts = parseCliInputToParts(input, createParseResolver(rootCommand, findCommandByName, skipRootName));
-  const hasReplFlag = parts.some((p) => p.type === 'named' && p.key.length === 1 && p.key[0] === 'repl');
-  if (!hasReplFlag) return null;
+  // The last `--repl` / `--no-repl` / `--repl=false` decides
+  const replParts = parts.filter((p) => p.type === 'named' && p.key.length === 1 && p.key[0] === 'repl');
+  const last = replParts.at(-1) as { value?: unknown; negated?: boolean } | undefined;
+  if (!last || last.negated || toFlag(last.value ?? true) === false) return null;
 
   const terms = parts.filter((p) => p.type === 'term').map((p) => p.value);
   if (skipRootName && terms[0] === rootCommand.name) terms.shift();

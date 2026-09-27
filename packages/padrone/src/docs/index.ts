@@ -403,11 +403,24 @@ function generateHtmlPage(info: HelpInfo, depth: number): string {
 // ============================================================================
 
 function escapeMan(text: string): string {
-  return text.replace(/\\/g, '\\\\').replace(/-/g, '\\-').replace(/'/g, '\\(aq');
+  return (
+    text
+      .replace(/\\/g, '\\\\')
+      .replace(/-/g, '\\-')
+      .replace(/'/g, '\\(aq')
+      // A line starting with `.` would be read as a roff request
+      .replace(/(^|\n)\./g, '$1\\&.')
+  );
+}
+
+/** The command a man page documents, with the program name (`myapp deploy`), so pages don't shadow system ones (`ls.1`). */
+function manCommandName(info: HelpInfo, programName: string): string {
+  if (info.name === '<root>' || !info.name || info.name === programName) return programName;
+  return info.name.startsWith(`${programName} `) ? info.name : `${programName} ${info.name}`;
 }
 
 function generateManPage(info: HelpInfo, _depth: number, programName: string): string {
-  const commandName = info.name === '<root>' || !info.name ? programName : info.name;
+  const commandName = manCommandName(info, programName);
   const manName = commandName.replace(/\s+/g, '-');
   const lines: string[] = [];
 
@@ -679,7 +692,7 @@ export async function setupManPages(program: object): Promise<SetupManPagesResul
   for (let i = 0; i < allInfos.length; i++) {
     const info = allInfos[i]!;
     const depth = i === 0 ? 0 : info.name.split(/\s+/).length;
-    const commandName = info.name === '<root>' || !info.name ? programName : info.name;
+    const commandName = manCommandName(info, programName);
     const filename = manPageFilename(commandName);
     const fullPath = join(manDir, filename);
 
@@ -706,7 +719,7 @@ export async function removeManPages(program: object): Promise<{ dir: string; re
 
   for (let i = 0; i < allInfos.length; i++) {
     const info = allInfos[i]!;
-    const commandName = info.name === '<root>' || !info.name ? programName : info.name;
+    const commandName = manCommandName(info, programName);
     const filename = manPageFilename(commandName);
     const fullPath = join(manDir, filename);
 

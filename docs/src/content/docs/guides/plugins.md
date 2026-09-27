@@ -16,7 +16,7 @@ When you call `createPadrone('myapp')`, built-in extensions are automatically ap
 
 | Extension | What it does | Interceptor Order |
 |-----------|-------------|-------------------|
-| **help** | `--help`/`-h` flag, `help` command and `<cmd> help`, error-phase help display | -1000 |
+| **help** | `--help`/`-h` flag, `help` command and `<cmd> help`, error-phase help display | -1001.5 |
 | **version** | `--version` flag (any command), `-v`/`-V` (root), `version [--verbose]` command | -1000 |
 | **repl** | `--repl` flag, `repl` command | -1000 |
 | **color** | `--color[=always\|never\|auto\|<theme>]`/`--no-color` flag | -1001 |
@@ -46,7 +46,7 @@ Additional opt-in extensions are available for advanced features:
 | `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`) before `mutation: true` commands |
 | `padroneTiming()` | `'padrone'` | Execution timing (`--time`) |
 | `padroneUpdateCheck(config)` | `'padrone'` | Background version checking |
-| `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support |
+| `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support; `remote: 'exit'` returns an app's last frame to serve, MCP and `tool()` calls |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
 | `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing (pass `api: { context, trace }` for span parenting) |
@@ -165,8 +165,9 @@ The first argument is metadata (`name`, `order`, optional `id`). The second argu
 | `inherit` | `boolean` | When `false`, applies only to the command it's registered on (default: `true`) |
 | `options` | `Record<string, OptionArity>` | Options the interceptor reads from `rawArgs` that aren't in the command's schema, keyed by long name or single-char flag. Tells the parser whether each takes a value: `'flag'`, `'value'`, `'optional'` or `'array'` |
 | `env` | `Record<string, string \| string[]>` | Environment variables the interceptor reads into args, keyed by arg name. Shown in help as `Env: NAME` |
+| `async` | `boolean` | The interceptor may make the validate phase async (e.g. loading files). Commands it applies to count as async at runtime, so they aren't warned about returning a Promise from validation |
 
-If your interceptor reads its own flag from `rawArgs` (like the built-in `--help` or `--config`), declare it in `options` so the parser knows how to read it. For example, `options: { profile: 'value', p: 'value' }` makes `--profile dev deploy` read `dev` as the value and still route to `deploy`. The command's own schema takes precedence when both define the same name.
+If your interceptor reads its own flag from `rawArgs` (like the built-in `--help` or `--config`), declare it in `options` so the parser knows how to read it. A `flag` option given a value (`--yes=false`) arrives as that string, so treat `false`, `'false'`, `'0'`, `'no'` and `'off'` as off. For example, `options: { profile: 'value', p: 'value' }` makes `--profile dev deploy` read `dev` as the value and still route to `deploy`. The command's own schema takes precedence when both define the same name.
 
 ### Simple Interceptor Objects
 
@@ -469,8 +470,9 @@ Built-in extensions use negative orders to ensure they wrap user interceptors:
 ```
 -2000  signal        (outermost)
 -1100  autoOutput
+-1001.5 help
 -1001  color, stdin
--1000  help, version, repl
+-1000  version, repl
 -999   interactive
 -500   suggestions
   0    user interceptors (default)
@@ -602,13 +604,13 @@ const asyncInterceptor = defineInterceptor({ name: 'async' }, () => ({
 
 Understanding how built-in features are implemented helps illustrate the interceptor model:
 
-**Signal handling** (`padroneSignalHandling`, order: -2000) — The outermost interceptor. In the start phase, creates an `AbortController` and subscribes to OS signals via `runtime.onSignal()`; it also aborts when the caller's `signal` (`eval(input, { signal })`) does. Passes the signal to all downstream phases via `next({ signal })`. In the error phase, wraps errors with signal info. In shutdown, cleans up subscriptions. Implements double-tap SIGINT force-exit using closure state shared across phases.
+**Signal handling** (`padroneSignalHandling`, order: -2000) — The outermost interceptor. In the start phase, creates an `AbortController` and subscribes to OS signals via `runtime.onSignal()`; it also aborts when the caller's `signal` (`eval(input, { signal })`) does. Passes the signal to all downstream phases via `next({ signal })`. The signal is aborted with a `SignalError` as its `reason`, so `ctx.signal.throwIfAborted()` (or an aborted `fetch`) exits with the signal's code (130 for SIGINT). In the error phase, wraps errors with signal info. In shutdown, cleans up subscriptions. Implements double-tap SIGINT force-exit (and force-exit on a repeated SIGTERM/SIGHUP) using closure state shared across phases.
 
 **Auto-output** (`padroneAutoOutput`, order: -1100) — In the execute phase, intercepts the action result and writes it to `runtime.output()`. Handles promises (awaits), iterators (consumes and outputs each value), and plain values. In the error phase of `cli()`, prints the message of any error that no inner extension printed (help prints routing and validation errors), whichever phase threw it. Under JSON output (`--json`), it prints every error as `{ "error": { ... } }` on stdout instead. Extensions that print an error themselves call `markErrorReported(error)` so it isn't printed twice.
 
-**Help** (`padroneHelp`, order: -1000) — Adds a `help` command and registers an interceptor with parse, validate, execute, and error phases. The parse phase detects `--help` flags; the execute phase renders the help, so flags read later in parsing (`--no-color`, `--json`) apply. Under JSON output the help is returned as an object. The error phase formats routing/validation errors with help text in CLI mode.
+**Help** (`padroneHelp`, order: -1001.5) — Adds a `help` command and registers an interceptor with parse, validate, execute, and error phases. The parse phase detects `--help` flags; the execute phase renders the help, so flags read later in parsing (`--no-color`, `--json`) apply. Under JSON output the help is returned as an object. The error phase formats routing/validation errors with help text in CLI mode.
 
-**Config file loading** (`padroneConfig`, order: -999) — Not included by default; must be explicitly applied via `.extend(padroneConfig(...))`. In the validate phase, loads the config file from the file system (or via a custom `loadConfig` function) and merges values into `rawArgs` before schema validation.
+**Config file loading** (`padroneConfig`, order: -999.5) — Not included by default; must be explicitly applied via `.extend(padroneConfig(...))`. In the validate phase, loads the config file from the file system (or via a custom `loadConfig` function) and merges values into `rawArgs` before schema validation. Only keys the command has options for are applied (by option name, alias or kebab-case name), so one config file can serve every command; `null` means unset, nested objects are filled key by key under CLI values, and positionals typed on the command line win. It runs inside env (env values win) and outside interactive prompting (values from config aren't prompted for).
 
 **Interactive prompting** (`padroneInteractive`, order: -999) — In the validate phase, prompts for missing field values via `runtime.prompt()` and injects responses into `rawArgs` before validation.
 

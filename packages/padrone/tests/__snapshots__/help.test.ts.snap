@@ -73,7 +73,7 @@ Commands:
   [default]  
   extended   
 
-Run "list extended [command] --help" for more information on a command.
+Run "padrone-test list extended [command] --help" for more information on a command.
 
 Options:
   --status    [string]  Filter by status (choices: pending, in_progress, completed)
@@ -314,7 +314,7 @@ Commands:
   extended               
   extended <subcommand>  
 
-Run "list [command] --help" for more information on a command.
+Run "padrone-test list [command] --help" for more information on a command.
 
 Options:
   --status    [string]  Filter by status (choices: pending, in_progress, completed)
@@ -330,7 +330,7 @@ Commands:
   [default]  
   extended   
 
-Run "list extended [command] --help" for more information on a command.
+Run "padrone-test list extended [command] --help" for more information on a command.
 
 Options:
   --status    [string]  Filter by status (choices: pending, in_progress, completed)
@@ -1064,30 +1064,33 @@ exports[`help with full detail mode should generate full help with all nested co
   ],
   "builtins": [
     {
-      "name": "completion [shell]",
-      "description": "Generate shell completions (bash, zsh, fish, powershell)"
+      "name": "help [command], --help, -h",
+      "summary": "help [command]",
+      "description": "Show help for a command",
+      "sub": [
+        {
+          "name": "--all",
+          "description": "Show all global commands and flags"
+        },
+        {
+          "name": "--detail <level>",
+          "description": "Detail level (minimal, standard, full)"
+        },
+        {
+          "name": "--format <format>",
+          "description": "Output format (text, ansi, json, markdown, html)"
+        }
+      ]
     },
     {
-      "name": "man",
-      "description": "Show or install man pages (--setup to install, --remove to uninstall) (experimental)"
+      "name": "version, --version, -v, -V",
+      "summary": "version",
+      "description": "Show version information"
     },
     {
       "name": "[command] --repl",
+      "summary": "[command] --repl",
       "description": "Start interactive REPL scoped to a command"
-    },
-    {
-      "name": "mcp [http|stdio]",
-      "description": "Start a Model Context Protocol server to expose commands as AI tools (experimental)",
-      "sub": [
-        {
-          "name": "--port <port>",
-          "description": "HTTP port (default: 3000)"
-        },
-        {
-          "name": "--host <host>",
-          "description": "HTTP host (default: 127.0.0.1)"
-        }
-      ]
     },
     {
       "name": "--color [theme], --no-color",
@@ -1226,7 +1229,7 @@ Start an interactive REPL
 
 
 
-*Run "list [command] --help" for more information on a command.*
+*Run "padrone-test list [command] --help" for more information on a command.*
 
 
 
@@ -1264,7 +1267,7 @@ Start an interactive REPL
 
 
 
-*Run "list extended [command] --help" for more information on a command.*
+*Run "padrone-test list extended [command] --help" for more information on a command.*
 
 
 
@@ -1461,7 +1464,7 @@ Commands:
   extended               
   extended <subcommand>  
 
-Run "list [command] --help" for more information on a command.
+Run "padrone-test list [command] --help" for more information on a command.
 
 Options:
   --status    [string]  Filter by status (choices: pending, in_progress, completed)
@@ -1477,7 +1480,7 @@ Commands:
   [default]  
   extended   
 
-Run "list extended [command] --help" for more information on a command.
+Run "padrone-test list extended [command] --help" for more information on a command.
 
 Options:
   --status    [string]  Filter by status (choices: pending, in_progress, completed)
@@ -1500,7 +1503,7 @@ Commands:
   [default]  
   extended   
 
-Run "list extended [command] --help" for more information on a command.
+Run "padrone-test list extended [command] --help" for more information on a command.
 
 Options:
   --status    [string]  Filter by status (choices: pending, in_progress, completed)
@@ -1524,7 +1527,7 @@ exports[`help with full detail mode should work with ansi format in full detail 
   \x1B[36m\x1B[1mextended\x1B[0m               
   \x1B[36m\x1B[1mextended\x1B[0m\x1B[90m <subcommand>\x1B[0m  
 
-\x1B[90mRun "list [command] --help" for more information on a command.\x1B[0m
+\x1B[90mRun "padrone-test list [command] --help" for more information on a command.\x1B[0m
 
 \x1B[1mOptions:\x1B[0m
   \x1B[32m--status\x1B[0m    \x1B[33m[string]\x1B[0m  \x1B[2mFilter by status\x1B[0m \x1B[90m(choices: pending, in_progress, completed)\x1B[0m
@@ -1540,7 +1543,7 @@ exports[`help with full detail mode should work with ansi format in full detail 
   \x1B[90m[default]\x1B[0m  
   \x1B[36m\x1B[1mextended\x1B[0m   
 
-\x1B[90mRun "list extended [command] --help" for more information on a command.\x1B[0m
+\x1B[90mRun "padrone-test list extended [command] --help" for more information on a command.\x1B[0m
 
 \x1B[1mOptions:\x1B[0m
   \x1B[32m--status\x1B[0m    \x1B[33m[string]\x1B[0m  \x1B[2mFilter by status\x1B[0m \x1B[90m(choices: pending, in_progress, completed)\x1B[0m

@@ -1,6 +1,6 @@
 import { extractSchemaMetadata, getJsonSchema, getOptionArity, parsePositionalConfig } from '../core/args.ts';
 import { findCommandByName, getGlobalArgs } from '../core/commands.ts';
-import { getDryRunFlagKeys, parseCommand } from '../core/validate.ts';
+import { getDryRunFlagKeys, getInterceptorOptions, parseCommand } from '../core/validate.ts';
 import type { AnyPadroneCommand, PadroneFieldMeta, PadroneSchema } from '../types/index.ts';
 import type { ShellType } from '../util/shell-utils.ts';
 
@@ -92,10 +92,13 @@ export async function getCompletions(rootCommand: AnyPadroneCommand, words: read
   let command = rootCommand;
   let positionals = 0;
   let pending: CompletionField | undefined;
+  // The next word is the value of an option an extension declares (`-c file.json`, `--log-level debug`)
+  let extensionValue = false;
   let afterDoubleDash = false;
   for (const word of typed) {
-    if (pending) {
+    if (pending || extensionValue) {
       pending = undefined;
+      extensionValue = false;
       continue;
     }
     if (word === '=') continue;
@@ -104,8 +107,14 @@ export async function getCompletions(rootCommand: AnyPadroneCommand, words: read
       continue;
     }
     if (!afterDoubleDash && word.startsWith('-') && word.length > 1) {
-      const option = word.includes('=') ? undefined : findOption(commandFields(command), word);
+      if (word.includes('=')) continue;
+      const option = findOption(commandFields(command), word);
       if (option?.takesValue) pending = option;
+      else if (!option) {
+        const name = word.startsWith('--') ? word.slice(2) : word.slice(1).at(-1);
+        const arity = name ? getInterceptorOptions(command)[name] : undefined;
+        extensionValue = arity === 'value' || arity === 'array' || arity === 'variadic';
+      }
       continue;
     }
     const subcommand = positionals === 0 ? findCommandByName(word, command.commands) : undefined;
@@ -123,6 +132,8 @@ export async function getCompletions(rootCommand: AnyPadroneCommand, words: read
   const filter = (candidates: string[], prefix = current) => [...new Set(candidates)].filter((c) => c.startsWith(prefix));
 
   if (pending) return filter(await fieldValues(pending, current, rawArgs, command));
+  // No known values: the shell falls back to file names
+  if (extensionValue) return [];
   if (splitOption?.startsWith('-')) {
     return filter(await fieldValues(findOption(fields, splitOption), valuePrefix, rawArgs, command), valuePrefix);
   }
@@ -165,8 +176,26 @@ export function generateDynamicCompletion(programName: string, shell: ShellType)
 # ${programName} command completion script
 # Installation: ${programName} completion bash >> ~/.bashrc
 ${fn}() {
+  # Bash splits words at \`:\` (\`db:migrate\` → \`db\` \`:\` \`migrate\`): join them back up to the cursor
+  local words=() i word last
+  for ((i = 0; i <= COMP_CWORD; i++)); do
+    word="\${COMP_WORDS[i]}"
+    last=$((\${#words[@]} - 1))
+    if [[ $last -ge 1 && ( "$word" == ":" || "\${words[last]}" == *: ) ]]; then
+      words[last]+="$word"
+    else
+      words+=("$word")
+    fi
+  done
+  local cur="\${words[\${#words[@]} - 1]}"
   local IFS=$'\\n'
-  COMPREPLY=($(${programName} ${COMPLETE_COMMAND} "\${COMP_WORDS[@]:1:COMP_CWORD}" 2>/dev/null))
+  local candidates=($(${programName} ${COMPLETE_COMMAND} "\${words[@]:1}" 2>/dev/null))
+  # Bash replaces only the part of the word after its last \`:\`, and inserts candidates as typed: escape spaces and quotes
+  local colon_prefix=""
+  [[ "$cur" == *:* ]] && colon_prefix="\${cur%"\${cur##*:}"}"
+  COMPREPLY=()
+  local candidate
+  for candidate in "\${candidates[@]}"; do COMPREPLY+=("$(printf '%q' "\${candidate#"$colon_prefix"}")"); done
 }
 complete -o default -F ${fn} ${programName}
 ${end}`;

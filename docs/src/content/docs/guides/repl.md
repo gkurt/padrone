@@ -195,3 +195,4 @@ This adds `| ` before each line of output, creating a visual distinction.
 | `spacing` | `PadroneReplSpacing \| { before?, after? }` | none | Output separators |
 | `outputPrefix` | `string` | none | Prefix for output lines |
 | `scope` | `string` | none | Start scoped to a command path |
+| `runtime` | `Partial<PadroneRuntime>` | none | Runtime overrides for the session (`readLine`, `output`, `error`, …) |

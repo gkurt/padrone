@@ -44,6 +44,8 @@ export type PadroneReplPreferences<TScope extends string = string> = {
    * Users can change scope at runtime with `.scope <subcommand>` and `.scope ..`/`..`.
    */
   scope?: TScope;
+  /** Override runtime functions for the session (input via `readLine`, `output`, `error`, …), like `eval()`'s `runtime`. */
+  runtime?: Partial<PadroneRuntime>;
 };
 
 /**

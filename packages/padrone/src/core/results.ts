@@ -80,8 +80,17 @@ export function withPromiseDrain<T extends Promise<any>>(promise: T): T & { drai
   return promise as any;
 }
 
+/**
+ * A sync iterator such as a generator: iterable and with a `next()` method.
+ * Plain iterables (`Map`, `Set`, `Uint8Array`, …) are values, not streams.
+ */
 export function isIterator(value: unknown): value is Iterator<unknown> {
-  return typeof value === 'object' && value !== null && Symbol.iterator in value && typeof (value as any)[Symbol.iterator] === 'function';
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as any)[Symbol.iterator] === 'function' &&
+    typeof (value as any).next === 'function'
+  );
 }
 
 export function isAsyncIterator(value: unknown): value is AsyncIterator<unknown> {
@@ -220,11 +229,21 @@ export function usesInteractive(command: AnyPadroneCommand): boolean {
   return hasInteractiveConfig(command.meta) || hasInteractiveConfig(getGlobalArgs(command)?.meta);
 }
 
-/** Whether a command may validate asynchronously: marked async, or under async or interactive global args. */
+/** Whether an `async` interceptor applies to the command: its own, or an inherited one from an ancestor. */
+function hasAsyncInterceptor(command: AnyPadroneCommand): boolean {
+  for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
+    const own = current === command;
+    if (current.interceptors?.some((i) => i.meta.async && !i.meta.disabled && (own || i.meta.inherit !== false))) return true;
+  }
+  return false;
+}
+
+/** Whether a command may validate asynchronously: marked async, under async or interactive global args, or with an async interceptor. */
 export function isAsyncCommand(command: AnyPadroneCommand): boolean {
   if (command.isAsync) return true;
   const globalArgs = getGlobalArgs(command);
-  return !!globalArgs && (isAsyncBranded(globalArgs.schema) || hasInteractiveConfig(globalArgs.meta));
+  if (globalArgs && (isAsyncBranded(globalArgs.schema) || hasInteractiveConfig(globalArgs.meta))) return true;
+  return hasAsyncInterceptor(command);
 }
 
 export function warnIfUnexpectedAsync<T>(value: T, command: AnyPadroneCommand): T {

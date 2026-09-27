@@ -11,8 +11,8 @@ import type {
   PadroneAPI,
   PadroneReplPreferences,
 } from '../types/index.ts';
-import { extractSchemaMetadata, parsePositionalConfig } from './args.ts';
-import { findCommandByName, getCommandRuntime, resolveAllCommands } from './commands.ts';
+import { parsePositionalConfig } from './args.ts';
+import { findCommandByName, getCommandRuntime, resolveAllCommands, serializeArgsToFlags } from './commands.ts';
 import { RoutingError } from './errors.ts';
 import type { ExecContext } from './exec.ts';
 import { collectInterceptors, errorResultWithSignal, execCommand } from './exec.ts';
@@ -63,15 +63,6 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
     const positionalConfig = commandObj.meta?.positional ? parsePositionalConfig(commandObj.meta.positional) : [];
     const positionalNames = new Set(positionalConfig.map((p) => p.name));
 
-    // Build reverse map: arg name → first negative keyword (for stringify)
-    const negativeKeyword: Record<string, string> = {};
-    if (commandObj.argsSchema) {
-      const { negatives } = extractSchemaMetadata(commandObj.argsSchema, commandObj.meta?.fields, commandObj.meta?.autoAlias);
-      for (const [keyword, argName] of Object.entries(negatives)) {
-        if (!(argName in negativeKeyword)) negativeKeyword[argName] = keyword;
-      }
-    }
-
     if (args && typeof args === 'object') {
       for (const { name, variadic } of positionalConfig) {
         const value = (args as Record<string, unknown>)[name];
@@ -90,34 +81,10 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
         }
       }
 
-      const stringifyValue = (key: string, value: unknown) => {
-        if (value === undefined) return;
-
-        if (typeof value === 'boolean') {
-          if (value) parts.push(`--${key}`);
-          else if (negativeKeyword[key]) parts.push(`--${negativeKeyword[key]}`);
-          else parts.push(`--no-${key}`);
-        } else if (Array.isArray(value)) {
-          for (const v of value) {
-            const vStr = String(v);
-            if (vStr.includes(' ')) parts.push(`--${key}="${vStr}"`);
-            else parts.push(`--${key}=${vStr}`);
-          }
-        } else if (typeof value === 'object' && value !== null) {
-          for (const [nestedKey, nestedValue] of Object.entries(value)) {
-            stringifyValue(`${key}.${nestedKey}`, nestedValue);
-          }
-        } else if (typeof value === 'string') {
-          if (value.includes(' ')) parts.push(`--${key}="${value}"`);
-          else parts.push(`--${key}=${value}`);
-        } else {
-          parts.push(`--${key}=${value}`);
-        }
-      };
-
-      for (const [key, value] of Object.entries(args)) {
-        if (value === undefined || positionalNames.has(key)) continue;
-        stringifyValue(key, value);
+      const named = Object.fromEntries(Object.entries(args).filter(([key]) => !positionalNames.has(key)));
+      for (const token of serializeArgsToFlags(named, commandObj)) {
+        const eq = token.indexOf('=');
+        parts.push(eq !== -1 && token.includes(' ', eq) ? `${token.slice(0, eq)}="${token.slice(eq + 1)}"` : token);
       }
     }
 

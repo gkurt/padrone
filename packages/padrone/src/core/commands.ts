@@ -284,7 +284,12 @@ export function suggestSimilar(input: string, candidates: string[]): string[] {
 
   for (const candidate of candidates) {
     const candidateLower = candidate.toLowerCase();
-    if (candidateLower === lower) continue;
+    if (candidate === input) continue;
+    // Differs only in case (`Deploy` for `deploy`)
+    if (candidateLower === lower) {
+      matches.push({ candidate, score: 0 });
+      continue;
+    }
 
     const dist = levenshtein(lower, candidateLower);
     const maxLen = Math.max(input.length, candidate.length);
@@ -410,19 +415,41 @@ function buildArgsInputSchema(cmd: AnyPadroneCommand): Record<string, unknown> {
   };
 }
 
-/** Serialize a record of args into CLI flag strings. */
-export function serializeArgsToFlags(args: Record<string, unknown>): string[] {
+/** Arg name → first custom negative keyword (`negative: 'remote'`), from the command's schema and its global args. */
+export function getNegativeKeywords(cmd: AnyPadroneCommand): Record<string, string> {
+  const keywords: Record<string, string> = {};
+  const collect = (schema: PadroneSchema | undefined, meta: { fields?: any; autoAlias?: boolean } | undefined) => {
+    if (!schema) return;
+    try {
+      const { negatives } = extractSchemaMetadata(schema, meta?.fields, meta?.autoAlias);
+      for (const [keyword, argName] of Object.entries(negatives)) keywords[argName] ??= keyword;
+    } catch {}
+  };
+  collect(cmd.argsSchema, cmd.meta);
+  const globals = getGlobalArgs(cmd);
+  if (globals) collect(globals.schema, globals.meta);
+  return keywords;
+}
+
+/**
+ * Serializes args into argv tokens (`--key=value`, one per token, unquoted), for passing to `eval()` as an array:
+ * booleans become `--key` / `--no-key` (or the custom negative keyword), arrays repeat the flag, objects become `--a.b=`.
+ */
+export function serializeArgsToFlags(args: Record<string, unknown>, cmd?: AnyPadroneCommand): string[] {
+  const negatives = cmd ? getNegativeKeywords(cmd) : {};
   const parts: string[] = [];
-  for (const [key, value] of Object.entries(args)) {
-    if (value === undefined) continue;
+  const add = (key: string, value: unknown) => {
+    if (value === undefined) return;
     if (typeof value === 'boolean') {
-      parts.push(value ? `--${key}` : `--no-${key}`);
+      parts.push(value ? `--${key}` : `--${negatives[key] ?? `no-${key}`}`);
     } else if (Array.isArray(value)) {
-      for (const v of value) parts.push(`--${key}=${String(v)}`);
+      for (const v of value) parts.push(`--${key}=${typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)}`);
+    } else if (typeof value === 'object' && value !== null) {
+      for (const [nestedKey, nestedValue] of Object.entries(value)) add(`${key}.${nestedKey}`, nestedValue);
     } else {
-      const strVal = String(value);
-      parts.push(strVal.includes(' ') ? `--${key}="${strVal}"` : `--${key}=${strVal}`);
+      parts.push(`--${key}=${String(value)}`);
     }
-  }
+  };
+  for (const [key, value] of Object.entries(args)) add(key, value);
   return parts;
 }

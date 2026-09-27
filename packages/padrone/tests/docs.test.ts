@@ -227,9 +227,9 @@ describe('docs', () => {
       // Root page should be named after the program
       expect(result.written).toContain('padrone-test.1');
 
-      // Subcommand pages should use hyphenated names
-      expect(result.written).toContain('show.1');
-      expect(result.written).toContain('list.1');
+      // Subcommand pages should use hyphenated names prefixed with the program name
+      expect(result.written).toContain('padrone-test-show.1');
+      expect(result.written).toContain('padrone-test-list.1');
 
       // Files should actually exist
       for (const filename of result.written) {

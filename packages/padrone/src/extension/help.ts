@@ -130,7 +130,8 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
     {
       id: 'padrone:help',
       name: 'padrone:help',
-      order: -1000,
+      // Outside stdin (-1001), so `--help` answers without reading piped input
+      order: -1001.5,
       options: {
         ...Object.fromEntries(helpFlags.map((flag) => [flag, 'flag' as const])),
         all: 'flag',
@@ -158,10 +159,12 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
           const handle = (res: InterceptorParseResult, reverseHelp = false) => {
             const flags = frameworkFlags(res.rawArgs, res.command);
             if (options.pager && flags.has('pager')) {
-              pagerFlag = flags.get('pager') !== false;
+              pagerFlag = flags.flag('pager');
               flags.delete('pager');
             }
-            const hasHelpFlag = helpFlags.some((flag) => flags.get(flag));
+            const hasHelpFlag = helpFlags.some((flag) => flags.flag(flag));
+            // `--help=false` / `--no-help` is consumed without showing help
+            if (!hasHelpFlag) flags.delete(...helpFlags);
 
             if (hasHelpFlag || reverseHelp) {
               helpRequest = {
@@ -294,7 +297,15 @@ export function padroneHelp(options: PadroneHelpOptions = {}): <T extends Comman
             const rootCommand = getRootCommand(ctx.command);
             resolveAllCommands(rootCommand);
             const commandName = args.command?.join(' ');
-            const targetCommand = (commandName ? findCommandInTree(commandName, rootCommand) : undefined) ?? rootCommand;
+            const targetCommand = commandName ? findCommandInTree(commandName, rootCommand) : rootCommand;
+            if (!targetCommand) {
+              // Reported like a mistyped command: the deepest command that matched lists its subcommands
+              const parts = args.command ?? [];
+              let known = 0;
+              while (known < parts.length && findCommandInTree(parts.slice(0, known + 1).join(' '), rootCommand)) known++;
+              const parent = findCommandInTree(parts.slice(0, known).join(' '), rootCommand) ?? rootCommand;
+              throw new RoutingError(`Unknown command: ${parts.slice(0, known + 1).join(' ')}`, { command: parent.path || undefined });
+            }
             return renderHelp(ctx.runtime, targetCommand, {
               detail: args.detail as HelpDetail,
               format: args.format as HelpFormat,

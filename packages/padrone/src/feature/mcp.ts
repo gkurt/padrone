@@ -46,9 +46,10 @@ function toToolName(path: string): string {
   return path.replace(/\s+/g, '.');
 }
 
-/** Convert a tool name back to a command path (dot → space). */
-function toCommandPath(toolName: string): string {
-  return toolName.replace(/\./g, ' ');
+/** The root command's tool name: the program name (tool names must be 1–128 characters of `[A-Za-z0-9_.-]`). */
+function toRootToolName(programName: string, taken: Set<string>): string {
+  const name = programName.replace(/[^A-Za-z0-9_.-]+/g, '_').slice(0, 128) || 'run';
+  return taken.has(name) ? `${name}_root` : name;
 }
 
 /** Build MCP tool annotations from a command's metadata. */
@@ -61,11 +62,11 @@ function buildAnnotations(cmd: AnyPadroneCommand) {
 }
 
 /** Build an MCP tool definition from a command. */
-function buildToolDefinition(name: string, cmd: AnyPadroneCommand) {
+function buildToolDefinition(toolName: string, name: string, cmd: AnyPadroneCommand) {
   return {
-    name: toToolName(name),
+    name: toolName,
     title: cmd.title ?? undefined,
-    description: cmd.description || cmd.title || `Run the "${name}" command`,
+    description: cmd.description || cmd.title || (name ? `Run the "${name}" command` : 'Run the program'),
     inputSchema: buildInputSchema(cmd),
     annotations: buildAnnotations(cmd),
   };
@@ -80,12 +81,13 @@ export function createMcpHandler(
   const serverName = prefs?.name ?? existingCommand.name;
   const serverVersion = prefs?.version ?? existingCommand.version ?? '0.0.0';
 
-  const rootTools = collectEndpoints(existingCommand.commands, '');
+  const rootTools = collectEndpoints(existingCommand.commands, '').map((t) => ({ ...t, toolName: toToolName(t.name) }));
   if (existingCommand.action || existingCommand.argsSchema) {
-    rootTools.unshift({ name: '', command: existingCommand });
+    const taken = new Set(rootTools.map((t) => t.toolName));
+    rootTools.unshift({ name: '', command: existingCommand, toolName: toRootToolName(existingCommand.name, taken) });
   }
 
-  const toolMap = new Map(rootTools.map((t) => [toToolName(t.name), t]));
+  const toolMap = new Map(rootTools.map((t) => [t.toolName, t]));
 
   const helpToolName = 'help';
   const helpToolDef = {
@@ -102,8 +104,13 @@ export function createMcpHandler(
   // Tool calls in flight, so `notifications/cancelled` can abort them
   const inFlight = new Map<string | number, AbortController>();
 
-  /** `signal` aborts the call too, e.g. when an HTTP client disconnects. */
+  /** `signal` aborts the call too, e.g. when an HTTP client disconnects. Notifications (no `id`) get no response. */
   return async function handleRequest(req: JsonRpcRequest, signal?: AbortSignal): Promise<JsonRpcResponse | undefined> {
+    const response = await dispatch(req, signal);
+    return req.id === undefined ? undefined : response;
+  };
+
+  async function dispatch(req: JsonRpcRequest, signal?: AbortSignal): Promise<JsonRpcResponse | undefined> {
     const { id, method, params } = req;
 
     switch (method) {
@@ -131,7 +138,7 @@ export function createMcpHandler(
         return { jsonrpc: '2.0', id: id ?? null, result: {} };
 
       case 'tools/list': {
-        const tools = [...rootTools.map((t) => buildToolDefinition(t.name, t.command)), helpToolDef];
+        const tools = [...rootTools.map((t) => buildToolDefinition(t.toolName, t.name, t.command)), helpToolDef];
         return { jsonrpc: '2.0', id: id ?? null, result: { tools } };
       }
 
@@ -142,7 +149,7 @@ export function createMcpHandler(
         // Built-in help tool
         if (toolName === helpToolName) {
           const cmdName = args.command as string | undefined;
-          const targetCmd = cmdName ? rootTools.find((t) => t.name === cmdName || toToolName(t.name) === cmdName)?.command : undefined;
+          const targetCmd = cmdName ? rootTools.find((t) => t.name === cmdName || t.toolName === cmdName)?.command : undefined;
           const helpText = generateHelp(existingCommand, targetCmd ?? existingCommand, { format: 'text', detail: 'full' });
           return {
             jsonrpc: '2.0',
@@ -160,10 +167,8 @@ export function createMcpHandler(
           };
         }
 
-        // Build command string: convert tool name back to command path + serialize args as flags
-        const commandPath = toCommandPath(tool.name);
-        const argParts = serializeArgsToFlags(args);
-        const input = [commandPath, ...argParts].filter(Boolean).join(' ') || undefined;
+        // Passed as argv tokens, so values with spaces or quotes arrive intact
+        const input = [...tool.name.split('.').filter(Boolean), ...serializeArgsToFlags(args, tool.command)];
 
         const controller = new AbortController();
         const onAbort = () => controller.abort(signal?.reason);
@@ -172,7 +177,7 @@ export function createMcpHandler(
         try {
           const output: string[] = [];
           const errors: string[] = [];
-          const result = await evalCommand(input as any, {
+          const result = await evalCommand(input.length ? input : (undefined as any), {
             caller: 'mcp',
             signal: controller.signal,
             runtime: {
@@ -217,14 +222,10 @@ export function createMcpHandler(
         }
       }
 
-      default: {
-        if (id !== undefined) {
-          return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
-        }
-        return undefined;
-      }
+      default:
+        return { jsonrpc: '2.0', id: id ?? null, error: { code: -32601, message: `Method not found: ${method}` } };
     }
-  };
+  }
 }
 
 /** stdio transport: newline-delimited JSON per 2025-11-25 spec. */
@@ -270,9 +271,8 @@ async function startHttpTransport(
   const host = prefs.host ?? '127.0.0.1';
   const endpoint = prefs.basePath ?? '/mcp';
 
-  // Session management
-  let sessionId: string | undefined;
-  let negotiatedVersion: string | undefined;
+  // Session ID → negotiated protocol version, one per initialized client
+  const sessions = new Map<string, string>();
 
   const corsOrigin = prefs.cors !== false ? (prefs.cors ?? '*') : undefined;
 
@@ -291,7 +291,7 @@ async function startHttpTransport(
       return;
     }
 
-    if (req.url !== endpoint) {
+    if (new URL(req.url ?? '/', 'http://localhost').pathname !== endpoint) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Not found' }));
       return;
@@ -300,9 +300,7 @@ async function startHttpTransport(
     // DELETE: terminate session
     if (req.method === 'DELETE') {
       const reqSessionId = req.headers['mcp-session-id'] as string | undefined;
-      if (sessionId && reqSessionId === sessionId) {
-        sessionId = undefined;
-        negotiatedVersion = undefined;
+      if (reqSessionId && sessions.delete(reqSessionId)) {
         res.writeHead(200);
         res.end();
       } else {
@@ -327,7 +325,8 @@ async function startHttpTransport(
 
     // Validate session ID on non-initialize requests
     const reqSessionId = req.headers['mcp-session-id'] as string | undefined;
-    if (sessionId && reqSessionId && reqSessionId !== sessionId) {
+    const negotiatedVersion = reqSessionId ? sessions.get(reqSessionId) : undefined;
+    if (reqSessionId && !negotiatedVersion) {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid session' } }));
       return;
@@ -362,8 +361,8 @@ async function startHttpTransport(
 
     // On initialize response: create session and set header
     if (rpcRequest.method === 'initialize' && response?.result) {
-      sessionId = crypto.randomUUID();
-      negotiatedVersion = PROTOCOL_VERSION;
+      const sessionId = crypto.randomUUID();
+      sessions.set(sessionId, PROTOCOL_VERSION);
       res.setHeader('MCP-Session-Id', sessionId);
     }
 

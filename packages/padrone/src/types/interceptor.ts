@@ -174,6 +174,11 @@ export type InterceptorMeta = {
    */
   inherit?: boolean;
   /**
+   * `true` when the interceptor may make the validate phase async (e.g. loading config files), which makes the commands
+   * it applies to async at runtime. Pair it with a `WithAsync` extension type so their results are typed as promises.
+   */
+  async?: boolean;
+  /**
    * Options this interceptor reads from `rawArgs` that aren't part of the command's schema (e.g. `--help`, `--config`),
    * keyed by long name or single-character flag. Tells the parser whether each one takes a value, so that
    * `--help build` keeps `build` as a command. The command's own schema takes precedence on conflicts.

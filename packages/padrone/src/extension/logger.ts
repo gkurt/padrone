@@ -1,3 +1,4 @@
+import { ValidationError } from '#src/core/errors.ts';
 import { defineInterceptor } from '#src/core/interceptors.ts';
 import { thenMaybe } from '#src/core/results.ts';
 import type { ResolvedPadroneRuntime } from '#src/core/runtime.ts';
@@ -9,6 +10,7 @@ import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '#sr
 import { safeJsonStringify } from '#src/util/json.ts';
 import type { WithInterceptor } from '#src/util/type-utils.ts';
 import type { PadroneTracer } from './tracing.ts';
+import { toFlag } from './utils.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -184,14 +186,14 @@ function resolveCliLevel(
   rawArgs: Record<string, unknown>,
   ownOptions: ReadonlySet<string>,
   shortFlags: boolean,
-): PadroneLogLevel | undefined {
+): { level?: PadroneLogLevel; invalid?: string } {
   const take = (key: string): { value: unknown } | undefined => {
     if (!(key in rawArgs) || ownOptions.has(key)) return undefined;
     const value = rawArgs[key];
     delete rawArgs[key];
     return { value };
   };
-  const enabled = (flag: { value: unknown } | undefined) => !!flag && flag.value !== false;
+  const enabled = (flag: { value: unknown } | undefined) => !!flag && toFlag(flag.value) === true;
   // Counting flags: `--verbose` / `-v` once is 1, `-vv` is 2, `--no-verbose` is 0
   const count = (flag: { value: unknown } | undefined) =>
     !flag ? 0 : typeof flag.value === 'number' ? flag.value : flag.value === false ? 0 : Number(flag.value) || 1;
@@ -205,11 +207,12 @@ function resolveCliLevel(
   const q = shortFlags ? take('q') : undefined;
   const logLevel = take('log-level');
 
-  if (enabled(trace) || verbosity >= 2) return 'trace';
-  if (verbosity === 1 || enabled(debug)) return 'debug';
-  if (enabled(silent) || enabled(quiet) || enabled(q)) return 'silent';
-  if (typeof logLevel?.value === 'string' && VALID_LEVELS.has(logLevel.value)) return logLevel.value as PadroneLogLevel;
-  return undefined;
+  if (enabled(trace) || verbosity >= 2) return { level: 'trace' };
+  if (verbosity === 1 || enabled(debug)) return { level: 'debug' };
+  if (enabled(silent) || enabled(quiet) || enabled(q)) return { level: 'silent' };
+  if (!logLevel) return {};
+  const level = String(logLevel.value).toLowerCase();
+  return VALID_LEVELS.has(level) ? { level: level as PadroneLogLevel } : { invalid: String(logLevel.value) };
 }
 
 function createLogger(
@@ -281,10 +284,15 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
     .requires<{ tracing?: PadroneTracer; loggerConfig?: PadroneLoggerConfig }>()
     .factory(() => {
       let cliLevel: PadroneLogLevel | undefined;
+      let invalidLevel: string | undefined;
       let flagsRead = false;
       const readFlags = (rawArgs: Record<string, unknown>, command: AnyPadroneCommand) => {
         flagsRead = true;
-        cliLevel = resolveCliLevel(rawArgs, new Set(getKnownOptionNames(command)), !!rawConfig?.shortFlags);
+        ({ level: cliLevel, invalid: invalidLevel } = resolveCliLevel(
+          rawArgs,
+          new Set(getKnownOptionNames(command)),
+          !!rawConfig?.shortFlags,
+        ));
       };
 
       return {
@@ -298,6 +306,10 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
         // Registered on a command: its parse handler doesn't run
         validate(ctx, next) {
           if (!flagsRead) readFlags(ctx.rawArgs, ctx.command);
+          if (invalidLevel !== undefined) {
+            const message = `Invalid log level "${invalidLevel}". Expected one of: ${[...VALID_LEVELS].join(', ')}`;
+            throw new ValidationError(message, [{ path: ['log-level'], message }], { command: ctx.command.path || ctx.command.name });
+          }
           return next();
         },
 

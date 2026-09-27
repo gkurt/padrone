@@ -166,7 +166,7 @@ ${enumBlock}    # Complete args when current word starts with -
     # Complete commands
     COMPREPLY=($(compgen -W "$commands" -- "$cur"))
   }
-  complete -o bashdefault -o default -o nospace -F _${programName}_completion ${programName}
+  complete -o bashdefault -o default -F _${programName}_completion ${programName}
 elif type compdef &>/dev/null; then
   _${programName}_completion() {
     local si=$IFS
@@ -312,7 +312,9 @@ export function generateFishCompletion(program: AnyPadroneCommand): string {
     const valueFlag = arg.enum?.length ? ` -xa '${arg.enum.join(' ')}'` : '';
 
     if (arg.alias) {
-      lines.push(`complete -c ${programName} -l ${arg.name} -s ${arg.alias} -d '${escapedDesc}'${valueFlag}`);
+      // An alias is another long name; \`-s\` is for single-character options
+      const aliasFlag = arg.alias.length === 1 ? `-s ${arg.alias}` : `-l ${arg.alias}`;
+      lines.push(`complete -c ${programName} -l ${arg.name} ${aliasFlag} -d '${escapedDesc}'${valueFlag}`);
     } else {
       lines.push(`complete -c ${programName} -l ${arg.name} -d '${escapedDesc}'${valueFlag}`);
     }
@@ -356,7 +358,9 @@ export function generatePowerShellCompletion(program: AnyPadroneCommand): string
     enumCases.length > 0
       ? `
   # Complete option values
-  $prevWord = $commandAst.CommandElements | Select-Object -Last 2 | Select-Object -First 1
+  # The word before the one being completed (the last element when starting a new word)
+  $elements = @($commandAst.CommandElements | Where-Object { $_.Extent.EndOffset -le $cursorPosition })
+  $prevWord = if ($wordToComplete -eq '') { "$($elements[-1])" } else { "$($elements[-2])" }
   switch ($prevWord) {
 ${enumCases.join('\n')}
   }

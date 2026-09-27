@@ -381,9 +381,21 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
   if (!cmd.parent || all) {
     const builtins: HelpInfo['builtins'] = [];
 
-    if (!findCommandByName('help', rootCmd.commands)) {
+    // Built-in commands are hidden; a user's own command of the same name is listed with the other commands
+    const builtinCommand = (name: string) => {
+      const found = findCommandByName(name, rootCmd.commands);
+      const command = found && resolveCommand(found);
+      return command?.hidden ? command : undefined;
+    };
+    const hasInterceptor = (id: string) => rootCmd.interceptors?.some((i) => i.meta.id === id && !i.meta.disabled) ?? false;
+    const flagList = (names: readonly string[]) => names.map((n) => (n.length > 1 ? `--${n}` : `-${n}`)).join(', ');
+
+    const helpCommand = builtinCommand('help');
+    if (helpCommand) {
+      const flags = flagList(helpCommand.flagNames ?? []);
       builtins.push({
-        name: 'help [command], -h, --help',
+        name: `help [command]${flags ? `, ${flags}` : ''}`,
+        summary: 'help [command]',
         description: 'Show help for a command',
         sub: [
           { name: '--all', description: 'Show all global commands and flags' },
@@ -393,33 +405,35 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
       });
     }
 
-    if (!findCommandByName('version', rootCmd.commands)) {
-      builtins.push({
-        name: 'version, -v, --version',
-        description: 'Show version information',
-      });
+    const versionCommand = builtinCommand('version');
+    if (versionCommand) {
+      const flags = flagList(versionCommand.flagNames ?? []);
+      builtins.push({ name: `version${flags ? `, ${flags}` : ''}`, summary: 'version', description: 'Show version information' });
     }
 
-    if (!findCommandByName('completion', rootCmd.commands)) {
+    if (builtinCommand('completion')) {
       builtins.push({
         name: 'completion [shell]',
         description: 'Generate shell completions (bash, zsh, fish, powershell)',
       });
     }
 
-    if (!findCommandByName('man', rootCmd.commands)) {
+    if (builtinCommand('man')) {
       builtins.push({
         name: 'man',
         description: 'Show or install man pages (--setup to install, --remove to uninstall) (experimental)',
       });
     }
 
-    builtins.push({
-      name: '[command] --repl',
-      description: 'Start interactive REPL scoped to a command',
-    });
+    if (hasInterceptor('padrone:repl')) {
+      builtins.push({
+        name: '[command] --repl',
+        summary: '[command] --repl',
+        description: 'Start interactive REPL scoped to a command',
+      });
+    }
 
-    if (!findCommandByName('mcp', rootCmd.commands)) {
+    if (builtinCommand('mcp')) {
       builtins.push({
         name: 'mcp [http|stdio]',
         description: 'Start a Model Context Protocol server to expose commands as AI tools (experimental)',
@@ -430,14 +444,20 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
       });
     }
 
-    if (rootCmd.interceptors?.some((i) => i.meta.id === 'padrone:json' && !i.meta.disabled)) {
+    if (builtinCommand('serve')) {
+      builtins.push({ name: 'serve', description: 'Start a REST server that exposes commands as endpoints (experimental)' });
+    }
+
+    if (hasInterceptor('padrone:json')) {
       builtins.push({ name: '--json', description: 'Print the result, and errors, as JSON' });
     }
 
-    builtins.push({
-      name: '--color [theme], --no-color',
-      description: 'Set color theme (default, ocean, warm, monochrome) or disable colors',
-    });
+    if (hasInterceptor('padrone:color')) {
+      builtins.push({
+        name: '--color [theme], --no-color',
+        description: 'Set color theme (default, ocean, warm, monochrome) or disable colors',
+      });
+    }
 
     if (builtins.length > 0) {
       helpInfo.builtins = builtins;

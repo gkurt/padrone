@@ -986,6 +986,7 @@ for await (const result of program.repl({
   - `spacing`: Output separators (before/after command output)
   - `outputPrefix`: Prefix for output lines
   - `scope`: Start scoped to a command path (strongly typed)
+  - `runtime`: Runtime overrides for the session (`readLine`, `output`, `error`, …), like `eval()`'s `runtime`
 
 **Returns:** `AsyncIterable<PadroneCommandResult>`
 
@@ -1293,7 +1294,7 @@ The following extensions live in their own subpath imports to keep optional depe
 
 | Export | Import from | Purpose |
 |--------|-------------|---------|
-| `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support; serve, MCP and `tool()` calls get the first frame as text |
+| `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support; serve, MCP and `tool()` calls get the first frame as text, or the last frame once the app exits with `remote: 'exit'` (`remoteTimeout`, default 10s) |
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
 | `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing. Pass `api: { context, trace }` from `@opentelemetry/api` to parent child spans to the command's span |

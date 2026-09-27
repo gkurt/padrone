@@ -23,8 +23,8 @@ const interactiveInterceptor = defineInterceptor(
       let flagInteractive: boolean | undefined;
       const flags = frameworkFlags(ctx.rawArgs, ctx.command);
       for (const key of ['interactive', 'i']) {
-        const value = flags.get(key);
-        if (value !== undefined) flagInteractive = value !== false && value !== 'false';
+        const value = flags.flag(key);
+        if (value !== undefined) flagInteractive = value;
       }
       flags.delete('interactive', 'i');
 

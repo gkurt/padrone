@@ -115,6 +115,18 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
         return next();
       },
 
+      // Soft validation failures (eval, serve, MCP, tool) return issues instead of throwing
+      validate(ctx, next) {
+        return thenMaybe(next(), (res) => {
+          if (res.argsResult?.issues) {
+            const span = startRootSpan(ctx);
+            span.setStatus({ code: OTEL_ERROR, message: 'Validation failed' });
+            span.setAttribute('padrone.phase', 'validate');
+          }
+          return res;
+        });
+      },
+
       execute(ctx, next) {
         const span = startRootSpan(ctx);
         const activeTracer = getTracer(ctx.command);
@@ -186,6 +198,7 @@ function tracingInterceptor(config: ResolvedTracingConfig) {
         const span = startRootSpan(ctx);
         span.recordException(ctx.error);
         span.setStatus({ code: OTEL_ERROR });
+        span.setAttribute('padrone.phase', ctx.phase);
         return next();
       },
 

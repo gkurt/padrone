@@ -4,6 +4,7 @@ import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
 import { getKnownOptionNames } from '../core/validate.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
+import { camelToKebab } from '../util/shell-utils.ts';
 
 function formatSuggestions(names: string[], prefix = ''): string {
   if (names.length === 0) return '';
@@ -103,7 +104,12 @@ const suggestionsInterceptor = defineInterceptor({ id: 'padrone:suggestions', na
     const result = next();
     return thenMaybe(result, (v) => {
       if (!v.argsResult?.issues?.length) return v;
-      const enriched = enrichIssuesWithSuggestions(v.argsResult.issues, () => getKnownOptionNames(ctx.command));
+      // Suggested as help shows them: `--out-dir` for `outDir`, unless kebab-case aliases are turned off
+      const optionNames = () => {
+        const names = getKnownOptionNames(ctx.command);
+        return ctx.command.meta?.autoAlias === false ? names : [...new Set(names.map((name) => camelToKebab(name) ?? name))];
+      };
+      const enriched = enrichIssuesWithSuggestions(v.argsResult.issues, optionNames);
       return { ...v, argsResult: { ...v.argsResult, issues: enriched } } as typeof v;
     });
   },

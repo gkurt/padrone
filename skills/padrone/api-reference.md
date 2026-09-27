@@ -308,7 +308,11 @@ import { createPadrone, padroneConfig } from 'padrone';
 .extend(padroneConfig({ files: 'app.config.json', loadConfig: myLoader })) // custom config loader
 .extend(padroneConfig({ files: '.apprc.json', searchParents: true, packageJson: true })) // parent dirs + package.json "<program>" key
 .extend(padroneConfig({ files: 'config.json', xdg: true })) // also ~/.config/<program>/
+.extend(padroneConfig({ files: 'config.json', profiles: true })) // `profiles.<name>` via --profile, <PROGRAM>_PROFILE or a `profile` key
+.extend(padroneConfig({ command: true })) // `config get|set|unset|list|path|edit` for the user config file (JSON)
 ```
+
+`command: true` adds a `config` group (a string renames it) and makes `xdg` default to `true` and `files` to `['config.json']`. `config set <key> <value>` (dotted keys for nested values) writes the user config file; the key must be an option of the command, a subcommand or the global args (unless a schema is loose, or matches the `schema` option), and the value is coerced and validated by that option's schema. With `profiles`, the `config` subcommands take `--profile <name>`.
 
 ### `.wrap(config)` *(experimental)*
 

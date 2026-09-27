@@ -13,6 +13,8 @@ export type ConfigSearchOptions = {
   merge?: boolean;
   /** Set to `false` to not follow `extends` keys. */
   extends?: boolean;
+  /** Environment that locates the user config directory (`XDG_CONFIG_HOME`, `HOME`, `APPDATA`). Defaults to `process.env`. */
+  env?: Record<string, string | undefined>;
 };
 
 // Lazily resolved Node.js modules — cached after first import to keep loadConfig sync after initialization.
@@ -39,8 +41,7 @@ try {
 type NodeModules = { fs: typeof import('node:fs'); path: typeof import('node:path') };
 
 /** The user config directory (`program.dirs.config`); `XDG_CONFIG_HOME` is honored on every platform. */
-function getUserConfigDir(appName: string): string | undefined {
-  const env = process.env;
+function getUserConfigDir(appName: string, env: Record<string, string | undefined> = process.env): string | undefined {
   if (!env.XDG_CONFIG_HOME && !env.HOME && !env.USERPROFILE) return undefined;
   return getProgramDirs(appName, env).config;
 }
@@ -105,7 +106,7 @@ function findConfigs(
     found.push(config);
     if (!search?.merge) return found;
   }
-  const userDir = xdgAppName ? getUserConfigDir(xdgAppName) : undefined;
+  const userDir = xdgAppName ? getUserConfigDir(xdgAppName, search?.env) : undefined;
   const userConfig = userDir ? inDir(userDir) : undefined;
   if (userConfig && !found.some((f) => f.file === userConfig.file)) found.push(userConfig);
 
@@ -144,7 +145,7 @@ type BunParsers = {
   JSONC?: { parse(text: string): unknown };
 };
 
-function parseConfigText(text: string, ext: string, file: string): ConfigData {
+export function parseConfigText(text: string, ext: string, file: string): ConfigData {
   const bun = (globalThis as { Bun?: BunParsers }).Bun;
   // Anything else (`.json`, `.jsonc`, extensionless rc files) is JSON with comments and trailing commas
   const parser = ext === '.yaml' || ext === '.yml' ? bun?.YAML : ext === '.toml' ? bun?.TOML : bun?.JSONC;
@@ -160,7 +161,7 @@ function parseConfigText(text: string, ext: string, file: string): ConfigData {
 
 const SCRIPT_EXTENSIONS = new Set(['.js', '.cjs', '.mjs', '.ts', '.cts', '.mts']);
 
-function isConfigObject(value: unknown): value is ConfigData {
+export function isConfigObject(value: unknown): value is ConfigData {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
@@ -192,6 +193,27 @@ export function deepMerge(base: ConfigData, override: ConfigData): ConfigData {
     merged[key] = isConfigObject(current) && isConfigObject(value) ? deepMerge(current, value) : value;
   }
   return merged;
+}
+
+/**
+ * A config with a profile applied: `profiles.<name>` overrides the top-level values, and the `profiles` and `profile` keys
+ * are removed. `name` defaults to the config's `profile` key. Throws a `ConfigError` for an unknown profile.
+ */
+export function applyProfile(data: ConfigData, name?: string): ConfigData {
+  const { profiles, profile, ...base } = data;
+  const selected = name || (typeof profile === 'string' ? profile : undefined);
+  if (!selected) return base;
+  const values = isConfigObject(profiles) && Object.hasOwn(profiles, selected) ? profiles[selected] : undefined;
+  if (isConfigObject(values)) return deepMerge(base, values);
+  const names = isConfigObject(profiles) ? Object.keys(profiles) : [];
+  throw new ConfigError(
+    `Unknown profile "${selected}"${names.length ? `. Available profiles: ${names.join(', ')}` : ': no profiles are defined'}`,
+  );
+}
+
+/** The environment variable that selects a profile by default: `my-cli` → `MY_CLI_PROFILE`. */
+export function profileEnvVar(programName: string): string {
+  return `${programName.replace(/[^a-z0-9]+/gi, '_').toUpperCase()}_PROFILE`;
 }
 
 /** Runs `step` over `items` in order, waiting for each only when it returns a promise. */
@@ -237,18 +259,21 @@ function loadWithExtends(modules: NodeModules, found: FoundConfig, followExtends
   });
 }
 
-function loadConfigSync(
-  modules: NodeModules,
-  files: string | string[],
-  xdgAppName?: string,
-  search?: ConfigSearchOptions,
-): MaybePromise<ConfigData | undefined> {
-  const found = findConfigs(modules, process.cwd(), files, xdgAppName, search);
-  if (found.length === 0) return undefined;
-  const followExtends = search?.extends !== false;
-  return reduceMaybe(found, {} as ConfigData, (acc, config) =>
-    thenMaybe(loadWithExtends(modules, config, followExtends), (data) => deepMerge(acc, data)),
-  );
+/** A config that was loaded: its file (and `package.json` key) and its data, with `extends` resolved. */
+export type ConfigLayer = FoundConfig & { data: ConfigData };
+
+/** The configs `loadConfig` merges, lowest precedence first. Empty in non-CLI environments. */
+export function loadConfigLayers(files: string | string[], xdgAppName?: string, search?: ConfigSearchOptions): MaybePromise<ConfigLayer[]> {
+  if (typeof process === 'undefined') return [];
+  const load = () => {
+    const modules = { fs: _fs!, path: _path! };
+    const followExtends = search?.extends !== false;
+    return reduceMaybe(findConfigs(modules, process.cwd(), files, xdgAppName, search), [] as ConfigLayer[], (layers, config) =>
+      thenMaybe(loadWithExtends(modules, config, followExtends), (data) => [...layers, { ...config, data }]),
+    );
+  };
+  if (_fs && _path) return load();
+  return initNodeModules().then(load, () => []);
 }
 
 /**
@@ -261,10 +286,40 @@ export function loadConfig(
   xdgAppName?: string,
   search?: ConfigSearchOptions,
 ): MaybePromise<ConfigData | undefined> {
-  if (typeof process === 'undefined') return undefined;
-  if (_fs && _path) return loadConfigSync({ fs: _fs, path: _path }, files, xdgAppName, search);
-  return initNodeModules().then(
-    () => loadConfigSync({ fs: _fs!, path: _path! }, files, xdgAppName, search),
-    () => undefined,
+  return thenMaybe(loadConfigLayers(files, xdgAppName, search), (layers) =>
+    layers.length === 0 ? undefined : layers.reduce<ConfigData>((acc, layer) => deepMerge(acc, layer.data), {}),
   );
+}
+
+const NON_JSON_EXTENSIONS = new Set(['.yaml', '.yml', '.toml', ...SCRIPT_EXTENSIONS]);
+
+/** A file's lowercased extension (`.json`), or `''`. */
+export function configFileExtension(file: string): string {
+  return /\.[^./\\]+$/.exec(file)?.[0].toLowerCase() ?? '';
+}
+
+/** Whether a config file is read as JSON (`.json`, `.jsonc`, extensionless rc files), so it can be written back. */
+export function isJsonConfigFile(file: string): boolean {
+  return !NON_JSON_EXTENSIONS.has(configFileExtension(file));
+}
+
+/** Whether a config file is a script (`.js`, `.ts`, …) that is imported rather than parsed. */
+export function isScriptConfigFile(file: string): boolean {
+  return SCRIPT_EXTENSIONS.has(configFileExtension(file));
+}
+
+/**
+ * The user config directory and the file in it that `config set` writes: the first of `files` found there,
+ * else the first relative one that is JSON. `undefined` when the directory can't be located.
+ */
+export async function findUserConfigFile(
+  files: readonly string[],
+  appName: string,
+  env?: Record<string, string | undefined>,
+): Promise<{ dir: string; file?: string } | undefined> {
+  await initNodeModules();
+  const dir = getUserConfigDir(appName, env);
+  if (!dir) return undefined;
+  const candidates = files.filter((file) => !_path!.isAbsolute(file)).map((file) => _path!.join(dir, file));
+  return { dir, file: candidates.find((file) => _fs!.existsSync(file)) ?? candidates.find(isJsonConfigFile) };
 }

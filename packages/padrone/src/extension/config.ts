@@ -4,16 +4,25 @@ import { ConfigError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
 import { formatIssueMessages } from '../core/validate.ts';
-import type { AnyPadroneBuilder, CommandTypesBase, InterceptorValidateContext } from '../types/index.ts';
+import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, InterceptorValidateContext } from '../types/index.ts';
 import type { WithAsync } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
+import type { ConfigSource } from './config-command.ts';
+import { addConfigCommand } from './config-command.ts';
 import type { ConfigSearchOptions } from './config-loader.ts';
-import { loadConfig } from './config-loader.ts';
+import { applyProfile, loadConfig, profileEnvVar } from './config-loader.ts';
 import { frameworkFlags, valuesForCommand } from './utils.ts';
 
 export type { ConfigSearchOptions } from './config-loader.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
+
+export type PadroneConfigProfilesOptions = {
+  /** The flag that selects a profile. Defaults to `'profile'` (`--profile work`). */
+  flag?: string;
+  /** The environment variable that selects a profile. Defaults to `<PROGRAM>_PROFILE` (program `my-cli` → `MY_CLI_PROFILE`). */
+  env?: string;
+};
 
 export type PadroneConfigOptions = {
   /** Config file names to auto-detect (e.g. `['config.json', '.myapprc']`). First found is used. */
@@ -30,7 +39,7 @@ export type PadroneConfigOptions = {
    * Search for config files in the user's platform-specific config directory.
    * - `true` — use the program name as the subdirectory (e.g. program `'myapp'` → `~/.config/myapp/`).
    * - `string` — use a custom app name as the subdirectory.
-   * - `false` — disable (default).
+   * - `false` — disable (default, or `true` with `command`).
    *
    * Directories searched (after cwd):
    * - **Linux**: `$XDG_CONFIG_HOME/<app>` or `~/.config/<app>`
@@ -62,6 +71,18 @@ export type PadroneConfigOptions = {
    */
   extends?: boolean;
   /**
+   * Named sets of values, like AWS's `--profile`: `profiles: { <name>: { ... } }` in a config overrides its top-level values
+   * when selected by `--profile <name>`, the `<PROGRAM>_PROFILE` environment variable or a top-level `profile` key (in that
+   * order). `true`, or `{ flag, env }` to rename the flag and the variable. Defaults to `false`.
+   */
+  profiles?: boolean | PadroneConfigProfilesOptions;
+  /**
+   * Add a command that manages the user config file, like `git config`: `config get|set|unset|list|path|edit`.
+   * `true` names it `config`, a string names it. With it, `xdg` defaults to `true` and `files` to `['config.json']`,
+   * so what `config set` writes is loaded. Defaults to `false`.
+   */
+  command?: boolean | string;
+  /**
    * Custom config loader. When provided, replaces the built-in file system loader.
    * Useful for testing or non-CLI environments.
    */
@@ -77,6 +98,11 @@ export type PadroneConfigOptions = {
 /** Inside env (-1000), so env values win, and outside interactive (-999), so values from config aren't prompted for. */
 const CONFIG_ORDER = -999.5;
 
+const disabledInterceptor = defineInterceptor(
+  { id: 'padrone:config', name: 'padrone:config', order: CONFIG_ORDER, disabled: true },
+  () => ({}),
+);
+
 /**
  * Extension that handles config file loading, validation, and merging into command arguments.
  *
@@ -85,6 +111,8 @@ const CONFIG_ORDER = -999.5;
  * - Auto-detection of config files from a list of candidate names, optionally in parent directories (`searchParents`),
  *   in a `package.json` key (`packageJson`) and in the user config directory (`xdg`)
  * - Layered configs: `merge: true` merges every config found, and `extends` keys pull in base configs
+ * - Profiles (`profiles: true`): `--profile <name>` applies a config's `profiles.<name>` values
+ * - A `config` command (`command: true`) to get, set, list and edit the user config file
  * - Optional schema validation and transformation of config data
  * - Directly accesses the file system (gracefully no-ops in non-CLI environments)
  *
@@ -101,18 +129,50 @@ const CONFIG_ORDER = -999.5;
  * ```
  */
 export function padroneConfig(options?: PadroneConfigOptions): <T extends CommandTypesBase>(builder: T) => WithAsync<T> {
-  if (options?.disabled) {
-    const disabled = defineInterceptor({ id: 'padrone:config', name: 'padrone:config', order: CONFIG_ORDER, disabled: true }, () => ({}));
-    return ((builder: AnyPadroneBuilder) => builder.intercept(disabled)) as any;
-  }
+  if (options?.disabled) return ((builder: AnyPadroneBuilder) => builder.intercept(disabledInterceptor)) as any;
 
-  const configFiles = options?.files ? (Array.isArray(options.files) ? options.files : [options.files]) : undefined;
+  const commandName = options?.command === true ? 'config' : options?.command || undefined;
+  const configFiles = options?.files
+    ? Array.isArray(options.files)
+      ? options.files
+      : [options.files]
+    : commandName
+      ? ['config.json']
+      : undefined;
   const configSchema = options?.schema;
   const flagEnabled = options?.flag !== false;
   const inherit = options?.inherit;
-  const xdgOption = options?.xdg;
+  const xdgOption = options?.xdg ?? !!commandName;
   const packageJsonOption = options?.packageJson;
   const configLoader = options?.loadConfig ?? loadConfig;
+  const profiles = options?.profiles ? (options.profiles === true ? {} : options.profiles) : undefined;
+  const profileFlag = profiles ? (profiles.flag ?? 'profile') : undefined;
+
+  const source: ConfigSource = {
+    files: configFiles ?? [],
+    schema: configSchema,
+    loadConfig: options?.loadConfig,
+    profileFlag,
+    profileEnv: (command) => profiles?.env ?? profileEnvVar(getRootCommand(command).name),
+    locate(command: AnyPadroneCommand, env: Record<string, string | undefined>) {
+      // `true` → the root command's name, string → as-is
+      const programName = getRootCommand(command).name;
+      const xdgAppName = typeof xdgOption === 'string' ? xdgOption : xdgOption ? programName : undefined;
+      const packageJsonKey =
+        typeof packageJsonOption === 'string' ? packageJsonOption : packageJsonOption === true ? programName : undefined;
+      const searching = options?.searchParents || packageJsonKey || options?.merge || options?.extends === false || xdgAppName;
+      const search: ConfigSearchOptions | undefined = searching
+        ? {
+            parents: options?.searchParents,
+            packageJsonKey,
+            merge: options?.merge,
+            ...(options?.extends === false && { extends: false }),
+            ...(xdgAppName && { env }),
+          }
+        : undefined;
+      return { xdgAppName, search };
+    },
+  };
 
   const interceptor = defineInterceptor(
     {
@@ -120,41 +180,47 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
       name: 'padrone:config',
       order: CONFIG_ORDER,
       async: true,
-      ...(flagEnabled && { options: { config: 'value', c: 'value' } }),
+      ...((flagEnabled || profileFlag) && {
+        options: { ...(flagEnabled && { config: 'value', c: 'value' }), ...(profileFlag && { [profileFlag]: 'value' }) },
+      }),
+      ...(profileFlag && {
+        helpOptions: (command: AnyPadroneCommand) => [
+          { name: profileFlag, type: 'string', optional: true, description: 'Config profile to use', env: source.profileEnv(command) },
+        ],
+      }),
       ...(inherit === false && { inherit: false }),
     },
     () => ({
       validate(ctx: InterceptorValidateContext, next) {
+        const flags = frameworkFlags(ctx.rawArgs, ctx.command);
         // Extract --config / -c from rawArgs
         let explicitConfigPath: string | undefined;
         if (flagEnabled) {
-          const flags = frameworkFlags(ctx.rawArgs, ctx.command);
           explicitConfigPath = (flags.get('config') ?? flags.get('c')) as string | undefined;
           if (typeof explicitConfigPath === 'string') flags.delete('config', 'c');
         }
 
-        // Skip entirely when there's nothing to load
-        if (!explicitConfigPath && !configFiles && !packageJsonOption) return next();
+        let profile: string | undefined;
+        if (profileFlag) {
+          const value = flags.get(profileFlag);
+          if (value !== undefined) {
+            flags.delete(profileFlag);
+            if (typeof value !== 'string' || !value) throw new ConfigError(`--${profileFlag} needs a profile name`);
+            profile = value;
+          }
+          profile ||= ctx.runtime.env()[source.profileEnv(ctx.command)] || undefined;
+        }
 
-        // `true` → the root command's name, string → as-is
-        const programName = () => getRootCommand(ctx.command).name;
-        const xdgAppName = typeof xdgOption === 'string' ? xdgOption : xdgOption === true ? programName() : undefined;
-        const packageJsonKey =
-          typeof packageJsonOption === 'string' ? packageJsonOption : packageJsonOption === true ? programName() : undefined;
-        const search: ConfigSearchOptions | undefined =
-          options?.searchParents || packageJsonKey || options?.merge || options?.extends === false
-            ? {
-                parents: options?.searchParents,
-                packageJsonKey,
-                merge: options?.merge,
-                ...(options?.extends === false && { extends: false }),
-              }
-            : undefined;
+        // Skip entirely when there's nothing to load
+        const nothingToLoad = !explicitConfigPath && !configFiles && !packageJsonOption;
+        if (nothingToLoad && !profile) return next();
 
         // Load config data: explicit --config flag takes priority, then auto-detect
-        const configDataOrPromise = configLoader(explicitConfigPath ?? configFiles ?? [], xdgAppName, search);
+        const { xdgAppName, search } = source.locate(ctx.command, ctx.runtime.env());
+        const configDataOrPromise = nothingToLoad ? undefined : configLoader(explicitConfigPath ?? configFiles ?? [], xdgAppName, search);
 
-        const applyConfig = (configData: Record<string, unknown> | undefined) => {
+        const applyConfig = (loaded: Record<string, unknown> | undefined) => {
+          const configData = profileFlag && (loaded || profile) ? applyProfile(loaded ?? {}, profile) : loaded;
           if (!configData) return next();
 
           // Validate against schema if provided
@@ -180,5 +246,8 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
     }),
   );
 
-  return ((builder: AnyPadroneBuilder) => builder.intercept(interceptor)) as any;
+  return ((builder: AnyPadroneBuilder) => {
+    const result = builder.intercept(interceptor);
+    return commandName ? addConfigCommand(result, commandName, source, disabledInterceptor) : result;
+  }) as any;
 }

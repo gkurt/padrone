@@ -4,7 +4,7 @@ export { padroneAliases } from './aliases.ts';
 export type { PadroneAutoOutputOptions } from './auto-output.ts';
 export { padroneAutoOutput } from './auto-output.ts';
 export { padroneColor } from './color.ts';
-export type { ConfigSearchOptions, PadroneConfigOptions } from './config.ts';
+export type { ConfigSearchOptions, PadroneConfigOptions, PadroneConfigProfilesOptions } from './config.ts';
 export { padroneConfig } from './config.ts';
 export type { PadroneConfirmOptions } from './confirm.ts';
 export { padroneConfirm } from './confirm.ts';

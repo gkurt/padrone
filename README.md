@@ -101,7 +101,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 
 **Arguments** — positional args, variadic args, short flags (`-v`), long aliases (`--dry-run`), auto kebab-case aliases, negatable booleans (`--no-verbose`), custom negation keywords (`--remote` → sets `local` to `false`).
 
-**Env & Config** — load from environment variables with `.extend(padroneEnv(schema))` (or `padroneEnv({ prefix: 'MY_APP' })` for every option) and config files with `.extend(padroneConfig({ files, schema }))`. Precedence: CLI > stdin > env > config > defaults.
+**Env & Config** — load from environment variables with `.extend(padroneEnv(schema))` (or `padroneEnv({ prefix: 'MY_APP' })` for every option) and config files with `.extend(padroneConfig({ files, schema }))`, with `--profile` profiles (`profiles: true`) and a `config get|set|list|edit` command (`command: true`). Precedence: CLI > stdin > env > config > defaults.
 
 **Interactive prompts** — auto-prompt for missing fields. Booleans become confirm, enums become select, arrays become multi-select.
 
@@ -130,7 +130,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.mount(name, program, options?)` | Mount another program as subcommand tree |
 | `.configure(config)` | Set title, description, version, help customization (`help: { usage, before, after }` or `(info, ctx) => …`), etc. |
 | `.extend(padroneEnv(schema))` | Map env vars to args (composable extension) |
-| `.extend(padroneConfig({ files, schema }))` | Load args from config files, optionally layered (`merge`, `extends`) (composable extension) |
+| `.extend(padroneConfig({ files, schema }))` | Load args from config files, optionally layered (`merge`, `extends`), with `profiles` and a `config` command (`command`) (composable extension) |
 | `.wrap(config)` | Wrap an external CLI tool *(experimental)* |
 | `.extend(padroneProgress(config?))` | Auto-managed progress indicator and `progress.tasks()` task lists (extension) |
 | `.extend(padroneJson())` | `--json` flag: results and errors as JSON, `--jq` / `--template` to filter and format (extension) |

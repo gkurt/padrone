@@ -14,8 +14,8 @@ export const initSchema = z.object({
 type InitArgs = z.infer<typeof initSchema>;
 
 const packageJsonTemplate = template(`{
-  "name": "{{name}}",
-  "version": "{{version}}",
+  "name": {{name}},
+  "version": {{version}},
   "private": true,
   "type": "module",
   "module": "src/index.ts",
@@ -52,10 +52,10 @@ const tsconfigTemplate = template(`{
 const programTemplate = template(`import { createPadrone } from 'padrone'
 import * as z from 'zod/v4'
 
-const program = createPadrone('{{name}}')
+const program = createPadrone({{name}})
   .configure({
-    version: '{{version}}',
-    description: '{{description}}',
+    version: {{version}},
+    description: {{description}},
   })
   .command('hello', (cmd) => cmd
     .configure({ description: 'Say hello' })
@@ -103,7 +103,8 @@ export async function runInit(args: InitArgs, ctx: PadroneActionContext) {
     // Use fallback version
   }
 
-  const data = { name, description, version, padroneVersion };
+  // Quoted, so names and descriptions with quotes stay valid JSON and TypeScript
+  const data = { name: JSON.stringify(name), description: JSON.stringify(description), version: JSON.stringify(version), padroneVersion };
 
   const emitter = createFileEmitter({ outDir: dir });
 

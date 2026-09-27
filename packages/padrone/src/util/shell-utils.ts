@@ -76,6 +76,9 @@ export async function getRcFile(shell: ShellType, home?: string): Promise<string
   }
 }
 
+/** Quotes text as one word for a POSIX shell (`it's` → `'it'\''s'`). */
+export const shellQuote = (text: string) => `'${text.replace(/'/g, "'\\''")}'`;
+
 export function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -96,7 +99,10 @@ export async function writeToRcFile(
 
   if (existing.includes(beginMarker)) {
     const pattern = new RegExp(`${escapeRegExp(beginMarker)}[\\s\\S]*?${escapeRegExp(endMarker)}`);
-    writeFileSync(rcFile, existing.replace(pattern, snippet));
+    writeFileSync(
+      rcFile,
+      existing.replace(pattern, () => snippet),
+    );
     return { file: rcFile, updated: true };
   }
 

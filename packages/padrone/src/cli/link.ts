@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, resolve } from 'node:path';
 import * as z from 'zod/v4';
 import type { PadroneActionContext } from '../types/index.ts';
-import { detectShell, getRcFile, type ShellType, writeToRcFile } from '../util/shell-utils.ts';
+import { detectShell, getRcFile, type ShellType, shellQuote, writeToRcFile } from '../util/shell-utils.ts';
 
 export const linkSchema = z.object({
   entry: z.string().optional().describe('Entry file (auto-detected from package.json bin field)'),
@@ -195,13 +195,16 @@ function createShim(name: string, entry: string, dir: string, runPrefix?: string
   let shim: string;
   if (scriptCommand) {
     const resolvedPm = pm ?? detectPackageManager(dir);
-    const cwdFlag = resolvedPm === 'npm' ? `--prefix="${dir}"` : resolvedPm === 'pnpm' ? `--dir="${dir}"` : `--cwd="${dir}"`;
-    shim = ['#!/usr/bin/env sh', `# Linked by padrone — do not edit`, `${resolvedPm} ${cwdFlag} run ${scriptCommand} -- "$@"`, ''].join(
-      '\n',
-    );
+    const cwdFlag = `${resolvedPm === 'npm' ? '--prefix' : resolvedPm === 'pnpm' ? '--dir' : '--cwd'}=${shellQuote(dir)}`;
+    shim = [
+      '#!/usr/bin/env sh',
+      `# Linked by padrone — do not edit`,
+      `${resolvedPm} ${cwdFlag} run ${shellQuote(scriptCommand)} -- "$@"`,
+      '',
+    ].join('\n');
   } else {
     const prefix = runPrefix ?? detectRuntime(dir);
-    shim = ['#!/usr/bin/env sh', `# Linked by padrone — do not edit`, `${prefix} "${entry}" "$@"`, ''].join('\n');
+    shim = ['#!/usr/bin/env sh', `# Linked by padrone — do not edit`, `${prefix} ${shellQuote(entry)} "$@"`, ''].join('\n');
   }
 
   writeFileSync(shimPath, shim);

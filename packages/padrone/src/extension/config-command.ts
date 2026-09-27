@@ -19,7 +19,7 @@ import {
   loadConfigData,
   parseConfigText,
 } from './config-loader.ts';
-import { isLooseSchema, passthroughSchema } from './utils.ts';
+import { isLooseSchema, localOnlyInterceptor, passthroughSchema } from './utils.ts';
 
 type ConfigData = Record<string, unknown>;
 type Env = Record<string, string | undefined>;
@@ -333,6 +333,7 @@ export function addConfigCommand(
     group
       .configure({ description: 'Manage configuration', builtin: true })
       .intercept(disabledInterceptor)
+      .intercept(localOnlyInterceptor())
       .command('get', (c) =>
         c
           .configure({ description: 'Print a config value' })

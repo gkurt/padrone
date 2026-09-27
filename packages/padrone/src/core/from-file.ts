@@ -2,8 +2,8 @@ import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { isRemoteCaller } from '#src/extension/utils.ts';
 import type { AnyPadroneCommand } from '#src/types/index.ts';
 import { fileErrorReason, readTextFile } from '#src/util/files.ts';
-import { getStdinConfig, parsePositionalConfig } from './args.ts';
-import { resolveStdinAlways } from './default-runtime.ts';
+import { getStdinConfig, isAsyncStreamField, parsePositionalConfig } from './args.ts';
+import { resolveStdin, resolveStdinAlways } from './default-runtime.ts';
 import type { PadroneRuntime } from './runtime.ts';
 import { getCommandFieldRules } from './validate.ts';
 
@@ -59,10 +59,11 @@ export function readFileValues(
     .map((slot) => ({ path: [slot.field], message: 'Expected a file path after "@"' }));
   const stdinSlots = slots.filter((slot) => isStdin(slot.source));
   if (stdinSlots.length > 1) issues.push({ path: [], message: 'Only one value can be read from stdin ("-")' });
-  // The stdin field reads stdin unless given a value other than `-`
+  // The stdin field reads stdin when given `-`, or when not given and stdin is piped (a stream field reads a terminal too)
   const stdinField = getStdinConfig(command.meta)?.field;
   const stdinValue = stdinField && (rawArgs[stdinField] ?? positionalArgs[positional.indexOf(stdinField)]);
-  const stdinFieldReads = !!stdinField && (stdinValue === undefined || String(stdinValue) === '-');
+  const readsUnset = () => !!resolveStdin({ stdin: runtime.stdin }) || !!isAsyncStreamField(command.argsSchema, stdinField!);
+  const stdinFieldReads = !!stdinField && (String(stdinValue) === '-' || (stdinValue === undefined && readsUnset()));
   const otherStdinSlot = stdinSlots.find((slot) => slot.field !== stdinField);
   if (otherStdinSlot && stdinFieldReads) {
     issues.push({ path: [otherStdinSlot.field], message: `Cannot read stdin ("-"): the command reads stdin into "${stdinField}"` });

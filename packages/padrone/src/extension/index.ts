@@ -10,6 +10,8 @@ export type { PadroneConfirmOptions } from './confirm.ts';
 export { padroneConfirm } from './confirm.ts';
 export type { PadroneEnvOptions } from './env.ts';
 export { padroneEnv } from './env.ts';
+export type { PadroneFormatOptions, PadroneOutputFormat } from './format.ts';
+export { padroneFormat } from './format.ts';
 export type { HelpCommand, PadroneHelpOptions, WithHelp } from './help.ts';
 export { padroneHelp } from './help.ts';
 export { padroneInteractive } from './interactive.ts';

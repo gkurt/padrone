@@ -13,7 +13,7 @@ import type {
   InterceptorExecuteResult,
 } from '../types/index.ts';
 import { safeJsonStringify } from '../util/json.ts';
-import { getJsonOutputFilter, isErrorReported, isRemoteCaller, markErrorReported } from './utils.ts';
+import { getJsonOutputFilter, getOutputRenderer, isErrorReported, isRemoteCaller, markErrorReported } from './utils.ts';
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -144,13 +144,34 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
 
           const json = ctx.runtime.format === 'json' && TERMINAL_CALLERS.has(ctx.caller);
 
-          // `--jq` / `--template` turn each value into lines of their own
+          const writeLines = (lines: string[]) => {
+            for (const line of lines) ctx.runtime.output(line);
+          };
+
+          // `--jq` / `--template` / `--json <fields>` turn each value into lines of their own
           const filter = json ? getJsonOutputFilter(ctx.runtime) : undefined;
           if (filter) {
-            const writeLines = unlessCalled((v) => {
-              for (const line of filter(v)) ctx.runtime.output(line);
-            });
-            return outputAndCollect(value, writeLines);
+            const write = (item: boolean) => unlessCalled((v) => writeLines(filter(v, item)));
+            return outputAndCollect(value, write(false), write(true));
+          }
+
+          // A format of its own (e.g. `-o csv`): lines per value, or text when it can't render one
+          const renderer = json ? undefined : getOutputRenderer(ctx.runtime);
+          if (renderer) {
+            const write = (item: boolean) =>
+              unlessCalled((v) => {
+                const lines = renderer.render(v, item);
+                if (lines) writeLines(lines);
+                else ctx.runtime.output(v);
+              });
+            const collected = outputAndCollect(value, write(false), write(true));
+            const { end } = renderer;
+            if (!end) return collected;
+            const finish = <T>(result: T): T => {
+              if (!indicator.called) writeLines(end.call(renderer));
+              return result;
+            };
+            return collected instanceof Promise ? collected.then(finish) : finish(collected);
           }
 
           // Declarative output config: format the return value through the primitive

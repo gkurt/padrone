@@ -452,6 +452,22 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
       builtins.push({ name: '--json', description: 'Print the result, and errors, as JSON' });
     }
 
+    const formatOptions = rootCmd.interceptors?.find((i) => i.meta.id === 'padrone:format' && !i.meta.disabled)?.meta.options;
+    if (formatOptions) {
+      const names = Object.keys(formatOptions).filter((n) => formatOptions[n] === 'value' && n !== 'columns' && n !== 'sort');
+      builtins.push({
+        name: `${flagList(names)} <format>`,
+        description: 'Output format',
+        ...('columns' in formatOptions && {
+          sub: [
+            { name: '--columns <columns>', description: 'Comma-separated columns to show (table, csv, tsv)' },
+            { name: '--sort <column>', description: 'Sort rows by a column (-column for descending)' },
+            { name: '--no-header', description: 'Omit the header row' },
+          ],
+        }),
+      });
+    }
+
     if (hasInterceptor('padrone:color')) {
       builtins.push({
         name: '--color [theme], --no-color',

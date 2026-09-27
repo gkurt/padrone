@@ -180,18 +180,19 @@ export type PadroneRuntime = {
   };
   /**
    * Controls interactive prompting capability and default behavior.
-   * - `'supported'` — runtime can handle prompts; caller (flag/pref) decides whether to prompt. This is the default when `prompt` is provided.
+   * - `'supported'` — runtime can handle prompts; caller (flag/pref) decides whether to prompt.
    * - `'unsupported'` — runtime cannot handle prompts; hard veto that nothing can override.
    * - `'forced'` — runtime supports prompts and forces them by default (prompts even for provided values).
    * - `'disabled'` — runtime supports prompts but suppresses them by default.
    *
+   * Defaults to `'disabled'` in CI or when stdin or stdout isn't a terminal, else `'supported'` (also when a custom `prompt` is given).
    * `'unsupported'` is the only immutable state. For the others, the `--interactive`/`-i` flag
    * and `cli()` preferences can override the default behavior.
    */
   interactive?: InteractiveMode;
   /**
-   * Prompt the user for input. Called during `cli()` for fields marked as interactive.
-   * When `interactive` is `true` and this is not provided, defaults to an Enquirer-based terminal prompt.
+   * Prompt the user for input. Called during `cli()` / `eval()` for fields marked as interactive, and by extensions that ask
+   * (confirm, suggestions, help's `pickSubcommand`). Defaults to an Enquirer-based terminal prompt.
    */
   prompt?: (config: InteractivePromptConfig) => Promise<unknown>;
   /**

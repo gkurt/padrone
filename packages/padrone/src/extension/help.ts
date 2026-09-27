@@ -261,7 +261,7 @@ const createHelpInterceptor = (options: PadroneHelpOptions) => {
               const hasSchema = command.argsSchema != null;
               const hasUnmatchedTerms = res.positionalArgs?.length > 0 && !command.meta?.positional?.length;
               if (!command.action && (hasSubcommands || !hasSchema) && !hasUnmatchedTerms) {
-                if (canPick(command)) return pick(command, input);
+                if (canPick(command) && flags.flag('interactive') !== false) return pick(command, input);
                 showDefaultHelp = true;
               }
             }

@@ -219,7 +219,7 @@ export interface PadroneArgsSchemaMeta<TObj = Record<string, any>> {
    * - `true`: prompt for all required fields that are missing.
    * - `string[]`: prompt for these specific fields if missing.
    *
-   * Interactive prompting only occurs in `cli()` when the runtime has `interactive: true`.
+   * Prompting occurs in `cli()` and `eval()` when the runtime can prompt (`interactive` isn't `'disabled'` or `'unsupported'`, or `-i` is passed).
    * Setting this makes `parse()` and `cli()` return Promises.
    *
    * @example

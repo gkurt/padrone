@@ -77,7 +77,7 @@ function answerValue(
 
 /**
  * Prompt a single field and validate it against the schema that owns it.
- * Re-prompts with a warning until the user provides a valid value.
+ * Re-prompts with a warning until the user provides a valid value; an empty answer leaves an optional field unset.
  */
 async function promptWithValidation(
   field: string,
@@ -86,12 +86,15 @@ async function promptWithValidation(
   schema: PadroneSchema | undefined,
   runtime: ResolvedPadroneRuntime,
   propSchema: Record<string, any> | undefined,
+  optional: boolean,
 ): Promise<unknown> {
   let promptConfig = config;
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const value = answerValue(await runtime.prompt!(promptConfig), field, config, propSchema, schema);
+    const answer = await runtime.prompt!(promptConfig);
+    if (optional && answer === '') return undefined;
+    const value = answerValue(answer, field, config, propSchema, schema);
 
     if (!schema) return value;
 
@@ -181,11 +184,13 @@ export async function promptInteractiveFields(
 
   const result = { ...data };
   const isMissing = (name: string) => force || result[name] === undefined;
+  // A text answer can't fill an object (or a list of them); validation reports such fields instead
+  const isPromptable = (name: string) => jsonProperties[name]?.type !== 'object' && jsonProperties[name]?.items?.type !== 'object';
   const schemaFor = (field: string) => (globalOnly.has(field) ? globalArgs?.schema : command.argsSchema);
 
   /** Fields a config selects: `true` → every candidate, a list → the named fields. Only missing ones unless forced. */
   const select = (config: InteractiveConfig, candidates: Iterable<string>) =>
-    (config === true ? [...candidates] : Array.isArray(config) ? [...config] : []).filter(isMissing);
+    (config === true ? [...candidates] : Array.isArray(config) ? [...config] : []).filter((name) => isMissing(name) && isPromptable(name));
 
   const promptField = async (field: string) => {
     const config = detectPromptConfig(field, jsonProperties[field], fieldDescriptions[field]);
@@ -196,7 +201,8 @@ export async function promptInteractiveFields(
       // When forced, use the current value as the default
       config.default = result[field];
     }
-    result[field] = await promptWithValidation(field, config, result, schemaFor(field), runtime, jsonProperties[field]);
+    const optional = !requiredFields.has(field);
+    result[field] = await promptWithValidation(field, config, result, schemaFor(field), runtime, jsonProperties[field], optional);
   };
 
   // Prompt each required interactive field with per-field validation

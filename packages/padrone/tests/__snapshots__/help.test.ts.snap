@@ -298,6 +298,7 @@ Display the version number
 
 Options:
   --verbose  Also show the runtime, platform and shell
+  --check    Also check whether a newer version is available
 
 ────────────────────────────────────────────────────────────
 Usage: padrone-test repl [scope]
@@ -589,6 +590,14 @@ exports[`help with full detail mode should generate full help with all nested co
         {
           "name": "verbose",
           "description": "Also show the runtime, platform and shell",
+          "optional": true,
+          "type": "boolean",
+          "variadic": false,
+          "negatable": true
+        },
+        {
+          "name": "check",
+          "description": "Also check whether a newer version is available",
           "optional": true,
           "type": "boolean",
           "variadic": false,
@@ -1208,6 +1217,8 @@ Display the version number
 ### Options:
 
   \`--verbose\`  Also show the runtime, platform and shell
+
+  \`--check\`    Also check whether a newer version is available
 
 
 

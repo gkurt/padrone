@@ -12,7 +12,6 @@ import { formatIssueMessages } from '../core/validate.ts';
 import { shouldUseAnsi } from '../output/styling.ts';
 import type { AnyPadroneCommand, PadroneEvalPreferences, PadroneReplPreferences } from '../types/index.ts';
 import { getProgramDirs } from '../util/dirs.ts';
-import { getVersion } from '../util/utils.ts';
 
 export type ReplDeps = {
   existingCommand: AnyPadroneCommand;
@@ -70,7 +69,7 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
         runtime.output(options.greeting);
       } else {
         const displayName = existingCommand.title || programName;
-        const version = existingCommand.version ? await getVersion(existingCommand.version) : undefined;
+        const version = existingCommand.version;
         const greeting = version ? `Welcome to ${displayName} v${version}` : `Welcome to ${displayName}`;
         runtime.output(greeting);
       }

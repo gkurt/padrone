@@ -374,13 +374,13 @@ import { padroneUpdateCheck } from 'padrone';
   packageName?: string,     // defaults to program name
   registry?: 'npm' | string,
   interval?: string,        // '1d', '12h', '30m' (default: '1d')
-  cache?: string,           // cache file path
+  cache?: string,           // cache file path (default: update-check.json in program.dirs.cache)
   disableEnvVar?: string,   // env var to disable (default: <NAME>_NO_UPDATE_CHECK)
-  updateCommand?: string | ((packageName, latestVersion) => string), // default: `npm update -g <name>`
+  updateCommand?: string | ((packageName, latestVersion) => string), // default: `<name> upgrade` with padroneUpgrade(), else `npm update -g <name>`
 }))
 ```
 
-Non-blocking. Needs the program's `version` (`.configure({ version })`). Skipped in CI (`CI` other than `0`/`false`), when stdout isn't a TTY, with `NO_UPDATE_NOTIFIER` or `--no-update-check`. Shows the notice after command output.
+Never delays the exit: the notice uses the latest version cached by an earlier run, and a stale cache is refreshed in a detached process (in-process on Deno / Node single-executable apps). The old `~/.config/<name>-update-check.json` is moved to the new cache location. Uses the program's `version`, or the version of the package its script belongs to. `packageName`/`registry` default to `padroneUpgrade()`'s. Skipped in CI (`CI` other than `0`/`false`), when stdout isn't a TTY, with `NO_UPDATE_NOTIFIER` or `--no-update-check`. Shows the notice after command output.
 
 ### `.async()`
 

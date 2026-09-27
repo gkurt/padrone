@@ -1,4 +1,5 @@
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
+import { getProgramDirs } from '../util/dirs.ts';
 import { isCI } from '../util/utils.ts';
 
 /**
@@ -22,7 +23,7 @@ export type UpdateCheckConfig = {
   interval?: string;
   /**
    * Path to the cache file for storing the last check timestamp and latest version.
-   * Defaults to `~/.config/<programName>-update-check.json`.
+   * Defaults to `update-check.json` in the program's cache directory (`program.dirs.cache`, e.g. `~/.cache/<programName>`).
    */
   cache?: string;
   /**
@@ -161,18 +162,46 @@ async function resolveCachePath(cachePath: string): Promise<string> {
   return resolve(cachePath);
 }
 
+/** The default cache file, `update-check.json` in `program.dirs.cache`, and the one older versions wrote. */
+async function defaultCachePaths(programName: string, env: Record<string, string | undefined>) {
+  const { homedir } = await import('node:os');
+  const { join } = await import('node:path');
+  const home = env.HOME || env.USERPROFILE || homedir();
+  return {
+    cache: join(getProgramDirs(programName, { ...env, HOME: home }).cache, 'update-check.json'),
+    legacy: join(home, '.config', `${programName}-update-check.json`),
+  };
+}
+
+/** Moves the cache older versions kept in `~/.config`; an unreadable one is removed. */
+async function migrateLegacyCache(legacyPath: string, cachePath: string): Promise<CacheData | undefined> {
+  const data = await readCache(legacyPath);
+  if (data) await writeCache(cachePath, data);
+  try {
+    const { rmSync } = await import('node:fs');
+    rmSync(legacyPath, { force: true });
+  } catch {
+    // Best-effort
+  }
+  return data;
+}
+
 const FETCH_TIMEOUT_MS = 3000;
+/** A detached refresh delays nothing, so it can wait longer for a slow registry. */
+const BACKGROUND_FETCH_TIMEOUT_MS = 10_000;
+
+function registryUrl(packageName: string, registry: string, tag: string): string {
+  return registry === 'npm'
+    ? `https://registry.npmjs.org/${encodeURIComponent(packageName).replace('%40', '@')}/${encodeURIComponent(tag)}`
+    : registry;
+}
 
 /**
  * Fetches the version a dist-tag (`latest` by default, or e.g. `next`) points to on the registry.
  * Resolves `undefined` when the registry can't be reached or doesn't know the package.
  */
 export async function fetchLatestVersion(packageName: string, registry: string, tag = 'latest'): Promise<string | undefined> {
-  const url =
-    registry === 'npm'
-      ? `https://registry.npmjs.org/${encodeURIComponent(packageName).replace('%40', '@')}/${encodeURIComponent(tag)}`
-      : registry;
-
+  const url = registryUrl(packageName, registry, tag);
   try {
     // A slow registry must not keep the CLI from exiting
     const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
@@ -205,41 +234,90 @@ export function formatUpdateMessage(
 }
 
 /**
- * Checks for updates. Resolves to a function that prints the update notification
- * when a newer version is available (from the cache when it is fresh, otherwise from the registry).
+ * Fetches the version `tag` points to from `url` and records it in the cache `file`, keeping the cached one on failure.
+ * Runs in a detached process (`refreshInBackground`), so it only uses its parameters and globals.
+ */
+async function refreshCacheFile(url: string, tag: string, file: string, timeout: number): Promise<void> {
+  try {
+    const { writeFileSync } = await import('node:fs');
+    const response = await fetch(url, { signal: AbortSignal.timeout(timeout) });
+    if (!response.ok) return;
+    const data = (await response.json()) as { 'dist-tags'?: Record<string, unknown>; version?: unknown } | null;
+    const latestVersion = data?.['dist-tags']?.[tag] ?? data?.version;
+    if (typeof latestVersion === 'string') writeFileSync(file, JSON.stringify({ lastCheck: Date.now(), latestVersion }));
+  } catch {
+    // Offline, firewalled or an unknown package: checked again after the interval
+  }
+}
+
+/**
+ * Runs `refreshCacheFile` in a detached, unref'd process, like update-notifier, so a slow registry never delays the exit.
+ * Resolves `undefined` when this runtime can't run a script that way (Deno, a Node single-executable app, the browser),
+ * otherwise with a promise that settles when the process exits.
+ */
+async function refreshInBackground(args: Parameters<typeof refreshCacheFile>): Promise<{ exited: Promise<void> } | undefined> {
+  const proc = globalThis.process;
+  const executable = proc?.execPath?.split(/[\\/]/).pop() ?? '';
+  // A compiled Bun binary runs scripts as Bun with `BUN_BE_BUN`
+  if (!proc?.execPath || (!('Bun' in globalThis) && !/^node(js)?(\.exe)?$/i.test(executable))) return undefined;
+  try {
+    const { spawn } = await import('node:child_process');
+    const script = `(${refreshCacheFile.toString()})(...JSON.parse(process.argv[process.argv.length - 1]))`;
+    const child = spawn(proc.execPath, ['-e', script, JSON.stringify(args)], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: { ...proc.env, BUN_BE_BUN: '1' },
+    });
+    child.unref();
+    const exited = new Promise<void>((resolve) => {
+      child.once('exit', () => resolve());
+      child.once('error', () => resolve());
+    });
+    return { exited };
+  } catch {
+    return undefined;
+  }
+}
+
+/** A started update check: `notify` prints the notice, `refresh` settles once the cache is refreshed (if it was stale). */
+export type UpdateCheck = { notify: () => void; refresh: Promise<void> };
+
+/**
+ * Checks for updates without waiting for the registry: `notify` uses the cached latest version, and a stale cache is
+ * refreshed in the background for the next run.
  */
 export async function createUpdateChecker(
   programName: string,
   currentVersion: string,
   config: UpdateCheckConfig,
   runtime: ResolvedPadroneRuntime,
-): Promise<() => void> {
+): Promise<UpdateCheck> {
   const packageName = config.packageName ?? programName;
-  const registry = config.registry ?? 'npm';
   const intervalMs = parseInterval(config.interval ?? '1d');
   const disableEnvVar = config.disableEnvVar ?? `${programName.toUpperCase().replace(/-/g, '_')}_NO_UPDATE_CHECK`;
+  const skipped: UpdateCheck = { notify: noop, refresh: Promise.resolve() };
 
-  // Check if disabled
   const env = runtime.env();
-  if (isCI(env) || env.NO_UPDATE_NOTIFIER) return noop;
-  if (env[disableEnvVar]) return noop;
-  if (runtime.terminal && !runtime.terminal.isTTY) return noop;
+  if (isCI(env) || env.NO_UPDATE_NOTIFIER || env[disableEnvVar]) return skipped;
+  if (runtime.terminal && !runtime.terminal.isTTY) return skipped;
 
-  const defaultCachePath = `~/.config/${programName}-update-check.json`;
-  const cachePath = await resolveCachePath(config.cache ?? defaultCachePath);
-  const notifier = (latestVersion: string | undefined) =>
-    latestVersion && isNewerVersion(currentVersion, latestVersion)
-      ? () => runtime.error(formatUpdateMessage(currentVersion, latestVersion, packageName, config.updateCommand))
+  const defaults = config.cache ? undefined : await defaultCachePaths(programName, env);
+  const cachePath = defaults?.cache ?? (await resolveCachePath(config.cache!));
+  const cached = (await readCache(cachePath)) ?? (defaults && (await migrateLegacyCache(defaults.legacy, cachePath)));
+  const latest = cached?.latestVersion;
+  const notify =
+    latest && isNewerVersion(currentVersion, latest)
+      ? () => runtime.error(formatUpdateMessage(currentVersion, latest, packageName, config.updateCommand))
       : noop;
+  if (cached && Date.now() - cached.lastCheck < intervalMs) return { notify, refresh: skipped.refresh };
 
-  // Checked recently: use the cached version
-  const cached = await readCache(cachePath);
-  if (cached && Date.now() - cached.lastCheck < intervalMs) return notifier(cached.latestVersion);
-
-  // A failed check is cached too, so an offline machine doesn't wait for the registry on every run
-  const latestVersion = await fetchLatestVersion(packageName, registry);
-  await writeCache(cachePath, { lastCheck: Date.now(), latestVersion: latestVersion ?? cached?.latestVersion ?? '' });
-  return notifier(latestVersion ?? cached?.latestVersion);
+  // Recorded before checking, so runs in the meantime don't check too; a failed check waits for the next interval
+  await writeCache(cachePath, { lastCheck: Date.now(), latestVersion: latest ?? '' });
+  const url = registryUrl(packageName, config.registry ?? 'npm', 'latest');
+  const background = await refreshInBackground([url, 'latest', cachePath, BACKGROUND_FETCH_TIMEOUT_MS]);
+  const refresh = background?.exited ?? refreshCacheFile(url, 'latest', cachePath, FETCH_TIMEOUT_MS);
+  return { notify, refresh };
 }
 
 function noop() {}

@@ -7,7 +7,7 @@ import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneCom
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
 import { getRootCommand, getVersion } from '../util/utils.ts';
-import { frameworkFlags, passthroughSchema } from './utils.ts';
+import { frameworkFlags, isRemoteCaller, passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -22,12 +22,27 @@ export type PadroneVersionInfo = {
   [key: string]: string | undefined;
 };
 
-/** The version, or with `--verbose` the version info: text, or an object under JSON output (e.g. `--json`). */
+/** What `version --check` returns under JSON output: the name and version (or the `--verbose` info) and the latest version. */
+export type PadroneVersionCheck = {
+  name: string;
+  version: string;
+  /** The registry's latest version; left out when the registry couldn't be reached. */
+  latest?: string;
+  updateAvailable: boolean;
+  [key: string]: string | boolean | undefined;
+};
+
+type VersionResult = string | PadroneVersionInfo | PadroneVersionCheck;
+
+/**
+ * The version, or with `--verbose` the version info, and with `--check` a notice when a newer version exists:
+ * text, or an object under JSON output (e.g. `--json`).
+ */
 export type VersionCommand = PadroneCommand<
   'version',
   '',
-  PadroneSchema<{ verbose?: boolean }>,
-  string | PadroneVersionInfo | Promise<string | PadroneVersionInfo>,
+  PadroneSchema<{ verbose?: boolean; check?: boolean }>,
+  VersionResult | Promise<VersionResult>,
   [],
   [],
   false
@@ -130,8 +145,10 @@ const createVersionInterceptor = (versionFlags: readonly string[]) =>
           for (const [key, value] of Object.entries(res.rawArgs)) {
             if (flags.has(key) && extensionOptions.has(key) && !versionFlags.includes(key)) rawArgs[key] = value;
           }
-          const verbose = flags.get('verbose');
-          if (verbose !== undefined) rawArgs.verbose = verbose;
+          for (const key of ['verbose', 'check']) {
+            const value = flags.get(key);
+            if (value !== undefined) rawArgs[key] = value;
+          }
           return { ...res, command: versionCmd, rawArgs, positionalArgs: [] };
         });
       },
@@ -142,7 +159,10 @@ const createVersionInterceptor = (versionFlags: readonly string[]) =>
 
 /**
  * Extension that adds version support:
- * - `version` command; `version --verbose` also shows the runtime, platform, architecture and shell
+ * - `version` command; `version --verbose` also shows the runtime, platform, architecture and shell; `version --check`
+ *   adds a notice when the registry has a newer version (with `padroneUpdateCheck()`'s or `padroneUpgrade()`'s package
+ *   and registry, npm otherwise; not for remote callers)
+ * - Without a configured `version`, the version of the package the program's script belongs to
  * - `--version` on any command, and `-v` / `-V` on the root command (configurable with `flags`)
  *
  * Usage:
@@ -160,16 +180,35 @@ export function padroneVersion(options: PadroneVersionOptions = {}): <T extends 
             hidden: true,
             flagNames: options.flags ?? DEFAULT_VERSION_FLAGS,
           } as PadroneCommandConfig)
-          .arguments(passthroughSchema({ verbose: { type: 'boolean', description: 'Also show the runtime, platform and shell' } }))
+          .arguments(
+            passthroughSchema({
+              verbose: { type: 'boolean', description: 'Also show the runtime, platform and shell' },
+              check: { type: 'boolean', description: 'Also check whether a newer version is available' },
+            }),
+          )
           .action((args, ctx) => {
             const rootCommand = getRootCommand(ctx.command);
             const version = getVersion(rootCommand.version);
-            if (!args.verbose) return version;
+            // Remote requests never make the program reach out to the registry
+            const check = args.check && !isRemoteCaller(ctx.caller);
+            if (!args.verbose && !check) return version;
+            const json = ctx.runtime.format === 'json';
             return thenMaybe(version, (resolved) =>
-              thenMaybe(options.info?.(rootCommand), (extra) => {
-                const info = versionInfo(rootCommand, resolved, ctx.runtime, extra);
-                return ctx.runtime.format === 'json' ? info : formatVersionInfo(info);
-              }),
+              thenMaybe<Record<string, string | undefined> | undefined, VersionResult>(
+                args.verbose ? options.info?.(rootCommand) : undefined,
+                (extra) => {
+                  const info = args.verbose ? versionInfo(rootCommand, resolved, ctx.runtime, extra) : undefined;
+                  const text = info ? formatVersionInfo(info) : resolved;
+                  if (!check) return json ? info! : text;
+                  return import('./update-check.ts')
+                    .then(({ checkForUpdate }) => checkForUpdate(rootCommand, resolved))
+                    .then(({ latest, updateAvailable, message }) => {
+                      if (!latest) ctx.runtime.error("Couldn't check for updates");
+                      if (!json) return message ? `${text}\n${message}` : text;
+                      return { ...(info ?? { name: rootCommand.name, version: resolved }), ...(latest && { latest }), updateAvailable };
+                    });
+                },
+              ),
             );
           }),
       )

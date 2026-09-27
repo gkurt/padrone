@@ -17,7 +17,7 @@ When you call `createPadrone('myapp')`, built-in extensions are automatically ap
 | Extension | What it does | Interceptor Order |
 |-----------|-------------|-------------------|
 | **help** | `--help`/`-h` flag, `help` command and `<cmd> help`, error-phase help display | -1001.5 |
-| **version** | `--version` flag (any command), `-v`/`-V` (root), `version [--verbose]` command | -1000 |
+| **version** | `--version` flag (any command), `-v`/`-V` (root), `version [--verbose] [--check]` command | -1000 |
 | **repl** | `--repl` flag, `repl` command | -1000 |
 | **color** | `--color[=always\|never\|auto\|<theme>]`/`--no-color` flag | -1001 |
 | **suggestions** | "Did you mean?" for unknown commands/options | -500 |
@@ -46,8 +46,8 @@ Additional opt-in extensions are available for advanced features:
 | `padroneFormat(options?)` | `'padrone'` | `--output`/`-o <format>`: text, json, yaml, csv, tsv or table; `tableFlags` adds `--columns`, `--sort`, `--no-header` |
 | `padroneConfirm(options?)` | `'padrone'` | Confirmation prompt (or `--yes`, or `<PROGRAM>_YES=1`) before `mutation: true` commands |
 | `padroneTiming()` | `'padrone'` | Execution timing (`--time`; `Done in …` / `Failed after …`, `format` option) |
-| `padroneUpdateCheck(config)` | `'padrone'` | Background version checking |
-| `padroneUpgrade(options?)` | `'padrone'` | Self-update command (`upgrade`, `--check`, `--to`, `--channel`) using the package manager the program was installed with |
+| `padroneUpdateCheck(config)` | `'padrone'` | Background version checking (notice from the cached latest version; a stale cache refreshes in a detached process, so exit is never delayed) |
+| `padroneUpgrade(options?)` | `'padrone'` | Self-update command (`upgrade`, `--check`, `--exit-code`, `--to`, `--channel`; asks `padroneConfirm()` only when there is something to install) using the package manager the program was installed with |
 | `padroneAliases(options?)` | `'padrone'` | User-defined command aliases (`alias set co checkout --force`, `$1`/`$@` placeholders), expanded before routing |
 | `padroneResponseFiles(options?)` | `'padrone'` | Response files: `my-cli @args.txt` reads arguments from `args.txt` (`@@` escapes a leading `@`) |
 | `padroneInk()` | `'padrone/ink'` | React (Ink) rendering support; `remote: 'exit'` returns an app's last frame to serve, MCP and `tool()` calls |

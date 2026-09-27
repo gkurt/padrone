@@ -1,17 +1,52 @@
 import { thenMaybe } from '#src/core/results.ts';
 import type { ResolvedPadroneRuntime } from '#src/core/runtime.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
-import type { UpdateCheckConfig } from '../feature/update-check.ts';
+import { fetchLatestVersion, formatUpdateMessage, isNewerVersion, type UpdateCheckConfig } from '../feature/update-check.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
-import { getRootCommand } from '../util/utils.ts';
-import { isUpgradeCommand } from './upgrade.ts';
+import { getRootCommand, readScriptVersion } from '../util/utils.ts';
+import { getUpgradeConfig, isUpgradeCommand } from './upgrade.ts';
 import { frameworkFlags } from './utils.ts';
+
+const UPDATE_CHECK_ID = 'padrone:update-check';
+const configs = new WeakMap<object, UpdateCheckConfig>();
+
+/**
+ * Where to look for updates: `padroneUpdateCheck()`'s settings, then `padroneUpgrade()`'s (whose command is the suggested
+ * update command), then the npm registry with the program name.
+ */
+function updateSettings(
+  root: AnyPadroneCommand,
+  config = configs.get(root.interceptors?.findLast((interceptor) => interceptor.meta.id === UPDATE_CHECK_ID)?.factory ?? {}) ?? {},
+): UpdateCheckConfig & { packageName: string; registry: string } {
+  const upgrade = getUpgradeConfig(root);
+  return {
+    ...config,
+    packageName: config.packageName ?? upgrade?.packageName ?? root.name,
+    registry: config.registry ?? upgrade?.registry ?? 'npm',
+    updateCommand: config.updateCommand ?? (upgrade && `${root.name} ${upgrade.command}`),
+  };
+}
+
+/** Asks the registry for the latest version of the program, as `version --check` does. */
+export async function checkForUpdate(
+  root: AnyPadroneCommand,
+  current: string,
+): Promise<{ latest?: string; updateAvailable: boolean; message?: string }> {
+  const settings = updateSettings(root);
+  const latest = await fetchLatestVersion(settings.packageName, settings.registry);
+  if (!latest || !isNewerVersion(current, latest)) return { latest, updateAvailable: false };
+  return {
+    latest,
+    updateAvailable: true,
+    message: formatUpdateMessage(current, latest, settings.packageName, settings.updateCommand).trimEnd(),
+  };
+}
 
 // ── Interceptor ─────────────────────────────────────────────────────────
 
 function createUpdateCheckInterceptor(config: UpdateCheckConfig) {
-  return defineInterceptor(
-    { id: 'padrone:update-check', name: 'padrone:update-check', order: 1000, options: { 'update-check': 'flag' } },
+  const interceptor = defineInterceptor(
+    { id: UPDATE_CHECK_ID, name: UPDATE_CHECK_ID, order: 1000, options: { 'update-check': 'flag' } },
     () => {
       let check: Promise<(() => void) | undefined> | undefined;
       let flagsRead = false;
@@ -28,14 +63,13 @@ function createUpdateCheckInterceptor(config: UpdateCheckConfig) {
         // Only people running the CLI see the notice, never right after upgrading; `--no-update-check` skips the request too
         if (suppressed || ctx.caller !== 'cli' || isUpgradeCommand(command)) return;
 
-        // Without a configured version, the fallbacks (`npm_package_version`, `./package.json`) describe the project in the
-        // working directory, not this program
         const rootCommand = getRootCommand(command);
-        const currentVersion = rootCommand.version;
-        if (!currentVersion) return;
         const runtime = ctx.runtime;
-        check = import('../feature/update-check.ts')
-          .then(({ createUpdateChecker }) => createUpdateChecker(rootCommand.name, currentVersion, config, runtime))
+        check = Promise.all([rootCommand.version ?? readScriptVersion(), import('../feature/update-check.ts')])
+          .then(([version, { createUpdateChecker }]) =>
+            version ? createUpdateChecker(rootCommand.name, version, updateSettings(rootCommand, config), runtime) : undefined,
+          )
+          .then((started) => started?.notify)
           .catch(() => undefined);
       };
 
@@ -52,7 +86,7 @@ function createUpdateCheckInterceptor(config: UpdateCheckConfig) {
           return next();
         },
         shutdown(_ctx, next) {
-          // Printed once the check settles, after the command's own output, without holding up the result
+          // Printed after the command's own output; the check only reads the cache, so it settles right away
           return thenMaybe(next(), () => {
             check?.then((notify) => notify?.());
           });
@@ -60,16 +94,19 @@ function createUpdateCheckInterceptor(config: UpdateCheckConfig) {
       };
     },
   );
+  configs.set(interceptor, config);
+  return interceptor;
 }
 
 // ── Extension ────────────────────────────────────────────────────────────
 
 /**
- * Extension that adds background update checking:
- * - Checks for newer versions on npm (or custom registry) in the background
- * - Shows an update notification after command execution
- * - Respects `--no-update-check` flag to suppress
- * - Needs the program's `version` (`.configure({ version })`); without one nothing is checked
+ * Extension that adds background update checking, like update-notifier:
+ * - Shows an update notice after the command, from the latest version cached by an earlier run
+ * - Refreshes a stale cache (`interval`) in a detached process, so a slow registry never delays the exit
+ * - Respects `--no-update-check`, `NO_UPDATE_NOTIFIER`, CI and non-TTY output
+ * - Uses the program's `version`, or that of the package its script belongs to; without one nothing is checked
+ * - Suggests `<program> upgrade` when `padroneUpgrade()` is registered
  *
  * Usage:
  * ```ts

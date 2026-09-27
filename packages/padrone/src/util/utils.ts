@@ -12,46 +12,35 @@ export function isCI(env: Record<string, string | undefined>): boolean {
   return on(env.CI) || on(env.CONTINUOUS_INTEGRATION);
 }
 
-async function readVersionFromPackageJson(): Promise<string> {
+/**
+ * The version of the package the running script belongs to: walks up from the script path (`process.argv[1]`, symlinks
+ * resolved) to the nearest `package.json` with a `name`. Never the working directory, which is the user's project.
+ * Resolves `undefined` without a script on disk (a compiled binary, the browser).
+ */
+export async function readScriptVersion(scriptPath: string | undefined = globalThis.process?.argv?.[1]): Promise<string | undefined> {
+  if (!scriptPath) return undefined;
   try {
     const fs = await import('node:fs');
     const path = await import('node:path');
-    let dir = process.cwd();
-
-    // Walk up the directory tree looking for package.json
-    for (let i = 0; i < 10; i++) {
-      const pkgPath = path.join(dir, 'package.json');
-      if (fs.existsSync(pkgPath)) {
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-        if (pkg.version) return pkg.version;
-      }
-      const parentDir = path.dirname(dir);
-      if (parentDir === dir) break; // Reached root
-      dir = parentDir;
+    let dir = path.dirname(fs.realpathSync(scriptPath));
+    while (true) {
+      const file = path.join(dir, 'package.json');
+      const pkg = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf-8')) as { name?: unknown; version?: unknown }) : undefined;
+      if (typeof pkg?.name === 'string') return typeof pkg.version === 'string' ? pkg.version : undefined;
+      const parent = path.dirname(dir);
+      if (parent === dir) return undefined;
+      dir = parent;
     }
   } catch {
-    // Ignore errors (e.g., fs not available in browser)
+    return undefined;
   }
-  return '0.0.0';
 }
 
 /**
- * Attempts to get the version from various sources:
- * 1. Explicit version set on the command
- * 2. npm_package_version environment variable (set by npm/yarn/pnpm when running scripts)
- * 3. package.json in current or parent directories
- *
- * Returns synchronously when an explicit version or env var is available.
- * Falls back to async package.json discovery otherwise.
+ * The program's version: the configured one (`.configure({ version })`), otherwise that of the package its script belongs
+ * to (`readScriptVersion`), otherwise `'0.0.0'`. Synchronous when a version is configured.
  */
 export function getVersion(explicitVersion?: string): string | Promise<string> {
   if (explicitVersion) return explicitVersion;
-
-  if (typeof process !== 'undefined' && process.env?.npm_package_version) {
-    return process.env.npm_package_version;
-  }
-
-  if (typeof process !== 'undefined') return readVersionFromPackageJson();
-
-  return '0.0.0';
+  return readScriptVersion().then((version) => version ?? '0.0.0');
 }

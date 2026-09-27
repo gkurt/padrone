@@ -116,35 +116,43 @@ async function spawnCommand(command: readonly string[]): Promise<number> {
   });
 }
 
-/** Marks the upgrade command, so `padroneUpdateCheck()` doesn't suggest upgrading right after it ran. */
+/** On the upgrade command, so `padroneUpdateCheck()` doesn't suggest upgrading right after it ran. */
 const UPGRADE_ID = 'padrone:upgrade';
-const upgradeMarker = defineInterceptor({ id: UPGRADE_ID, name: UPGRADE_ID }, () => ({}));
+/** On the program, so `padroneUpdateCheck()` and `version --check` find the command and package without loading it. */
+const UPGRADE_CONFIG_ID = 'padrone:upgrade-config';
 
 /** Whether `command` is the one `padroneUpgrade()` adds. */
 export function isUpgradeCommand(command: AnyPadroneCommand): boolean {
   return !!command.interceptors?.some((interceptor) => interceptor.meta.id === UPGRADE_ID);
 }
 
-type UpgradeArgs = { check?: boolean; to?: string; channel?: string; force?: boolean };
+type UpgradeConfig = { command: string; packageName?: string; registry?: string };
+const upgradeConfigs = new WeakMap<object, UpgradeConfig>();
 
-/** `upgrade --check` only reads, so `padroneConfirm()` doesn't ask first. */
-export function isUpgradeCheck(command: AnyPadroneCommand, args: unknown): boolean {
-  return isUpgradeCommand(command) && !!(args as UpgradeArgs | undefined)?.check;
+/** The command name, package and registry of the `padroneUpgrade()` registered on `root`. */
+export function getUpgradeConfig(root: AnyPadroneCommand): UpgradeConfig | undefined {
+  const registered = root.interceptors?.findLast((interceptor) => interceptor.meta.id === UPGRADE_CONFIG_ID);
+  return registered && upgradeConfigs.get(registered.factory);
 }
 
-const checkMessage = (p: { upToDate: boolean; packageName: string; current: string; version: string }) =>
-  p.upToDate ? `${p.packageName} is up to date (${p.current})` : `Update available: ${p.current} → ${p.version}`;
+type UpgradeArgs = { check?: boolean; exitCode?: boolean; to?: string; channel?: string; force?: boolean };
+type Plan = PadroneUpgradePlan & { upToDate: boolean; pinned: boolean };
+
+/** The exit code of `upgrade --check --exit-code` when a newer version exists, like `npm outdated`. */
+const UPDATE_AVAILABLE_EXIT_CODE = 1;
 
 // ── Extension ────────────────────────────────────────────────────────────
 
 /**
  * Extension that adds a self-update command, like oclif's plugin-update or cliffy's `UpgradeCommand`:
  * - `my-cli upgrade` installs the latest version with the package manager it was installed with
- * - `--check` only reports whether a newer version exists; `--to 2.1.0` installs a given version (also a downgrade);
- *   `--channel next` follows another dist-tag; `--force` reinstalls when up to date
- * - `--dry-run` shows the command without running it; the command is a `mutation`, so `padroneConfirm()` asks first
+ * - `--check` only reports whether a newer version exists, and with `--exit-code` exits with 1 when one does;
+ *   `--to 2.1.0` installs a given version (also a downgrade); `--channel next` follows another dist-tag;
+ *   `--force` reinstalls when up to date
+ * - `--dry-run` shows the command without running it; the command is a `mutation`, so `padroneConfirm()` asks first,
+ *   once the registry says there's something to install
  *
- * Pairs with `padroneUpdateCheck({ updateCommand: 'my-cli upgrade' })`.
+ * `padroneUpdateCheck()` suggests running it in its notice.
  *
  * ```ts
  * createPadrone('my-cli').extend(padroneUpgrade({ packageName: '@acme/my-cli' }))
@@ -152,9 +160,9 @@ const checkMessage = (p: { upToDate: boolean; packageName: string; current: stri
  */
 export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends CommandTypesBase>(builder: T) => T {
   const exec = options.exec ?? spawnCommand;
+  const commandName = options.command ?? 'upgrade';
 
-  /** Resolves what to install, or a message when there's nothing to do. */
-  const plan = async (args: UpgradeArgs, command: AnyPadroneCommand, runtime: ResolvedPadroneRuntime) => {
+  const plan = async (args: UpgradeArgs, command: AnyPadroneCommand, runtime: ResolvedPadroneRuntime): Promise<Plan> => {
     const root = getRootCommand(command);
     const packageName = options.packageName ?? root.name;
     const current = await getVersion(root.version);
@@ -171,19 +179,61 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
     return { packageName, current, version, upToDate, runtime, pinned: !!args.to || channel !== 'latest' };
   };
 
-  const describe = async (installer: PadroneUpgradeOptions['installer'], p: { packageName: string; version: string; pinned: boolean }) =>
+  /** The plan, with the message to return instead when there's nothing to install (`--check`, up to date). */
+  const decide = async (args: UpgradeArgs, command: AnyPadroneCommand, runtime: ResolvedPadroneRuntime) => {
+    const p = await plan(args, command, runtime);
+    const upToDate = `${p.packageName} is up to date (${p.current})`;
+    if (args.check || args.exitCode) return { plan: p, message: p.upToDate ? upToDate : `Update available: ${p.current} → ${p.version}` };
+    return { plan: p, message: p.upToDate && !args.force ? upToDate : undefined };
+  };
+
+  const describe = async (installer: PadroneUpgradeOptions['installer'], p: Plan) =>
     typeof installer === 'function'
       ? undefined
       : installerCommand(installer ?? detectInstaller(await installPaths()), p.packageName, p.version, options.brewFormula, p.pinned);
 
+  /** Plans decided by the interceptor, so the action doesn't ask the registry again. */
+  const plans = new WeakMap<object, Plan>();
+
+  // Checks before `padroneConfirm()` (order -998) asks, so it only asks when there's something to install
+  const planner = defineInterceptor({ id: UPGRADE_ID, name: UPGRADE_ID, order: -999 }, () => {
+    let exitCode: number | undefined;
+    return {
+      async execute(ctx, next) {
+        const args = ctx.args as UpgradeArgs;
+        const { plan: p, message } = await decide(args, ctx.command, ctx.runtime);
+        if (message === undefined) {
+          plans.set(args, p);
+          return next();
+        }
+        if (args.exitCode && !p.upToDate) exitCode = UPDATE_AVAILABLE_EXIT_CODE;
+        return { result: message };
+      },
+      shutdown(ctx, next) {
+        if (exitCode && ctx.result && typeof ctx.result === 'object') (ctx.result as { exitCode?: number }).exitCode = exitCode;
+        return next();
+      },
+    };
+  });
+
+  /** The plan for the action; `run()` without the interceptor chain still gets the message. */
+  const resolvePlan = async (args: UpgradeArgs, command: AnyPadroneCommand, runtime: ResolvedPadroneRuntime) => {
+    const planned = plans.get(args);
+    return planned ? { plan: planned, message: undefined } : decide(args, command, runtime);
+  };
+
+  const configMarker = defineInterceptor({ id: UPGRADE_CONFIG_ID, name: UPGRADE_CONFIG_ID }, () => ({}));
+  upgradeConfigs.set(configMarker, { command: commandName, packageName: options.packageName, registry: options.registry });
+
   return ((builder: AnyPadroneBuilder) =>
-    builder.command(options.command ?? 'upgrade', (c) =>
+    builder.intercept(configMarker).command(commandName, (c) =>
       c
         .configure({ description: 'Upgrade to the latest version', mutation: true })
-        .intercept(upgradeMarker)
+        .intercept(planner)
         .arguments(
           passthroughSchema({
             check: { type: 'boolean', description: 'Only check whether a newer version is available' },
+            exitCode: { type: 'boolean', description: 'With --check, exit with 1 when a newer version is available' },
             to: { type: 'string', description: 'Install this version instead of the latest' },
             channel: { type: 'string', description: 'Dist-tag to upgrade to (e.g. next)' },
             force: { type: 'boolean', description: 'Reinstall even when up to date' },
@@ -191,9 +241,8 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
         )
         .async()
         .action(async (args, ctx) => {
-          const p = await plan(args, ctx.command, ctx.runtime);
-          if (args.check) return checkMessage(p);
-          if (p.upToDate && !args.force) return `${p.packageName} is up to date (${p.current})`;
+          const { plan: p, message } = await resolvePlan(args, ctx.command, ctx.runtime);
+          if (message !== undefined) return message;
 
           const planned = await describe(options.installer, p);
           ctx.runtime.error(`Upgrading ${p.packageName} ${p.current} → ${p.version}…`);
@@ -205,9 +254,8 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
           return `Upgraded ${p.packageName} to ${p.version}`;
         })
         .dryRun(async (args, ctx) => {
-          const p = await plan(args, ctx.command, ctx.runtime);
-          if (args.check) return checkMessage(p);
-          if (p.upToDate && !args.force) return `${p.packageName} is up to date (${p.current})`;
+          const { plan: p, message } = await resolvePlan(args, ctx.command, ctx.runtime);
+          if (message !== undefined) return message;
           const command = await describe(options.installer, p);
           return command
             ? `Would upgrade ${p.packageName} ${p.current} → ${p.version} with: ${command.join(' ')}`

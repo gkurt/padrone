@@ -346,7 +346,7 @@ describe('update check', () => {
     const cwd = process.cwd();
     process.chdir(dir);
     try {
-      const notify = await createUpdateChecker(
+      const { notify } = await createUpdateChecker(
         'tool',
         '1.0.0',
         { cache: '~cache.json', registry: 'http://127.0.0.1:9/' },

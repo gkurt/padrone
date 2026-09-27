@@ -67,6 +67,7 @@ export type {
   PadroneTimingOptions,
   PadroneUpgradeOptions,
   PadroneUpgradePlan,
+  PadroneVersionCheck,
   PadroneVersionInfo,
   PadroneVersionOptions,
   VersionCommand,

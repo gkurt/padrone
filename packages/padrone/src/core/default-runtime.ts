@@ -226,15 +226,11 @@ function defaultPage(this: Partial<ResolvedPadroneRuntime> | undefined, text: st
 
 /**
  * Returns the stdin abstraction: custom runtime stdin > default process.stdin.
- * Returns `undefined` when no custom stdin is provided and process.stdin is not piped.
+ * Returns `undefined` when it's a terminal (`isTTY`), so reading it never waits for typing.
  */
 export function resolveStdin(partial?: PadroneRuntime): NonNullable<PadroneRuntime['stdin']> | undefined {
-  if (partial?.stdin) return partial.stdin;
-  const defaultStdin = createDefaultStdin();
-  // Only use default stdin if it's actually piped (isTTY === false).
-  // This avoids accidentally blocking on stdin in tests/CI.
-  if (defaultStdin.isTTY) return undefined;
-  return defaultStdin;
+  const stdin = partial?.stdin ?? createDefaultStdin();
+  return stdin.isTTY ? undefined : stdin;
 }
 
 /**

@@ -1,6 +1,7 @@
 import { extractSchemaMetadata, getJsonSchema, isSensitiveField, parsePositionalConfig, REDACTED } from '../core/args.ts';
 import { findCommandByName, getGlobalArgs } from '../core/commands.ts';
-import { REMOTE_CALLERS } from '../core/interceptors.ts';
+import { ActionError } from '../core/errors.ts';
+import { defineInterceptor, REMOTE_CALLERS } from '../core/interceptors.ts';
 import { tokenizeInput } from '../core/parse.ts';
 import { getKnownOptionNames } from '../core/validate.ts';
 import type { AnyPadroneCommand, InterceptorValidateResult, PadroneFieldMeta, PadroneInput, PadroneSchema } from '../types/index.ts';
@@ -113,6 +114,20 @@ export function getOutputRenderer(runtime: object): OutputRenderer | undefined {
 /** Whether the caller returns results through its own transport (HTTP, MCP, AI tool calls): no terminal, no stdin. */
 export function isRemoteCaller(caller: string): boolean {
   return (REMOTE_CALLERS as readonly string[]).includes(caller);
+}
+
+/**
+ * For command groups that manage the user's local files (`config`, `alias`): serve, MCP and `tool()` calls can't run
+ * their commands, so a request can't read or write files on the host.
+ */
+export function localOnlyInterceptor() {
+  return defineInterceptor({ id: 'padrone:local-only', name: 'padrone:local-only' }, () => ({
+    execute(ctx, next) {
+      if (isRemoteCaller(ctx.caller))
+        throw new ActionError(`"${ctx.command.path || ctx.command.name}" is only available on the command line`);
+      return next();
+    },
+  }));
 }
 
 type PassthroughType = 'string' | 'string[]' | 'boolean';
@@ -284,7 +299,8 @@ export function addedPaths(before: Record<string, unknown>, after: Record<string
 
 /**
  * A validate result whose issues about values an outside source filled (the `filled` paths) name the source,
- * e.g. `expected number, received string (from APP_PORT)`. `sourceOf` names the source of a filled path.
+ * e.g. `expected number, received string (from APP_PORT)`. `sourceOf` names the source of the value at an issue's path,
+ * which is inside a filled one (`db.port` when all of `db` was filled).
  */
 export function withIssueSources(
   result: InterceptorValidateResult,
@@ -296,7 +312,7 @@ export function withIssueSources(
   const annotated = issues.map((issue) => {
     const path = (issue.path ?? []).map((segment) => String(typeof segment === 'object' ? segment.key : segment));
     const match = filled.find((f) => path.length > 0 && f.every((segment, i) => path[i] === segment));
-    const source = match && !/\(from [^)]*\)$/.test(issue.message) ? sourceOf(match) : undefined;
+    const source = match && !/\(from [^)]*\)$/.test(issue.message) ? sourceOf(path) : undefined;
     return source ? { ...issue, message: `${issue.message} (from ${source})` } : issue;
   });
   return { ...result, argsResult: { ...result.argsResult, issues: annotated } } as InterceptorValidateResult;

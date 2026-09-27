@@ -125,10 +125,11 @@ function readNestedEnvVars(env: Record<string, string | undefined>, prefix: stri
   }
 }
 
-/** The variable a filled path came from. */
+/** The variable the value at `path` (or the value it's inside, like an array's item) came from. */
 function sourceIn(sources: Record<string, unknown>, path: readonly string[]): string | undefined {
   let current: unknown = sources;
   for (const key of path) {
+    if (typeof current === 'string') break;
     if (!current || typeof current !== 'object' || !Object.hasOwn(current, key)) return undefined;
     current = (current as Record<string, unknown>)[key];
   }

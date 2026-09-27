@@ -30,7 +30,8 @@ function parseEnvEntries(content: string): EnvEntry[] {
   let i = 0;
 
   while (i < lines.length) {
-    const line = lines[i]!.trim();
+    // Only the start is trimmed: the end of the line may be inside a multiline value
+    const line = lines[i]!.trimStart();
     i++;
 
     // Skip empty lines and comments
@@ -48,39 +49,34 @@ function parseEnvEntries(content: string): EnvEntry[] {
     // Detect quoted values
     const trimmedRaw = raw.trimStart();
     const quote = trimmedRaw[0];
+    const quoted = quote === '"' || quote === "'" || quote === '`' ? readQuoted(lines, i, trimmedRaw.slice(1), quote) : undefined;
 
-    if (quote === '"' || quote === "'" || quote === '`') {
-      let value = trimmedRaw.slice(1);
-
-      // Check for closing quote on the same line
-      const closeIndex = findClosingQuote(value, quote);
-      if (closeIndex !== -1) {
-        value = value.slice(0, closeIndex);
-      } else {
-        // Multiline: accumulate until closing quote
-        while (i < lines.length) {
-          const nextLine = lines[i]!;
-          i++;
-          const ci = findClosingQuote(nextLine, quote);
-          if (ci !== -1) {
-            value += `\n${nextLine.slice(0, ci)}`;
-            break;
-          }
-          value += `\n${nextLine}`;
-        }
-      }
-
-      if (quote === '"') value = unescapeDoubleQuoted(value);
-      result.push({ key, value, literal: quote === "'" });
+    if (quoted) {
+      i = quoted.next;
+      result.push({ key, value: quote === '"' ? unescapeDoubleQuoted(quoted.value) : quoted.value, literal: quote === "'" });
     } else {
-      // Unquoted: strip inline comments, trim
-      const commentIndex = raw.indexOf(' #');
+      // Unquoted (or a quote that is never closed): strip inline comments, trim
+      const commentIndex = raw.search(/\s#/);
       if (commentIndex !== -1) raw = raw.slice(0, commentIndex);
       result.push({ key, value: raw.trim(), literal: false });
     }
   }
 
   return result;
+}
+
+/**
+ * A quoted value whose first line (after the opening quote) is `first`, continuing on the lines from `next` until the
+ * closing quote, and the index of the line after it. `undefined` when the quote is never closed.
+ */
+function readQuoted(lines: readonly string[], next: number, first: string, quote: string): { value: string; next: number } | undefined {
+  const parts: string[] = [];
+  for (let line = first; ; line = lines[next++]!) {
+    const close = findClosingQuote(line, quote);
+    if (close !== -1) return { value: [...parts, line.slice(0, close)].join('\n'), next };
+    if (next >= lines.length) return undefined;
+    parts.push(line);
+  }
 }
 
 function findClosingQuote(s: string, quote: string): number {
@@ -117,6 +113,12 @@ function findClosingBrace(value: string, start: number): number {
     }
   }
   return -1;
+}
+
+/** A variable's value; the names of `Object.prototype` members (`$toString`) aren't variables. */
+function variable(env: Record<string, string | undefined>, name: string): string | undefined {
+  const value = env[name];
+  return typeof value === 'string' ? value : undefined;
 }
 
 /**
@@ -159,14 +161,14 @@ export function expandVariables(value: string, env: Record<string, string | unde
 
         if (operator === ':-') {
           // ${VAR:-default} — use default if unset or empty
-          const val = env[varName];
+          const val = variable(env, varName);
           result += val ? val : expandVariables(fallback, env);
         } else if (operator === '-') {
           // ${VAR-default} — use default only if unset
-          const val = env[varName];
+          const val = variable(env, varName);
           result += val !== undefined ? val : expandVariables(fallback, env);
         } else {
-          result += env[expr] ?? '';
+          result += variable(env, expr) ?? '';
         }
       } else {
         // $VAR — collect word chars
@@ -176,7 +178,7 @@ export function expandVariables(value: string, env: Record<string, string | unde
           i++;
         }
         if (varName) {
-          result += env[varName] ?? '';
+          result += variable(env, varName) ?? '';
         } else {
           result += '$';
         }

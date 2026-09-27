@@ -210,15 +210,20 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
     return [...(flagEnabled ? [config] : []), ...(profileFlag ? [profile] : [])];
   };
 
-  /** The file a value at `path` (in the values for `command`) comes from: the last layer that sets it. */
+  /** The file a value at `path` (in the values for `command`) comes from: the last layer that sets it, or the nearest object it's in. */
   const sourceOf = (layers: ConfigLayer[] | undefined, command: AnyPadroneCommand, profile: string | undefined, explicit?: string) => {
     const chain = commandChain(command).map((c) => c.name);
     const sectionPaths = sections ? chain.map((_, i) => chain.slice(0, i + 1)) : [];
     const prefixes = [[], ...sectionPaths].flatMap((section) => [section, ...(profile ? [['profiles', profile, ...section]] : [])]);
+    const sets = (layer: ConfigLayer, path: readonly string[]) =>
+      prefixes.some((prefix) => getPath(layer.data, [...prefix, ...path]) !== undefined);
     return (path: readonly string[]) => {
       if (!layers?.length) return explicit ?? 'config file';
-      const layer = layers.findLast((l) => prefixes.some((prefix) => getPath(l.data, [...prefix, ...path]) !== undefined));
-      return displayPath((layer ?? layers.at(-1)!).file);
+      for (let length = path.length; length > 0; length--) {
+        const layer = layers.findLast((l) => sets(l, path.slice(0, length)));
+        if (layer) return displayPath(layer.file);
+      }
+      return displayPath(layers.at(-1)!.file);
     };
   };
 

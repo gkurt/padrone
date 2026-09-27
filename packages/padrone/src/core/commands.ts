@@ -392,13 +392,14 @@ export function findCommandByName(name: string, commands?: AnyPadroneCommand[]):
 
 export type CollectedEndpoint = { name: string; command: AnyPadroneCommand };
 
-/** Collect all actionable commands recursively. Hidden commands are excluded. */
+/** Collect all actionable commands recursively. Hidden and built-in commands are excluded. */
 export function collectEndpoints(commands: AnyPadroneCommand[] | undefined, prefix: string): CollectedEndpoint[] {
   if (!commands) return [];
   const endpoints: CollectedEndpoint[] = [];
   for (const cmd of commands) {
     resolveCommand(cmd);
-    if (cmd.hidden) continue;
+    // Built-in commands (`config`, `alias`, `upgrade`, …) run the program itself, not its API
+    if (cmd.hidden || cmd.builtin) continue;
     const path = cmd.name ? (prefix ? `${prefix}.${cmd.name}` : cmd.name) : prefix;
     if (cmd.action || cmd.argsSchema) {
       endpoints.push({ name: path, command: cmd });

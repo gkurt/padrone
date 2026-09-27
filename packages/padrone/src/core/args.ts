@@ -1,5 +1,5 @@
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from '@standard-schema/spec';
-import type { PadroneFieldMeta } from '../types/args-meta.ts';
+import type { PadroneFieldGroups, PadroneFieldMeta } from '../types/args-meta.ts';
 import { camelToKebab } from '../util/shell-utils.ts';
 import { asyncStreamRegistry } from '../util/stream.ts';
 import type { OptionArity } from './parse.ts';
@@ -179,16 +179,15 @@ export interface FieldRules {
 export function extractFieldRules(
   schema: StandardJSONSchemaV1 | undefined,
   fields?: Record<string, PadroneFieldMeta | undefined>,
+  groups?: { exactlyOne?: PadroneFieldGroups; atLeastOne?: PadroneFieldGroups },
 ): FieldRules {
-  const rules: FieldRules = { counts: new Set(), variadic: new Set(), conflicts: {}, implies: {}, exactlyOne: [], atLeastOne: [] };
-  const seenGroups = new Set<string>();
-  const addGroup = (kind: 'exactlyOne' | 'atLeastOne', key: string, others: unknown) => {
-    if (!Array.isArray(others)) return;
-    const group = [...new Set([key, ...others.map(String)])].sort();
-    const id = `${kind}:${group.join('\0')}`;
-    if (group.length < 2 || seenGroups.has(id)) return;
-    seenGroups.add(id);
-    rules[kind].push(group);
+  const rules: FieldRules = {
+    counts: new Set(),
+    variadic: new Set(),
+    conflicts: {},
+    implies: {},
+    exactlyOne: toGroups(groups?.exactlyOne),
+    atLeastOne: toGroups(groups?.atLeastOne),
   };
   let properties: Record<string, any> = {};
   if (schema) {
@@ -207,10 +206,15 @@ export function extractFieldRules(
     if (conflicts) rules.conflicts[key] = typeof conflicts === 'string' ? [conflicts] : [...conflicts];
     const implies = meta?.implies ?? prop?.implies;
     if (implies && typeof implies === 'object') rules.implies[key] = implies;
-    addGroup('exactlyOne', key, meta?.exactlyOne ?? prop?.exactlyOne);
-    addGroup('atLeastOne', key, meta?.atLeastOne ?? prop?.atLeastOne);
   }
   return rules;
+}
+
+/** One group (`['a', 'b']`) or several (`[['a', 'b'], ['c', 'd']]`) as a list of groups with two or more fields. */
+function toGroups(groups: PadroneFieldGroups | undefined): string[][] {
+  if (!groups?.length) return [];
+  const list = groups.every((g) => typeof g === 'string') ? [groups as readonly string[]] : (groups as readonly (readonly string[])[]);
+  return list.map((group) => [...new Set(group)]).filter((group) => group.length >= 2);
 }
 
 /**

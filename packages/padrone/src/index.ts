@@ -135,6 +135,7 @@ export type {
   PadroneContextInterceptor,
   PadroneDrainResult,
   PadroneExtension,
+  PadroneFieldGroups,
   PadroneGlobalArgsMeta,
   PadroneInput,
   PadroneInterceptor,

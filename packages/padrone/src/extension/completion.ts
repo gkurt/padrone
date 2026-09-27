@@ -2,7 +2,7 @@ import type { ShellType } from '#src/util/shell-utils.ts';
 import { resolveAllCommands } from '../core/commands.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { withDrain } from '../core/results.ts';
-import { COMPLETE_COMMAND, getCompletions } from '../feature/complete.ts';
+import { COMPLETE_COMMAND, COMPLETE_DESCRIBED_COMMAND, formatCompletionResult, getCompletionResult } from '../feature/complete.ts';
 import type { AnyPadroneBuilder, CommandTypesBase, PadroneCommand } from '../types/index.ts';
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
@@ -20,18 +20,22 @@ export type WithCompletion<T> = WithCommand<T, 'completion', CompletionCommand>;
 // ── Interceptor ─────────────────────────────────────────────────────────
 
 /**
- * Answers `<program> __complete <words...>`, which the generated shell scripts call on each tab press:
- * prints one candidate per line, before any parsing so option-like words aren't taken as flags.
+ * Answers `<program> __complete2 <words...>`, which the generated shell scripts call on each tab press, before any
+ * parsing so option-like words aren't taken as flags: prints `value<TAB>description` lines and a directive line.
+ * `__complete` (called by scripts from older versions) prints one candidate per line, and its result is the values.
  */
 const completeInterceptor = defineInterceptor({ id: 'padrone:completion', name: 'padrone:completion', order: -3000 }, () => ({
   start(ctx, next) {
     const words = typeof ctx.input === 'string' ? ctx.input.split(/\s+/).filter((w, i) => w || i > 0) : ctx.input;
-    if (words?.[0] !== COMPLETE_COMMAND) return next();
+    const described = words?.[0] === COMPLETE_DESCRIBED_COMMAND;
+    if (!described && words?.[0] !== COMPLETE_COMMAND) return next();
 
     resolveAllCommands(ctx.command);
-    return getCompletions(ctx.command, words.slice(1)).then((candidates) => {
-      if (candidates.length > 0) ctx.runtime.output(candidates.join('\n'));
-      return withDrain({ command: ctx.command, args: undefined, result: candidates });
+    return getCompletionResult(ctx.command, words!.slice(1)).then((completion) => {
+      const values = completion.items.map((item) => item.value);
+      if (described) ctx.runtime.output(formatCompletionResult(completion));
+      else if (values.length > 0) ctx.runtime.output(values.join('\n'));
+      return withDrain({ command: ctx.command, args: undefined, result: described ? completion : values });
     });
   },
 }));

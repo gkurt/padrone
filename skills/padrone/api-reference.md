@@ -142,6 +142,9 @@ type ArgsMeta = {
     variadic?: boolean;               // array: --tag a b c (up to the next option or --)
     conflicts?: string | string[];    // options that can't be combined with this one
     implies?: Record<string, unknown>; // values for other options when this one is used
+    complete?: (ctx) => (string | { value: string; description?: string })[]; // shell completion values (padroneCompletion)
+    hint?: 'file' | 'dir' | 'url' | 'command' | 'none' | { ext: string[] }; // what completion falls back to
+    valueName?: string;               // help placeholder: --out <DIR>
   }>;
 };
 ```

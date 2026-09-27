@@ -1122,7 +1122,7 @@ const script = program.completion('bash');
 
 **Returns:** Shell completion script string
 
-With the `padroneCompletion()` extension (`padrone/completion`) the scripts are dynamic: they call `<program> __complete <words>` for per-command subcommands, options and values, including `complete` callbacks on fields. Without it, they're static lists of every command and option.
+With the `padroneCompletion()` extension (`padrone/completion`) the scripts are dynamic: they call `<program> __complete2 <words>` for per-command subcommands, options and values with descriptions, including `complete` callbacks and `hint`s on fields (see [Completion Values](/padrone/reference/args-meta/#completion-values)). Without it, they're static lists of every command and option, following `hint`s for option values.
 
 ---
 
@@ -1400,7 +1400,7 @@ The following extensions live in their own subpath imports to keep optional depe
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
 | `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing. Pass `api: { context, trace }` from `@opentelemetry/api` to parent child spans to the command's span |
-| `padroneCompletion()` | `'padrone/completion'` | Shell completion generation, with dynamic per-command completion (`__complete`) and field `complete` callbacks |
+| `padroneCompletion()` | `'padrone/completion'` | Shell completion generation, with dynamic per-command completion (`__complete2`), descriptions, and field `complete` callbacks and `hint`s |
 | `padroneMan()` | `'padrone/man'` | Man page generation |
 
 The following extensions are applied automatically by `createPadrone()` and can be disabled via `builtins`:

@@ -33,6 +33,8 @@ export type HelpPositionalInfo = {
   default?: unknown;
   type?: string;
   enum?: string[];
+  /** Placeholder shown instead of the name (from the field's `valueName`). */
+  valueName?: string;
 };
 
 /**
@@ -45,6 +47,8 @@ export type HelpArgumentInfo = {
   default?: unknown;
   type?: string;
   enum?: string[];
+  /** Placeholder for the value, shown instead of the type (from the field's `valueName`). */
+  valueName?: string;
   /** Single-character short flags (shown as `-v`) */
   flags?: string[];
   /** Multi-character alternative long names (shown as `--dry-run`) */
@@ -169,6 +173,17 @@ export type PadroneHelpContext = {
  */
 export type PadroneHelpTransform = (info: HelpInfo, ctx: PadroneHelpContext) => HelpInfo | string;
 
+/** A positional's name in usage and argument lists: its `valueName` when set (keeping `...` for variadic ones). */
+export function positionalLabel(arg: HelpPositionalInfo): string {
+  if (!arg.valueName) return arg.name;
+  return arg.name.startsWith('...') ? `...${arg.valueName}` : arg.valueName;
+}
+
+/** The value placeholder of an option (`valueName`, or its type); none for booleans and counts. */
+export function optionPlaceholder(arg: HelpArgumentInfo): string | undefined {
+  return arg.type && arg.type !== 'boolean' ? (arg.valueName ?? arg.type) : undefined;
+}
+
 // ============================================================================
 // Formatter Interface
 // ============================================================================
@@ -197,7 +212,7 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
     // Show actual positional argument names in usage line
     if (info.positionals && info.positionals.length > 0) {
       for (const arg of info.positionals) {
-        const name = arg.name.startsWith('...') ? `${arg.name}` : arg.name;
+        const name = positionalLabel(arg);
         usageParts.push(styler.meta(arg.optional ? `[${name}]` : `<${name}>`));
       }
     }
@@ -287,14 +302,15 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
 
     lines.push(styler.section('Arguments:'));
 
-    const maxNameLength = Math.min(32, Math.max(...args.map((a) => a.name.length)));
+    const maxNameLength = Math.min(32, Math.max(...args.map((a) => positionalLabel(a).length)));
     const descCol = 2 + maxNameLength + 2;
     const posAvailWidth = terminalWidth ? terminalWidth - descCol : undefined;
     const descColPad = ' '.repeat(descCol);
 
     for (const arg of args) {
-      const padding = ' '.repeat(Math.max(2, maxNameLength - arg.name.length + 2));
-      const prefix = indent(1) + styler.arg(arg.name) + padding;
+      const label = positionalLabel(arg);
+      const padding = ' '.repeat(Math.max(2, maxNameLength - label.length + 2));
+      const prefix = indent(1) + styler.arg(label) + padding;
 
       const descPlain = arg.description ?? '';
       const styledDesc = descPlain ? styler.description(descPlain) : '';
@@ -364,7 +380,8 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
       const namesPlain = [`--${primaryName}`, ...(remainingAliases?.map((a) => `--${a}`) || []), ...(negPlain ? [negPlain] : [])].join(
         ', ',
       );
-      const typePlain = arg.type && arg.type !== 'boolean' ? (arg.optional ? `[${arg.type}]` : `<${arg.type}>`) : '';
+      const placeholder = optionPlaceholder(arg);
+      const typePlain = placeholder ? (arg.optional ? `[${placeholder}]` : `<${placeholder}>`) : '';
 
       const isDeprecated = !!arg.deprecated;
 
@@ -669,7 +686,7 @@ function createMinimalFormatter(): Formatter {
       if (info.usage.hasSubcommands) parts.push('[command]');
       if (info.positionals && info.positionals.length > 0) {
         for (const arg of info.positionals) {
-          const name = arg.name.startsWith('...') ? `${arg.name}` : arg.name;
+          const name = positionalLabel(arg);
           parts.push(arg.optional ? `[${name}]` : `<${name}>`);
         }
       }

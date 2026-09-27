@@ -52,7 +52,7 @@ Additional opt-in extensions are available for advanced features:
 | `padroneMcp()` | `'padrone/mcp'` | MCP server integration |
 | `padroneServe()` | `'padrone/serve'` | REST server integration |
 | `padroneTracing(config)` | `'padrone/tracing'` | OpenTelemetry tracing (pass `api: { context, trace }` for span parenting) |
-| `padroneCompletion()` | `'padrone/completion'` | Shell completion generation (dynamic, with field `complete` callbacks) |
+| `padroneCompletion()` | `'padrone/completion'` | Shell completion generation (dynamic, with descriptions, field `complete` callbacks and `hint`s) |
 | `padroneMan()` | `'padrone/man'` | Man page generation |
 
 ## Extensions

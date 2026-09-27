@@ -70,9 +70,26 @@ export interface PadroneFieldMeta {
   /**
    * Values shell completion offers for this option or positional (needs `padroneCompletion()`),
    * e.g. branch names read at completion time. Enum values are offered without it.
+   * Items may carry a description, which zsh, fish and PowerShell show next to the value.
    */
-  complete?: (ctx: PadroneCompleteContext) => readonly string[] | Promise<readonly string[]>;
+  complete?: (
+    ctx: PadroneCompleteContext,
+  ) => readonly (string | PadroneCompletionItem)[] | Promise<readonly (string | PadroneCompletionItem)[]>;
+  /**
+   * What shell completion falls back to for the value when there are no candidates: `'file'` (the default without
+   * enum values or `complete`), `'dir'`, `{ ext: ['json', 'yaml'] }` (files with these extensions), `'command'`
+   * (program names), or nothing for `'url'` and `'none'`.
+   */
+  hint?: PadroneValueHint;
+  /** The value placeholder in help and docs: `--out <PATH>` instead of `--out <string>`, `<PATH>` for a positional. */
+  valueName?: string;
 }
+
+/** A shell completion candidate with an optional description. */
+export type PadroneCompletionItem = { value: string; description?: string };
+
+/** What kind of value an option or positional takes, for shell completion. */
+export type PadroneValueHint = 'file' | 'dir' | 'url' | 'command' | 'none' | { ext: readonly string[] };
 
 /** Passed to a field's `complete` callback. */
 export type PadroneCompleteContext = {

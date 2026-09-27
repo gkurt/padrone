@@ -176,6 +176,8 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `variadic` | `true` | Array option taking all following values (`--tag a b c`) |
 | `conflicts` | `'json'` | Options that can't be used together with this one |
 | `implies` | `{ color: false }` | Values for other options when this one is used |
+| `hint` | `'dir'` | What shell completion offers for the value (`'file'`, `'dir'`, `{ ext: ['json'] }`, `'command'`, `'url'`, `'none'`) |
+| `valueName` | `'PATH'` | Value placeholder in help (`--out <PATH>`) |
 
 ### Arguments meta (second param of `.arguments()`)
 

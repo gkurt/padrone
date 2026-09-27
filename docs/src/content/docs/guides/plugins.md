@@ -349,6 +349,7 @@ const startup = defineInterceptor({ name: 'startup' }, () => ({
 | `signal` | `AbortSignal` | Cancellation signal (provided by the signal extension) |
 | `context` | `unknown` | User-provided context from `cli()`/`eval()` |
 | `caller` | `string` | Invocation method (`'cli'`, `'eval'`, `'repl'`, etc.) |
+| `auth` | `unknown` | Who made the request: what serve/MCP's `auth` returned, or `eval()`'s `auth` (`undefined` if unknown) |
 | `runtime` | `ResolvedPadroneRuntime` | The resolved runtime |
 | `program` | `AnyPadroneProgram` | The root program |
 
@@ -379,6 +380,7 @@ const parseLogger = defineInterceptor({ name: 'parse-logger' }, () => ({
 | `signal` | `AbortSignal` | Cancellation signal |
 | `context` | `unknown` | User-provided context from `cli()`/`eval()` |
 | `caller` | `string` | Invocation method |
+| `auth` | `unknown` | Who made the request: what serve/MCP's `auth` returned, or `eval()`'s `auth` (`undefined` if unknown) |
 
 **Result:**
 | Property | Type | Description |
@@ -411,6 +413,7 @@ const auth = defineInterceptor({ name: 'auth' }, () => ({
 | `signal` | `AbortSignal` | Cancellation signal |
 | `context` | `unknown` | User-provided context |
 | `caller` | `string` | Invocation method |
+| `auth` | `unknown` | Who made the request: what serve/MCP's `auth` returned, or `eval()`'s `auth` (`undefined` if unknown) |
 
 **Result:** `void`
 
@@ -437,6 +440,7 @@ const defaults = defineInterceptor({ name: 'inject-defaults' }, () => ({
 | `signal` | `AbortSignal` | Cancellation signal |
 | `context` | `unknown` | User-provided context |
 | `caller` | `string` | Invocation method |
+| `auth` | `unknown` | Who made the request: what serve/MCP's `auth` returned, or `eval()`'s `auth` (`undefined` if unknown) |
 
 **Result:**
 | Property | Type | Description |
@@ -469,6 +473,7 @@ const timer = defineInterceptor({ name: 'timer' }, () => ({
 | `signal` | `AbortSignal` | Cancellation signal |
 | `context` | `unknown` | User-provided context |
 | `caller` | `string` | Invocation method |
+| `auth` | `unknown` | Who made the request: what serve/MCP's `auth` returned, or `eval()`'s `auth` (`undefined` if unknown) |
 
 **Result:**
 | Property | Type | Description |
@@ -508,6 +513,7 @@ const errorRecovery = defineInterceptor({ name: 'error-recovery' }, () => ({
 | `signal` | `AbortSignal` | Cancellation signal |
 | `context` | `unknown` | User-provided context |
 | `caller` | `string` | Invocation method |
+| `auth` | `unknown` | Who made the request: what serve/MCP's `auth` returned, or `eval()`'s `auth` (`undefined` if unknown) |
 
 **Result:**
 | Property | Type | Description |
@@ -542,6 +548,7 @@ const cleanup = defineInterceptor({ name: 'cleanup' }, () => ({
 | `signal` | `AbortSignal` | Cancellation signal |
 | `context` | `unknown` | User-provided context |
 | `caller` | `string` | Invocation method |
+| `auth` | `unknown` | Who made the request: what serve/MCP's `auth` returned, or `eval()`'s `auth` (`undefined` if unknown) |
 
 ### Middleware Order
 

@@ -1,7 +1,8 @@
-import type { AnyPadroneCommand, PadroneExtraCommand, PadroneGlobalArgsMeta, PadroneSchema } from '../types/index.ts';
+import type { AnyPadroneCommand, PadroneCaller, PadroneExtraCommand, PadroneGlobalArgsMeta, PadroneSchema } from '../types/index.ts';
 import { offeredLongNames } from '../util/shell-utils.ts';
 import { extractSchemaMetadata, getJsonSchema, markSensitiveProperties } from './args.ts';
 import { resolveRuntime } from './default-runtime.ts';
+import { LOCAL_CALLERS } from './interceptors.ts';
 import type { ResolvedPadroneRuntime } from './runtime.ts';
 
 // ---------------------------------------------------------------------------
@@ -51,6 +52,7 @@ export const configKeys = [
   'hidden',
   'mutation',
   'builtin',
+  'expose',
   'needsApproval',
   'outputSchema',
   'help',
@@ -106,6 +108,29 @@ export function mergeCommands(existing: AnyPadroneCommand, override: AnyPadroneC
 export function isBuiltinCommand(command: AnyPadroneCommand): boolean {
   for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) if (current.builtin) return true;
   return false;
+}
+
+/**
+ * The callers that may run a command, from the nearest `expose` on it or its ancestors (`undefined`: any).
+ * Built-in commands default to the local callers.
+ */
+export function exposedCallers(command: AnyPadroneCommand): readonly PadroneCaller[] | undefined {
+  for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
+    if (current.expose === undefined) continue;
+    return current.expose === true ? undefined : current.expose === false ? LOCAL_CALLERS : current.expose;
+  }
+  return isBuiltinCommand(command) ? LOCAL_CALLERS : undefined;
+}
+
+/** Why `caller` can't run a command (see `.configure({ expose })`), or `undefined` when it can. */
+export function exposeRefusal(command: AnyPadroneCommand, caller: PadroneCaller): string | undefined {
+  const callers = exposedCallers(command);
+  if (!callers || callers.includes(caller)) return undefined;
+  const name = command.path || command.name;
+  const localOnly = callers.every((c) => (LOCAL_CALLERS as readonly string[]).includes(c));
+  return localOnly && !(LOCAL_CALLERS as readonly string[]).includes(caller)
+    ? `"${name}" is only available on the command line`
+    : `"${name}" is not available to ${caller} callers`;
 }
 
 /** The global args in effect for a command: its own `.globalArgs()`, or else the nearest ancestor's. */
@@ -440,30 +465,50 @@ export function isAllowedOrigin(origin: string, cors: string | false | undefined
 }
 
 /**
- * DNS rebinding protection: a server bound to a loopback address only answers requests whose `Host` names a loopback
- * host, as a page on another domain that resolves to 127.0.0.1 sends its own name. Other bindings allow any.
+ * DNS rebinding protection: which `Host` a request may name, as a page on another domain that resolves to the server's
+ * address sends its own name. Loopback host names always pass. With `allowedHosts`, so do the bound host and the names
+ * listed (`.example.com` also allows its subdomains); `true` / `'all'` allows any. Without it, a server bound to a
+ * loopback address only answers loopback names, and other bindings allow any.
  */
-export function isAllowedHost(host: string | undefined, boundHost: string): boolean {
-  if (host === undefined || !LOOPBACK_HOSTS.has(boundHost === '::1' ? '[::1]' : boundHost)) return true;
-  return LOOPBACK_HOSTS.has(hostnameOf(`http://${host}`) ?? '');
+export function isAllowedHost(host: string | undefined, boundHost: string, allowedHosts?: readonly string[] | true | 'all'): boolean {
+  if (host === undefined || allowedHosts === true || allowedHosts === 'all') return true;
+  const bound = (boundHost.includes(':') && !boundHost.startsWith('[') ? `[${boundHost}]` : boundHost).toLowerCase();
+  const hostname = hostnameOf(`http://${host}`) ?? '';
+  if (LOOPBACK_HOSTS.has(hostname)) return true;
+  if (!allowedHosts) return !LOOPBACK_HOSTS.has(bound);
+  return (
+    hostname === bound ||
+    allowedHosts.some((allowed) => {
+      const name = allowed.toLowerCase();
+      return name.startsWith('.') ? hostname === name.slice(1) || hostname.endsWith(name) : hostname === name;
+    })
+  );
 }
 
-/** Collect all actionable commands recursively. Hidden and built-in commands are excluded. */
-export function collectEndpoints(commands: AnyPadroneCommand[] | undefined, prefix: string): CollectedEndpoint[] {
-  if (!commands) return [];
-  const endpoints: CollectedEndpoint[] = [];
-  for (const cmd of commands) {
-    resolveCommand(cmd);
-    // Built-in commands (`config`, `alias`, `upgrade`, …) run the program itself, not its API
-    if (cmd.hidden || cmd.builtin) continue;
-    const path = cmd.name ? (prefix ? `${prefix}.${cmd.name}` : cmd.name) : prefix;
-    if (cmd.action || cmd.argsSchema) {
-      endpoints.push({ name: path, command: cmd });
+/**
+ * The commands `serve()` / `mcp()` (the `caller`) offer, named by dotted path (`''` for the root program, when it has an
+ * action or arguments): actionable ones, leaving out hidden and built-in commands, those `caller` can't run
+ * (`.configure({ expose })`) and those `filter` rejects.
+ */
+export function collectEndpoints(
+  root: AnyPadroneCommand,
+  caller: PadroneCaller,
+  filter: (command: AnyPadroneCommand, path: string) => boolean = () => true,
+): CollectedEndpoint[] {
+  const offered = (cmd: AnyPadroneCommand, path: string) =>
+    !!(cmd.action || cmd.argsSchema) && !exposeRefusal(cmd, caller) && filter(cmd, path);
+  const endpoints: CollectedEndpoint[] = offered(root, '') ? [{ name: '', command: root }] : [];
+  const collect = (commands: AnyPadroneCommand[] | undefined, prefix: string) => {
+    for (const cmd of commands ?? []) {
+      resolveCommand(cmd);
+      // Built-in commands (`config`, `alias`, `upgrade`, …) run the program itself, not its API
+      if (cmd.hidden || cmd.builtin) continue;
+      const path = cmd.name ? (prefix ? `${prefix}.${cmd.name}` : cmd.name) : prefix;
+      if (offered(cmd, path)) endpoints.push({ name: path, command: cmd });
+      collect(cmd.commands, path);
     }
-    if (cmd.commands?.length) {
-      endpoints.push(...collectEndpoints(cmd.commands, path));
-    }
-  }
+  };
+  collect(root.commands, '');
   return endpoints;
 }
 

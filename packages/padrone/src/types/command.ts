@@ -58,6 +58,11 @@ export type PadroneActionContext<TContext = unknown> = {
   context: TContext;
   /** Which API entry point triggered this execution. */
   caller: PadroneCaller;
+  /**
+   * Who made the request: what `serve()` / `mcp()`'s `auth` returned (`{ token }` with `bearer`), or the `auth` given to
+   * `eval()` / `cli()`. `undefined` when the caller isn't authenticated.
+   */
+  auth?: unknown;
   /** Emits a custom event to the handlers of the interceptors on this command's chain (see `defineEvent()`). */
   emit: PadroneEmit;
   /**
@@ -81,6 +86,12 @@ export type PadroneHookContext<TArgs = unknown, TContext = unknown> = PadroneAct
   /** `true` under `--dry-run`: the command's dry-run handler runs instead of its action. */
   dryRun?: boolean;
 };
+
+/**
+ * Which callers may run a command: `true` any, `false` local ones only (`cli`, `eval`, `run`, `repl`; not `serve`, `mcp`
+ * or `tool`), or the list of callers allowed.
+ */
+export type PadroneExpose = boolean | readonly PadroneCaller[];
 
 /**
  * Configuration for a command. `TArgs` is the validated args type `needsApproval` receives
@@ -131,6 +142,13 @@ export type PadroneCommandConfig<TArgs = any> = {
    */
   builtin?: boolean;
   /**
+   * Which callers may run this command and its subcommands (a subcommand's own `expose` wins): `true` any (the default),
+   * `false` local ones only (`cli`, `eval`, `run`, `repl`), or the list of callers allowed (e.g. `['cli', 'mcp']`).
+   * `serve()` and `mcp()` don't list a command they can't run, and running it from another caller fails.
+   * Built-in commands default to `false`, except `help` and `version`.
+   */
+  expose?: PadroneExpose;
+  /**
    * Customize this command's help: a declarative `{ usage, before, after }` (this command only), or a function
    * receiving the generated help info that returns modified info or the final string (this command and its subcommands).
    */
@@ -172,6 +190,8 @@ export type PadroneCommand<
   mutation?: boolean;
   /** Whether an extension added this command for the program itself (see `PadroneCommandConfig.builtin`). */
   builtin?: boolean;
+  /** Which callers may run this command (see `PadroneCommandConfig.expose`). */
+  expose?: PadroneExpose;
   /** Whether `tool()` asks for approval before running this command. Set by `.configure({ needsApproval })`. */
   needsApproval?: boolean | ((args: StandardSchemaV1.InferOutput<TArgs>) => Promise<boolean> | boolean);
   /** Whether `padroneConfirm()` asks before running this command, or the question. Set by `.configure({ confirm })`. */

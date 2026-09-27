@@ -10,8 +10,8 @@ const HOOK_ORDER = 10_000;
 type HookHandler = (ctx: PadroneHookContext, result?: unknown) => unknown;
 
 function hookContext(ctx: InterceptorExecuteContext): PadroneHookContext {
-  const { runtime, command, program, signal, context, caller, args, dryRun } = ctx;
-  return withEmit({ runtime, command, program, signal, context, caller, args, prompt: createPrompt(ctx), ...(dryRun && { dryRun }) });
+  const { runtime, command, program, signal, context, caller, auth, args, dryRun } = ctx;
+  return withEmit({ runtime, command, program, signal, context, caller, auth, args, prompt: createPrompt(ctx), ...(dryRun && { dryRun }) });
 }
 
 /**

@@ -47,7 +47,7 @@ import type {
   PadroneEmit,
   PadroneInterceptorFn,
 } from './interceptor.ts';
-import type { PadroneCliPreferences, PadroneEvalPreferences, PadroneReplPreferences } from './preferences.ts';
+import type { PadroneCliPreferences, PadroneEvalPreferences, PadroneReplPreferences, PadroneToolPreferences } from './preferences.ts';
 import type {
   GetArguments,
   MaybePromiseCommandResult,
@@ -1045,7 +1045,7 @@ export type PadroneProgram<
   };
 
   /** Export as an AI SDK tool. @category Utility */
-  tool: () => Tool<{ command: string }>;
+  tool: (prefs?: PadroneToolPreferences) => Tool<{ command: string }>;
 
   /** Generate help text for a command. @category Utility */
   help: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], false, true>>(

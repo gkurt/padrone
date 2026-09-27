@@ -315,6 +315,9 @@ Re-paths all nested commands. Drops the mounted program's version. Preserves int
   // tool() approval; a function gets the validated args (typed when .configure() comes after .arguments())
   needsApproval?: boolean | ((args) => boolean | Promise<boolean>),
   outputSchema?: PadroneSchema,       // result object schema: MCP outputSchema, OpenAPI result (not validated)
+  // Callers that may run it (and its subcommands, unless they set their own): true any (default), false local only
+  // (cli/eval/run/repl), or a list like ['cli', 'mcp']. Built-ins default to false (help/version/repl: true)
+  expose?: boolean | PadroneCaller[],
   // Positional shell completion (padroneCompletion), like cobra's ValidArgsFunction; a positional field's own `complete` wins
   complete?: (ctx: { prefix, args, command, position, field?, positionals, runtime, context }) =>
     (string | { value, description? })[] | { values, directive?: 'files' | 'dirs' | 'commands' | 'nofiles' | `ext:${string}` },
@@ -621,18 +624,19 @@ api.greet({ name: 'World' });
 api.db.migrate({ name: 'v1' });
 ```
 
-### `.tool()`
+### `.tool(prefs?)`
 
 Returns a Vercel AI SDK `Tool` definition.
 
 ```ts
 import { generateText } from 'ai';
 const tool = program.tool();
+const limited = program.tool({ timeout: 30_000 }); // aborts the command; the model gets "Timed out after 30000 ms"
 ```
 
 ### `.mcp(prefs?)` *(experimental)*
 
-Starts a Model Context Protocol server (2025-11-25 spec). Exposes all commands as MCP tools, except hidden and built-in ones (`builtin: true`).
+Starts a Model Context Protocol server (2025-11-25 spec). Exposes all commands as MCP tools, except hidden and built-in ones (`builtin: true`) and those `expose` keeps from `mcp`.
 
 ```ts
 // HTTP (default) — Streamable HTTP with session management and SSE support
@@ -642,7 +646,7 @@ await program.mcp({ port: 3000, host: '127.0.0.1' });
 await program.mcp({ transport: 'stdio' });
 ```
 
-Options: `transport` (`'http'` | `'stdio'`), `port`, `host`, `basePath`, `name`, `version`, `cors` (`string | false`), `maxBodySize` (bytes, default 4 MiB; larger bodies get 413).
+Options: `transport` (`'http'` | `'stdio'`), `port`, `host`, `basePath`, `name`, `version`, `cors` (`string | false`), `maxBodySize` (bytes, default 4 MiB; larger bodies get 413), `include` / `exclude` (command paths or globs, `'db.**'` = `db` and all under it, `'**'` also the root; or `(command) => boolean`), `auth` (`(req: Request) => identity | falsy`; falsy is 401, the identity is `ctx.auth`), `bearer` (`string | string[]` tokens; `ctx.auth` is `{ token }`, 401 with `WWW-Authenticate: Bearer`), `allowedHosts` (`Host` names besides loopback and the bound host, `.example.com` for subdomains; `true`/`'all'` any), `timeout` (ms; aborts the command's signal), `maxConcurrent` (a timed-out call gets JSON-RPC error `-32001`, one over the limit `-32000`), `sessionTtl` (ms an HTTP session may idle before it's dropped and its calls aborted; the client gets 404), `maxSessions` (default 1000; a new session drops the least recently used). `auth`, `bearer` and `allowedHosts` apply to HTTP.
 
 Object results are also returned as `structuredContent`; `.configure({ outputSchema })` (an object schema) is advertised as the tool's `outputSchema`. Over HTTP, a request whose `Origin` isn't a loopback origin (`localhost`, `127.0.0.1`, `[::1]`) or the explicitly set `cors` origin gets 403 (so does a non-loopback `Host` when bound to a loopback host), and `DELETE` (session termination) aborts that session's calls in flight.
 
@@ -650,13 +654,13 @@ Also available as a built-in CLI command: `myapp mcp [http|stdio] --port 3000`
 
 ### `.serve(prefs?)` *(experimental)*
 
-Starts a REST HTTP server. Each command becomes an endpoint (`users list` → `/users/list`); hidden and built-in commands are left out. Commands with `mutation: true` accept POST only; others accept GET and POST.
+Starts a REST HTTP server. Each command becomes an endpoint (`users list` → `/users/list`); hidden and built-in commands are left out, as are those `expose` keeps from `serve`. Commands with `mutation: true` accept POST only; others accept GET and POST.
 
 ```ts
 await program.serve({ port: 3000, basePath: '/api/' });
 ```
 
-Options: `port`, `host`, `basePath`, `cors` (`string | false`; also the one cross-site `Origin` accepted, `'*'` any), `maxBodySize` (bytes, default 4 MiB; 413 `payload_too_large`), `builtins` (`{ health, help, schema, docs }`), `onRequest`, `onError`.
+Options: `port`, `host`, `basePath`, `cors` (`string | false`; also the one cross-site `Origin` accepted, `'*'` any), `maxBodySize` (bytes, default 4 MiB; 413 `payload_too_large`), `builtins` (`{ health, help, schema, docs }`), `onRequest`, `onError`, `include` / `exclude` (command paths or globs, `'db.**'` = `db` and all under it, `'**'` also the root; or `(command) => boolean`), `auth` (`(req: Request) => identity | falsy`; falsy is 401, the identity is `ctx.auth`), `bearer` (`string | string[]` tokens; `ctx.auth` is `{ token }`, 401 with `WWW-Authenticate: Bearer`), `allowedHosts` (`Host` names besides loopback and the bound host, `.example.com` for subdomains; `true`/`'all'` any), `timeout` (ms; aborts the command's signal), `maxConcurrent` (504 `timeout`, 503 `unavailable`). `/_health` and the CORS preflight skip `auth`/`bearer`; with `bearer` the OpenAPI spec declares a bearer security scheme.
 
 Built-in endpoints: `/_health`, `/_help`, `/_schema`, `/_docs` (Scalar OpenAPI viewer), `/_openapi`.
 

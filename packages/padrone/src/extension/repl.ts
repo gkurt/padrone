@@ -46,7 +46,8 @@ export function padroneRepl(
     builder
       .command('repl', (c) =>
         c
-          .configure({ description: 'Start an interactive REPL', hidden: true, builtin: true })
+          // Remote callers get the interceptor's "The REPL needs a terminal" below, as `--repl` does
+          .configure({ description: 'Start an interactive REPL', hidden: true, builtin: true, expose: true })
           .arguments(passthroughSchema({ scope: { type: 'string', description: 'Command to scope the REPL to' } }), {
             positional: ['scope'],
           })

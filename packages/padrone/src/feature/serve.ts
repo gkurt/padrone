@@ -15,8 +15,17 @@ import { generateHelp } from '../output/help.ts';
 import type { AnyPadroneCommand, AnyPadroneProgram } from '../types/index.ts';
 import { outputValueToText } from '../util/json.ts';
 import { BodyTooLargeError, readBodyText } from '../util/stream.ts';
+import {
+  createAuthenticator,
+  createCallLimiter,
+  createCommandFilter,
+  linkedController,
+  type PadroneRemotePreferences,
+  serverBaseUrl,
+  toFetchHeaders,
+} from './remote.ts';
 
-export type PadroneServePreferences = {
+export type PadroneServePreferences = PadroneRemotePreferences & {
   /** Port to listen on. Default: 3000 */
   port?: number;
   /** Host to bind to. Default: '127.0.0.1' */
@@ -101,7 +110,12 @@ function errorToResponse(error: unknown, stderr: string[] = []): Response {
 const stderrSchema = { type: 'array', items: { type: 'string' }, description: 'Lines the command wrote to stderr' };
 
 /** Generate an OpenAPI 3.1.0 spec from the command tree. */
-function buildOpenApiSpec(existingCommand: AnyPadroneCommand, endpoints: CollectedEndpoint[], basePath: string): Record<string, unknown> {
+function buildOpenApiSpec(
+  existingCommand: AnyPadroneCommand,
+  endpoints: CollectedEndpoint[],
+  basePath: string,
+  bearer: boolean,
+): Record<string, unknown> {
   const paths: Record<string, unknown> = {};
 
   const responses = (resultSchema: Record<string, unknown> = {}) => ({
@@ -208,6 +222,7 @@ function buildOpenApiSpec(existingCommand: AnyPadroneCommand, endpoints: Collect
       version: existingCommand.version ?? '0.0.0',
     },
     paths,
+    ...(bearer && { components: { securitySchemes: { bearer: { type: 'http', scheme: 'bearer' } } }, security: [{ bearer: [] }] }),
   };
 }
 
@@ -304,10 +319,9 @@ export function createServeHandler(
   const corsOrigin = prefs?.cors !== false ? (prefs?.cors ?? '*') : undefined;
   const builtins = { health: true, help: true, schema: true, docs: true, ...prefs?.builtins };
 
-  const endpoints = collectEndpoints(existingCommand.commands, '');
-  if (existingCommand.action || existingCommand.argsSchema) {
-    endpoints.unshift({ name: '', command: existingCommand });
-  }
+  const endpoints = collectEndpoints(existingCommand, 'serve', createCommandFilter(prefs));
+  const authenticate = createAuthenticator(prefs);
+  const limit = createCallLimiter(prefs);
 
   const routeMap = new Map<string, CollectedEndpoint>();
   for (const ep of endpoints) {
@@ -315,7 +329,7 @@ export function createServeHandler(
   }
 
   let cachedOpenApiSpec: Record<string, unknown> | undefined;
-  const getOpenApiSpec = () => (cachedOpenApiSpec ??= buildOpenApiSpec(existingCommand, endpoints, basePath));
+  const getOpenApiSpec = () => (cachedOpenApiSpec ??= buildOpenApiSpec(existingCommand, endpoints, basePath, prefs?.bearer !== undefined));
 
   function addCorsHeaders(res: Response): Response {
     if (!corsOrigin) return res;
@@ -329,20 +343,33 @@ export function createServeHandler(
   const handleError = (error: unknown, request: Request, stderr?: string[]) =>
     prefs?.onError ? prefs.onError(error, request) : errorToResponse(error, stderr);
 
-  async function evalAndRespond(input: string[], request: Request): Promise<Response> {
+  async function evalAndRespond(input: string[], request: Request, auth: unknown): Promise<Response> {
     const output: string[] = [];
     const errors: string[] = [];
-    const result = await evalCommand(input.length ? input : (undefined as any), {
-      caller: 'serve',
-      // Aborts the command when the client disconnects
-      signal: request.signal,
-      runtime: {
-        output: (...args: unknown[]) => output.push(args.map(outputValueToText).join(' ')),
-        error: (text: string) => errors.push(text),
-        interactive: 'unsupported',
-        format: 'json',
-      },
-    });
+    // Aborts the command when the client disconnects, or after `timeout`
+    const { controller, dispose } = linkedController(request.signal);
+    const call = await limit(controller, () =>
+      evalCommand(input.length ? input : (undefined as any), {
+        caller: 'serve',
+        signal: controller.signal,
+        auth,
+        runtime: {
+          output: (...args: unknown[]) => output.push(args.map(outputValueToText).join(' ')),
+          error: (text: string) => errors.push(text),
+          interactive: 'unsupported',
+          format: 'json',
+        },
+      }),
+    ).finally(dispose);
+    if (call.status === 'busy') {
+      const message = 'Too many requests in progress, try again later';
+      return jsonResponse({ ok: false, error: 'unavailable', message }, 503, { 'Retry-After': '1' });
+    }
+    if (call.status === 'timeout') {
+      const message = `The command timed out after ${prefs?.timeout} ms`;
+      return jsonResponse({ ok: false, error: 'timeout', message, ...(errors.length > 0 && { stderr: errors }) }, 504);
+    }
+    const result = call.value;
 
     if (result.error) return handleError(result.error, request, errors);
 
@@ -358,6 +385,15 @@ export function createServeHandler(
       ...(output.length > 0 && { output }),
       ...(errors.length > 0 && { stderr: errors }),
     });
+  }
+
+  /** The route of a request path, without `basePath` and the slashes around it; `undefined` when it's outside `basePath`. */
+  function routePathOf(pathname: string): string | undefined {
+    if (basePath !== '/') {
+      if (pathname !== basePath.slice(0, -1) && !pathname.startsWith(basePath)) return undefined;
+      pathname = pathname.slice(basePath.length - 1);
+    }
+    return pathname.replace(/^\/+|\/+$/g, '');
   }
 
   return async function handleRequest(req: Request): Promise<Response> {
@@ -384,24 +420,29 @@ export function createServeHandler(
       return addCorsHeaders(new Response(null, { status: corsOrigin ? 204 : 405 }));
     }
 
+    const url = new URL(req.url, 'http://localhost');
+    const routePath = routePathOf(url.pathname);
+
+    // Health checks (load balancers, probes) don't authenticate
+    let auth: unknown;
+    if (authenticate && !(builtins.health && req.method === 'GET' && routePath === '_health')) {
+      auth = await authenticate(req);
+      if (!auth) {
+        const headers = prefs?.bearer !== undefined ? { 'WWW-Authenticate': 'Bearer' } : undefined;
+        return addCorsHeaders(jsonResponse({ ok: false, error: 'unauthorized', message: 'Unauthorized' }, 401, headers));
+      }
+    }
+
     // onRequest hook
     if (prefs?.onRequest) {
       const hookResponse = await prefs.onRequest(req);
       if (hookResponse) return addCorsHeaders(hookResponse);
     }
 
-    const url = new URL(req.url, 'http://localhost');
-    let pathname = url.pathname;
-
-    // Strip basePath prefix; anything outside it isn't ours
-    if (basePath !== '/') {
-      if (pathname !== basePath.slice(0, -1) && !pathname.startsWith(basePath)) {
-        return addCorsHeaders(jsonResponse({ ok: false, error: 'not_found', message: `Not found: ${pathname}` }, 404));
-      }
-      pathname = pathname.slice(basePath.length - 1);
+    // Anything outside basePath isn't ours
+    if (routePath === undefined) {
+      return addCorsHeaders(jsonResponse({ ok: false, error: 'not_found', message: `Not found: ${url.pathname}` }, 404));
     }
-    // Remove leading and trailing slashes for route matching
-    const routePath = pathname.replace(/^\/+|\/+$/g, '');
 
     // Built-in endpoints
     if (req.method === 'GET') {
@@ -521,7 +562,7 @@ export function createServeHandler(
       if (positionals.length) argParts.push('--', ...positionals);
     }
 
-    const response = await evalAndRespond([...commandPath, ...argParts], req);
+    const response = await evalAndRespond([...commandPath, ...argParts], req, auth);
     return addCorsHeaders(response);
   }
 }
@@ -540,17 +581,15 @@ export async function startServeServer(
   const host = prefs?.host ?? '127.0.0.1';
   const basePath = normalizeBasePath(prefs?.basePath);
 
+  let baseUrl = serverBaseUrl(host, port);
   const server = http.createServer(async (req, res) => {
-    if (!isAllowedHost(req.headers.host, host)) {
+    if (!isAllowedHost(req.headers.host, host, prefs?.allowedHosts)) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       return void res.end(JSON.stringify({ ok: false, error: 'forbidden', message: `Host not allowed: ${req.headers.host}` }));
     }
-    // The request target is a path; IPv6 hosts need brackets in a URL
-    const url = `http://${host.includes(':') ? `[${host}]` : host}:${port}${req.url ?? '/'}`;
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(req.headers)) {
-      if (value) headers.set(key, Array.isArray(value) ? value.join(', ') : value);
-    }
+    // The request target is a path
+    const url = `${baseUrl}${req.url ?? '/'}`;
+    const headers = toFetchHeaders(req.headers);
 
     const disconnected = new AbortController();
     res.on('close', () => {
@@ -588,9 +627,12 @@ export async function startServeServer(
 
   return new Promise<void>((resolve, reject) => {
     server.listen(port, host, () => {
-      runtime.error(`REST server listening on http://${host}:${port}${basePath}`);
+      // The port it got, for port 0
+      const address = server.address();
+      baseUrl = serverBaseUrl(host, typeof address === 'object' && address ? address.port : port);
+      runtime.error(`REST server listening on ${baseUrl}${basePath}`);
       const builtins = { health: true, help: true, schema: true, docs: true, ...prefs?.builtins };
-      if (builtins.docs) runtime.error(`API docs: http://${host}:${port}${basePath}_docs`);
+      if (builtins.docs) runtime.error(`API docs: ${baseUrl}${basePath}_docs`);
     });
     server.on('error', reject);
     const unsubscribe = runtime.onSignal?.(() => {

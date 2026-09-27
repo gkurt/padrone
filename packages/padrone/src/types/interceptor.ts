@@ -31,6 +31,8 @@ export type InterceptorBaseContext<TContext = object> = {
   program: AnyPadroneProgram;
   /** The invocation method that triggered this execution (e.g. 'cli', 'eval', 'run'). */
   caller: PadroneCaller;
+  /** Who made the request (what `serve()` / `mcp()`'s `auth` returned), or the `auth` given to `eval()` / `cli()`. */
+  auth?: unknown;
   /** Emits a custom event to the handlers of the interceptors on this command's chain (see `defineEvent()`). */
   emit: PadroneEmit;
 };

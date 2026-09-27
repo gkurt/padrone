@@ -11,7 +11,7 @@ import { getRootCommand } from '../util/utils.ts';
 import { parseFlatYaml, toYaml } from '../util/yaml.ts';
 import { expandResponseFiles, responseFilesOptions } from './response-files.ts';
 import { aliasNamesKey } from './suggestions.ts';
-import { inputTokens, isRemoteCaller, localOnlyInterceptor, passthroughSchema, quoteToken } from './utils.ts';
+import { inputTokens, isRemoteCaller, passthroughSchema, quoteToken } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -222,7 +222,6 @@ export function padroneAliases(options: PadroneAliasesOptions = {}): <T extends 
     return result.command(commandName, (c) =>
       c
         .configure({ description: 'Manage command aliases', builtin: true })
-        .intercept(localOnlyInterceptor())
         .command('set', (s) =>
           s
             .configure({ description: 'Add or replace an alias', mutation: true })

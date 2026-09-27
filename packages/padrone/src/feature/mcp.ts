@@ -12,8 +12,17 @@ import { generateHelp } from '../output/help.ts';
 import type { AnyPadroneCommand, AnyPadroneProgram } from '../types/index.ts';
 import { outputValueToText } from '../util/json.ts';
 import { BodyTooLargeError, readBodyText } from '../util/stream.ts';
+import {
+  createAuthenticator,
+  createCallLimiter,
+  createCommandFilter,
+  linkedController,
+  type PadroneRemotePreferences,
+  serverBaseUrl,
+  toFetchHeaders,
+} from './remote.ts';
 
-export type PadroneMcpPreferences = {
+export type PadroneMcpPreferences = PadroneRemotePreferences & {
   /** Server name. Defaults to the program name. */
   name?: string;
   /** Server version. Defaults to the program version. */
@@ -38,6 +47,16 @@ export type PadroneMcpPreferences = {
   cors?: string | false;
   /** Largest HTTP request body accepted, in bytes; a larger one gets a 413. Defaults to 4 MiB. Only used with `transport: 'http'`. */
   maxBodySize?: number;
+  /**
+   * How long an HTTP session may go without requests, in ms, before it's dropped (its calls aborted); the client then gets
+   * 404 and starts a new one. Calls in flight keep it alive. Defaults to no limit. Only used with `transport: 'http'`.
+   */
+  sessionTtl?: number;
+  /**
+   * Most HTTP sessions kept: a new one drops the least recently used (aborting its calls). Defaults to 1000.
+   * Only used with `transport: 'http'`.
+   */
+  maxSessions?: number;
 };
 
 const PROTOCOL_VERSION = '2025-11-25';
@@ -101,11 +120,10 @@ export function createMcpHandler(
   const serverName = prefs?.name ?? existingCommand.name;
   const serverVersion = prefs?.version ?? existingCommand.version ?? '0.0.0';
 
-  const rootTools = collectEndpoints(existingCommand.commands, '').map((t) => ({ ...t, toolName: toToolName(t.name) }));
-  if (existingCommand.action || existingCommand.argsSchema) {
-    const taken = new Set(rootTools.map((t) => t.toolName));
-    rootTools.unshift({ name: '', command: existingCommand, toolName: toRootToolName(existingCommand.name, taken) });
-  }
+  const endpoints = collectEndpoints(existingCommand, 'mcp', createCommandFilter(prefs));
+  const taken = new Set(endpoints.map((t) => toToolName(t.name)));
+  const rootTools = endpoints.map((t) => ({ ...t, toolName: t.name ? toToolName(t.name) : toRootToolName(existingCommand.name, taken) }));
+  const limit = createCallLimiter(prefs);
 
   const toolMap = new Map(rootTools.map((t) => [t.toolName, t]));
 
@@ -128,18 +146,29 @@ export function createMcpHandler(
 
   /**
    * Handles one JSON-RPC message. `signal` aborts the call too, e.g. when an HTTP client disconnects; `session` scopes
-   * request ids (clients number them independently). Notifications and responses from the client get no response.
+   * request ids (clients number them independently); `auth` is who made the request. Notifications and responses from the
+   * client get no response.
    */
-  return async function handleRequest(message: unknown, signal?: AbortSignal, session = ''): Promise<JsonRpcResponse | undefined> {
+  return async function handleRequest(
+    message: unknown,
+    signal?: AbortSignal,
+    session = '',
+    auth?: unknown,
+  ): Promise<JsonRpcResponse | undefined> {
     const kind = classifyMessage(message);
     if (kind === 'response') return undefined;
     if (kind === 'invalid') return invalidRequest(message);
     const req = message as JsonRpcRequest;
-    const response = await dispatch(req, signal, session);
+    const response = await dispatch(req, signal, session, auth);
     return req.id === undefined ? undefined : response;
   };
 
-  async function dispatch(req: JsonRpcRequest, signal: AbortSignal | undefined, session: string): Promise<JsonRpcResponse | undefined> {
+  async function dispatch(
+    req: JsonRpcRequest,
+    signal: AbortSignal | undefined,
+    session: string,
+    auth: unknown,
+  ): Promise<JsonRpcResponse | undefined> {
     const { id, method, params } = req;
 
     switch (method) {
@@ -211,65 +240,71 @@ export function createMcpHandler(
         // Passed as argv tokens, so values with spaces or quotes arrive intact
         const input = [...tool.name.split('.').filter(Boolean), ...serializeArgsToFlags(args, tool.command)];
 
-        const controller = new AbortController();
-        const onAbort = () => controller.abort(signal?.reason);
-        if (signal?.aborted) onAbort();
-        else signal?.addEventListener('abort', onAbort, { once: true });
+        const { controller, dispose } = linkedController(signal);
         // A reused id doesn't take over the cancellation of a call still running under it
         const key = id != null && !inFlight.has(flightKey(session, id)) ? flightKey(session, id) : undefined;
         if (key) inFlight.set(key, controller);
         try {
-          const output: string[] = [];
-          const errors: string[] = [];
-          const result = await evalCommand(input.length ? input : (undefined as any), {
-            caller: 'mcp',
-            signal: controller.signal,
-            runtime: {
-              output: (...outArgs: unknown[]) => output.push(outArgs.map(outputValueToText).join(' ')),
-              error: (text: string) => errors.push(text),
-              interactive: 'unsupported',
-              format: 'text',
-            },
-          });
-
-          const content: { type: string; text: string }[] = [];
-
-          if (result.error) {
-            const errorMsg = result.error instanceof Error ? result.error.message : String(result.error);
-            if (errors.length) content.push({ type: 'text', text: errors.join('\n') });
-            content.push({ type: 'text', text: errorMsg });
-            return { jsonrpc: '2.0', id: id ?? null, result: { content, isError: true } };
+          const call = await limit(controller, () => callTool(input, controller.signal, auth));
+          if (call.status === 'busy') {
+            return { jsonrpc: '2.0', id: id ?? null, error: { code: -32000, message: 'Too many requests in progress, try again later' } };
           }
-
-          if (result.argsResult?.issues) {
-            content.push({ type: 'text', text: `Validation error:\n${formatIssueMessages(result.argsResult.issues)}` });
-            return { jsonrpc: '2.0', id: id ?? null, result: { content, isError: true } };
+          if (call.status === 'timeout') {
+            return { jsonrpc: '2.0', id: id ?? null, error: { code: -32001, message: `Request timed out after ${prefs?.timeout} ms` } };
           }
-
-          if (output.length) content.push({ type: 'text', text: output.join('\n') });
-          if (result.result !== undefined && result.result !== null) {
-            const resultText = typeof result.result === 'string' ? result.result : JSON.stringify(result.result, null, 2);
-            content.push({ type: 'text', text: resultText });
-          }
-          if (content.length === 0) content.push({ type: 'text', text: 'Done.' });
-          const structuredContent = isPlainObject(result.result) ? result.result : undefined;
-          return { jsonrpc: '2.0', id: id ?? null, result: { content, ...(structuredContent && { structuredContent }), isError: false } };
+          return { jsonrpc: '2.0', id: id ?? null, result: call.value };
         } catch (err) {
           const errorMsg = err instanceof Error ? err.message : String(err);
-          return {
-            jsonrpc: '2.0',
-            id: id ?? null,
-            result: { content: [{ type: 'text', text: errorMsg }], isError: true },
-          };
+          return { jsonrpc: '2.0', id: id ?? null, result: { content: [{ type: 'text', text: errorMsg }], isError: true } };
         } finally {
           if (key) inFlight.delete(key);
-          signal?.removeEventListener('abort', onAbort);
+          dispose();
         }
       }
 
       default:
         return { jsonrpc: '2.0', id: id ?? null, error: { code: -32601, message: `Method not found: ${method}` } };
     }
+  }
+
+  /** Runs a tool's command: the `tools/call` result. */
+  async function callTool(input: string[], signal: AbortSignal, auth: unknown): Promise<Record<string, unknown>> {
+    const output: string[] = [];
+    const errors: string[] = [];
+    const result = await evalCommand(input.length ? input : (undefined as any), {
+      caller: 'mcp',
+      signal,
+      auth,
+      runtime: {
+        output: (...outArgs: unknown[]) => output.push(outArgs.map(outputValueToText).join(' ')),
+        error: (text: string) => errors.push(text),
+        interactive: 'unsupported',
+        format: 'text',
+      },
+    });
+
+    const content: { type: string; text: string }[] = [];
+
+    if (result.error) {
+      const errorMsg = result.error instanceof Error ? result.error.message : String(result.error);
+      if (errors.length) content.push({ type: 'text', text: errors.join('\n') });
+      content.push({ type: 'text', text: errorMsg });
+      return { content, isError: true };
+    }
+
+    if (result.argsResult?.issues) {
+      content.push({ type: 'text', text: `Validation error:\n${formatIssueMessages(result.argsResult.issues)}` });
+      return { content, isError: true };
+    }
+
+    if (output.length) content.push({ type: 'text', text: output.join('\n') });
+    if (result.result !== undefined && result.result !== null) {
+      const resultText = typeof result.result === 'string' ? result.result : JSON.stringify(result.result, null, 2);
+      content.push({ type: 'text', text: resultText });
+    }
+    if (content.length === 0) content.push({ type: 'text', text: 'Done.' });
+    const structuredContent = isPlainObject(result.result) ? result.result : undefined;
+    return { content, ...(structuredContent && { structuredContent }), isError: false };
   }
 }
 
@@ -293,6 +328,60 @@ function invalidRequest(message: unknown): JsonRpcResponse {
 }
 
 type McpRequestHandler = ReturnType<typeof createMcpHandler>;
+
+type McpSession = { version: string; calls: Set<AbortController>; timer?: ReturnType<typeof setTimeout> };
+
+/**
+ * HTTP sessions, least recently used first. One is dropped (its calls aborted) after `ttl` ms without requests, or when a
+ * new one would make more than `max`.
+ */
+function createSessionStore(ttl: number | undefined, max: number, newId: () => string) {
+  const sessions = new Map<string, McpSession>();
+  const drop = (id: string, reason: string): boolean => {
+    const session = sessions.get(id);
+    if (!session) return false;
+    sessions.delete(id);
+    clearTimeout(session.timer);
+    for (const call of session.calls) call.abort(reason);
+    return true;
+  };
+  const expireWhenIdle = (id: string, session: McpSession) => {
+    clearTimeout(session.timer);
+    if (ttl === undefined || session.calls.size > 0) return;
+    session.timer = setTimeout(() => drop(id, 'Session expired'), ttl);
+    session.timer.unref?.();
+  };
+  return {
+    get: (id: string) => sessions.get(id),
+    drop,
+    create(version: string): string {
+      for (const oldest of sessions.keys()) {
+        if (sessions.size < Math.max(1, max)) break;
+        drop(oldest, 'Session evicted');
+      }
+      const id = newId();
+      const session: McpSession = { version, calls: new Set() };
+      sessions.set(id, session);
+      expireWhenIdle(id, session);
+      return id;
+    },
+    /** A request on the session: it becomes the most recently used and doesn't expire until the returned function is called. */
+    begin(id: string, session: McpSession, call: AbortController): () => void {
+      sessions.delete(id);
+      sessions.set(id, session);
+      clearTimeout(session.timer);
+      session.calls.add(call);
+      return () => {
+        session.calls.delete(call);
+        if (sessions.get(id) === session) expireWhenIdle(id, session);
+      };
+    },
+    clear() {
+      for (const session of sessions.values()) clearTimeout(session.timer);
+      sessions.clear();
+    },
+  };
+}
 
 /** stdio transport: newline-delimited JSON per 2025-11-25 spec. */
 async function startStdioTransport(handleRequest: McpRequestHandler): Promise<void> {
@@ -342,9 +431,11 @@ async function startHttpTransport(
   const port = prefs.port ?? 3000;
   const host = prefs.host ?? '127.0.0.1';
   const endpoint = prefs.basePath ?? '/mcp';
+  let baseUrl = serverBaseUrl(host, port);
+  const authenticate = createAuthenticator(prefs);
 
   // One per initialized client: the negotiated protocol version, and the calls in flight (aborted when it's terminated)
-  const sessions = new Map<string, { version: string; calls: Set<AbortController> }>();
+  const sessions = createSessionStore(prefs.sessionTtl, prefs.maxSessions ?? 1000, () => crypto.randomUUID());
 
   const corsOrigin = prefs.cors !== false ? (prefs.cors ?? '*') : undefined;
 
@@ -358,7 +449,7 @@ async function startHttpTransport(
     if (corsOrigin) {
       res.setHeader('Access-Control-Allow-Origin', corsOrigin);
       res.setHeader('Access-Control-Allow-Methods', 'POST, GET, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, MCP-Session-Id, MCP-Protocol-Version');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, MCP-Session-Id, MCP-Protocol-Version');
       res.setHeader('Access-Control-Expose-Headers', 'MCP-Session-Id');
     }
 
@@ -368,7 +459,7 @@ async function startHttpTransport(
       sendJson(403, { jsonrpc: '2.0', id: null, error: { code: -32600, message: `Origin not allowed: ${origin}` } });
       return;
     }
-    if (!isAllowedHost(req.headers.host, host)) {
+    if (!isAllowedHost(req.headers.host, host, prefs.allowedHosts)) {
       sendJson(403, { jsonrpc: '2.0', id: null, error: { code: -32600, message: `Host not allowed: ${req.headers.host}` } });
       return;
     }
@@ -385,15 +476,33 @@ async function startHttpTransport(
       return;
     }
 
+    if (req.method !== 'POST' && req.method !== 'GET' && req.method !== 'DELETE') {
+      res.writeHead(405);
+      res.end();
+      return;
+    }
+
+    let auth: unknown;
+    if (authenticate) {
+      try {
+        auth = await authenticate(new Request(`${baseUrl}${req.url ?? '/'}`, { method: req.method, headers: toFetchHeaders(req.headers) }));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        sendJson(500, { jsonrpc: '2.0', id: null, error: { code: -32603, message: `Internal error: ${message}` } });
+        return;
+      }
+      if (!auth) {
+        res.setHeader('WWW-Authenticate', 'Bearer');
+        sendJson(401, { jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Unauthorized' } });
+        return;
+      }
+    }
+
     // DELETE: terminate session
     if (req.method === 'DELETE') {
       const reqSessionId = req.headers['mcp-session-id'] as string | undefined;
-      const session = reqSessionId ? sessions.get(reqSessionId) : undefined;
-      if (reqSessionId && session) {
-        sessions.delete(reqSessionId);
-        for (const call of session.calls) call.abort('Session terminated');
-      }
-      res.writeHead(!reqSessionId ? 400 : session ? 200 : 404);
+      const dropped = reqSessionId ? sessions.drop(reqSessionId, 'Session terminated') : false;
+      res.writeHead(!reqSessionId ? 400 : dropped ? 200 : 404);
       res.end();
       return;
     }
@@ -402,12 +511,6 @@ async function startHttpTransport(
     if (req.method === 'GET') {
       res.writeHead(405, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32601, message: 'SSE stream not supported' } }));
-      return;
-    }
-
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end();
       return;
     }
 
@@ -447,16 +550,16 @@ async function startHttpTransport(
     res.on('close', () => {
       if (!res.writableFinished) call.abort('Client disconnected');
     });
-    session?.calls.add(call);
+    const done = session && reqSessionId ? sessions.begin(reqSessionId, session, call) : undefined;
     let response: JsonRpcResponse | undefined;
     try {
-      response = await handleRequest(rpcRequest, call.signal, reqSessionId);
+      response = await handleRequest(rpcRequest, call.signal, reqSessionId, auth);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       sendJson(500, { jsonrpc: '2.0', id: null, error: { code: -32603, message: `Internal error: ${message}` } });
       return;
     } finally {
-      session?.calls.delete(call);
+      done?.();
     }
     if (response?.error?.code === -32600 && response.id === null) {
       sendJson(400, response);
@@ -466,9 +569,7 @@ async function startHttpTransport(
     // On initialize response: create session and set header
     const initialized = (response?.result as { protocolVersion?: string } | undefined)?.protocolVersion;
     if ((rpcRequest as JsonRpcRequest).method === 'initialize' && initialized) {
-      const sessionId = crypto.randomUUID();
-      sessions.set(sessionId, { version: initialized, calls: new Set() });
-      res.setHeader('MCP-Session-Id', sessionId);
+      res.setHeader('MCP-Session-Id', sessions.create(initialized));
     }
 
     if (response) {
@@ -490,13 +591,19 @@ async function startHttpTransport(
 
   return new Promise<void>((resolve, reject) => {
     server.listen(port, host, () => {
-      log(`MCP server listening on http://${host}:${port}${endpoint}`);
+      // The port it got, for port 0
+      const address = server.address();
+      baseUrl = serverBaseUrl(host, typeof address === 'object' && address ? address.port : port);
+      log(`MCP server listening on ${baseUrl}${endpoint}`);
     });
     server.on('error', reject);
     const unsubscribe = onSignal?.(() => {
       server.close(() => resolve());
     });
-    server.on('close', () => unsubscribe?.());
+    server.on('close', () => {
+      unsubscribe?.();
+      sessions.clear();
+    });
   });
 }
 

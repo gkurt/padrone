@@ -208,6 +208,7 @@ export type {
   PadroneEvent,
   PadroneEventContext,
   PadroneEventHandler,
+  PadroneExpose,
   PadroneExtension,
   PadroneExtraCommand,
   PadroneFieldGroups,

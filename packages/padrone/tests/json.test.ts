@@ -134,7 +134,7 @@ describe('--jq and --template', () => {
     const { output, runtime } = capture();
     list.eval(['users', '--jq', '.[] | select(.admin) | .name'], { runtime });
     list.eval(['users', '--jq', '.[0] | {id}'], { runtime });
-    expect(output).toEqual(['ann', JSON.stringify({ id: 1 }, null, 2)]);
+    expect(output).toEqual(['ann', '{"id":1}']);
   });
 
   it('applies --jq to each streamed item', () => {

@@ -72,10 +72,15 @@ function isDebugEnv(env: Record<string, string | undefined>): boolean {
 function toErrorJson(error: unknown, stack: boolean): { error: Record<string, unknown> } {
   if (!(error instanceof Error)) return { error: { message: String(error) } };
   const { exitCode, suggestions, command } = error as { exitCode?: number; suggestions?: string[]; command?: string };
+  // The text form ends with its suggestions ("Did you mean ..."), which JSON lists on their own
+  const message = (suggestions ?? []).reduceRight(
+    (text, s) => (text.endsWith(s) ? text.slice(0, -s.length).trimEnd() : text),
+    error.message,
+  );
   return {
     error: {
       name: error.name,
-      message: error.message,
+      message,
       ...(command !== undefined && { command }),
       ...(exitCode !== undefined && { exitCode }),
       ...(suggestions?.length && { suggestions }),

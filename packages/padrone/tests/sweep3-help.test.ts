@@ -50,7 +50,7 @@ describe('--color', () => {
 
   it('takes values after =', () => {
     expect(run('--color=never', 'x')).toMatchObject({ name: 'x', format: 'text' });
-    expect(run('--color=dracula', 'x')).toMatchObject({ name: 'x', format: 'ansi', theme: 'dracula' });
+    expect(run('--color=warm', 'x')).toMatchObject({ name: 'x', format: 'ansi', theme: 'warm' });
     expect(run('--no-color', 'x')).toMatchObject({ name: 'x', format: 'text' });
     expect(run('--color=auto')).toMatchObject({ format: 'auto' });
   });

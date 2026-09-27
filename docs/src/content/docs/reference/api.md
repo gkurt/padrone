@@ -1239,7 +1239,7 @@ Each role accepts an array of styles: `'bold'`, `'dim'`, `'italic'`, `'underline
 
 ### Disabling Colors
 
-Use the `--color` global flag, or the `NO_COLOR` / `FORCE_COLOR` environment variables:
+Use the `--color` global flag, or the `NO_COLOR` / `FORCE_COLOR` / `CLICOLOR` / `CLICOLOR_FORCE` environment variables:
 
 ```bash
 # Disable colors
@@ -1248,15 +1248,18 @@ myapp --help --color=never   # or --color=false / off / no / 0
 
 # Force colors, e.g. when piping to a pager
 myapp --help --color | less -R   # or --color=always / on / yes
-myapp --help --color=ocean       # a theme; values need `=` (`--color ocean` leaves `ocean` as an argument)
+myapp --help --color=ocean       # a theme (default, ocean, warm, monochrome; others are an error); values need `=`
 
 # Detect from the terminal (the default)
 myapp --help --color=auto
 
-# Or via environment (FORCE_COLOR wins over NO_COLOR and TERM=dumb; FORCE_COLOR=0 disables)
-NO_COLOR=1 myapp --help
-TERM=dumb myapp --help
+# Or via environment, checked in this order: FORCE_COLOR (FORCE_COLOR=0 disables), NO_COLOR,
+# CLICOLOR_FORCE (on unless 0), CLICOLOR=0, TERM=dumb, CI (CI=false and CI=0 don't count), then the terminal
 FORCE_COLOR=1 myapp --help
+NO_COLOR=1 myapp --help
+CLICOLOR_FORCE=1 myapp --help | less -R
+CLICOLOR=0 myapp --help
+TERM=dumb myapp --help
 ```
 
 The flag switches the `auto` format to `text` or `ansi`; an explicit non-ANSI `format` (such as `json`) is kept.
@@ -1457,8 +1460,8 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneConfig(options)` | Load args from config files (layered with `merge` and `extends`; `profiles`; a `config` command) |
 | `padroneProgress(config)` | Auto-managed progress indicators, and task lists with `progress.tasks()` |
 | `padroneLogger(options)` | Structured logging with levels (`--verbose` (repeatable), `--quiet`, `--log-level`; `shortFlags: true` adds `-v`/`-vv`/`-q`; `env` reads the level from a variable). Logs go to stderr with colored level labels; `stdout: true` sends `trace`/`debug`/`info` to stdout, and `format: 'json'` writes JSON lines (`logger.info({ userId }, 'signed in')` adds fields) |
-| `padroneJson(options?)` | `--json` flag: prints the result as JSON (iterator items one per line). `--jq <expr>` filters it (a built-in jq subset, or pass `jq: (input, expr) => outputs` for a full implementation) and `--template '{{.name}}'` formats it; both imply `--json`. Errors in `cli()` print as `{ "error": { ... } }` on stdout under JSON output. `fields: true` lets `--json=name,url` keep only those fields (`fields: 'required'`: also `--json name,url`, and a bare `--json` fails listing the fields); `availableFields` declares them |
-| `padroneFormat(options?)` | `--output`/`-o <format>`: `text` (default), `json` (like `--json`), `yaml`, `csv`, `tsv`, `table`. Options: `formats`, `default`, `flags`, and `tableFlags` for `--columns a,b`, `--sort [-]column` and `--no-header`. String results print as text under yaml/csv/tsv/table (other non-objects under csv/tsv/table); `--json`/`--jq`/`--template` take precedence |
+| `padroneJson(options?)` | `--json` flag: prints the result as JSON (iterator items one per line). `--jq <expr>` filters it (a built-in jq subset with `if`, `as $x`, arithmetic, regex `test`/`sub`/`gsub` and `@csv`/`@tsv`, or pass `jq: (input, expr) => outputs` for a full implementation; non-string outputs are compact JSON when piped, indented on a terminal) and `--template '{{.name}}'` formats it; both imply `--json`. Errors in `cli()` print as `{ "error": { ... } }` on stdout under JSON output. `fields: true` lets `--json=name,url` keep only those fields (`fields: 'required'`: also `--json name,url`, and a bare `--json` fails listing the fields); `availableFields` declares them |
+| `padroneFormat(options?)` | `--output`/`-o <format>`: `text` (default), `json` (like `--json`), `yaml`, `csv`, `tsv`, `table`. Options: `formats`, `default`, `flags`, `tableFlags` for `--columns a,b`, `--sort [-]column` and `--no-header`, `columns` (`{ id: 'ID' }` or `(command) => …`: default columns and header labels), `pipedTable: 'tsv'` (`-o table` prints TSV when stdout isn't a terminal) and `csvLineEnding: 'crlf'`. Table cells with newlines span several lines. String results print as text under yaml/csv/tsv/table (other non-objects under csv/tsv/table); `--json`/`--jq`/`--template` take precedence |
 | `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and without a terminal (CI, piped stdin or stdout, `--no-interactive`) the command fails unless `--yes` is given. Options: `message`, `when`, `flags` |
 | `padroneTiming()` | Execution timing |
 | `padroneUpdateCheck(config)` | Background version checking |
@@ -1484,7 +1487,7 @@ The following extensions are applied automatically by `createPadrone()` and can 
 | `padroneHelp(options?)` | `help` | Help command and `--help` flag. Options: `showHelpOnError` prints the full help after errors; `flags` renames the help flags (default `['help', 'h']`); `pager: true` shows help taller than the terminal through `$PAGER` or `less -FRX` in `cli()` (a string sets the fallback pager; `--no-pager` / `--pager` per run); `pickSubcommand: true` asks which subcommand to run (a select prompt) when a group command runs without one in `cli()`/REPL; `topics: { name: { title?, description?, content } }` adds `help <topic>` guides, listed under "Additional help topics" |
 | `padroneVersion(options?)` | `version` | Version command and `--version` flag (on any command; single-character flags on the root only). `version --verbose` adds the runtime, platform, architecture and shell (an object under `--json`). Options: `flags` renames the version flags (default `['version', 'v', 'V']`); `info` adds fields to `--verbose` |
 | `padroneRepl()` | `repl` | REPL command and `--repl` flag |
-| `padroneColor()` | `color` | `--color`/`--no-color` support |
+| `padroneColor()` | `color` | `--color`/`--no-color` support; an unknown `--color=<theme>` is an error listing the themes |
 | `padroneSuggestions(options?)` | `suggestions` | "Did you mean?" suggestions. `run: 'prompt'` asks whether to run the closest command after an unknown one in `cli()`/REPL |
 | `padroneSignalHandling()` | `signal` | Signal handling and AbortSignal |
 | `padroneAutoOutput(options?)` | `autoOutput` | Auto-print results and errors. `errorStack: true` (or the `DEBUG` env variable) prints stack traces with their `cause` chain |

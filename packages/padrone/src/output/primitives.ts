@@ -49,6 +49,8 @@ export function stringifyCell(value: unknown): string {
   return String(value);
 }
 
+const cellLines = (text: string) => text.split(/\r?\n/);
+
 const toJson = (value: unknown) => safeJsonStringify(value, 2) ?? 'null';
 
 function truncate(text: string, max: number): string {
@@ -88,13 +90,18 @@ export function renderTable(data: Record<string, unknown>[], options: TableOptio
   const rows = data.map((row) =>
     columns.map((col) => {
       const text = stringifyCell(row[col]);
-      return maxCol ? truncate(text, maxCol) : text;
+      return maxCol
+        ? cellLines(text)
+            .map((line) => truncate(line, maxCol))
+            .join('\n')
+        : text;
     }),
   );
 
+  const widthOf = (cell: string) => Math.max(...cellLines(cell).map(displayWidth));
   const colWidths = columns.map((_, i) => {
-    const headerWidth = options?.header === false ? 0 : displayWidth(headers[i]!);
-    const maxCellWidth = rows.reduce((max, row) => Math.max(max, displayWidth(row[i]!)), 0);
+    const headerWidth = options?.header === false ? 0 : widthOf(headers[i]!);
+    const maxCellWidth = rows.reduce((max, row) => Math.max(max, widthOf(row[i]!)), 0);
     return Math.max(headerWidth, maxCellWidth);
   });
 
@@ -115,27 +122,26 @@ function renderTableText(
   ctx: OutputContext,
 ): string {
   const { styler } = ctx;
-  const formatRow = (cells: string[], style?: (s: string) => string) =>
-    cells.map((cell, i) => {
-      const padded = padCell(cell, colWidths[i]!, getAlign(i));
-      return style ? style(padded) : padded;
-    });
+  // A row with multi-line cells takes a line per cell line, the other cells padded with blanks
+  const formatRow = (cells: string[], style: (s: string) => string, join: (padded: string[]) => string) => {
+    const lines = cells.map(cellLines);
+    const height = Math.max(...lines.map((l) => l.length));
+    return Array.from({ length: height }, (_, n) =>
+      join(lines.map((cell, i) => style(padCell(cell[n] ?? '', colWidths[i]!, getAlign(i))))),
+    ).join('\n');
+  };
 
   if (border) {
     const sep = ctx.styler.meta('─');
     const divider = colWidths.map((w) => sep.repeat(w + 2)).join(styler.meta('┼'));
-    const row = (cells: string[], style: (s: string) => string) =>
-      formatRow(cells, style)
-        .map((c) => ` ${c} `)
-        .join(styler.meta('│'));
-    const dataRows = rows.map((r) => row(r, styler.description));
-    return (header ? [row(headers, styler.label), divider, ...dataRows] : dataRows).join('\n');
+    const join = (padded: string[]) => padded.map((c) => ` ${c} `).join(styler.meta('│'));
+    const dataRows = rows.map((r) => formatRow(r, styler.description, join));
+    return (header ? [formatRow(headers, styler.label, join), divider, ...dataRows] : dataRows).join('\n');
   }
 
-  const headerCells = formatRow(headers, styler.label);
-  const dataCells = rows.map((r) => formatRow(r, styler.description));
-  const gap = '  ';
-  return [...(header ? [headerCells.join(gap)] : []), ...dataCells.map((r) => r.join(gap))].join('\n');
+  const join = (padded: string[]) => padded.join('  ');
+  const dataRows = rows.map((r) => formatRow(r, styler.description, join));
+  return (header ? [formatRow(headers, styler.label, join), ...dataRows] : dataRows).join('\n');
 }
 
 const markdownCell = (text: string) => text.replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');

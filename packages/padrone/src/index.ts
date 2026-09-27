@@ -33,6 +33,7 @@ export type {
   PadroneConfigProfilesOptions,
   PadroneConfirmOptions,
   PadroneEnvOptions,
+  PadroneFormatColumns,
   PadroneFormatOptions,
   PadroneHelpOptions,
   PadroneHelpTopic,

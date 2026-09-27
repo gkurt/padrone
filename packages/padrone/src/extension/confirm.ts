@@ -49,7 +49,7 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
           return next();
         },
         execute(ctx, next) {
-          if (confirmed || !CONFIRM_CALLERS.has(ctx.caller) || !when(ctx.command, ctx.args)) return next();
+          if (confirmed || ctx.dryRun || !CONFIRM_CALLERS.has(ctx.caller) || !when(ctx.command, ctx.args)) return next();
 
           const { runtime, command } = ctx;
           const path = command.path || command.name;

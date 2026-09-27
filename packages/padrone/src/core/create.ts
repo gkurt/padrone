@@ -177,6 +177,9 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
         action: (args: any, ctx: any) => (handler as any)(args, ctx, baseHandler),
       }) as any;
     },
+    dryRun(handler) {
+      return createPadroneBuilder({ ...existingCommand, dryRun: handler as AnyPadroneCommand['dryRun'] }) as any;
+    },
     wrap(config) {
       const handler = createWrapHandler(config, existingCommand.argsSchema as any, existingCommand.meta?.positional);
       return createPadroneBuilder({ ...existingCommand, action: handler }) as any;

@@ -346,6 +346,7 @@ const timer = defineInterceptor({ name: 'timer' }, () => ({
 |----------|------|-------------|
 | `command` | `PadroneCommand` | Resolved command |
 | `args` | `unknown` | Mutable validated arguments — modify before `next()` |
+| `dryRun` | `boolean \| undefined` | `true` under `--dry-run`: the command's dry-run handler runs instead of its action. Skip your own side effects |
 | `signal` | `AbortSignal` | Cancellation signal |
 | `context` | `unknown` | User-provided context |
 | `caller` | `string` | Invocation method |
@@ -353,7 +354,7 @@ const timer = defineInterceptor({ name: 'timer' }, () => ({
 **Result:**
 | Property | Type | Description |
 |----------|------|-------------|
-| `result` | `unknown` | Action handler return value |
+| `result` | `unknown` | Action handler return value (the dry-run handler's under `--dry-run`) |
 
 #### Error Phase
 

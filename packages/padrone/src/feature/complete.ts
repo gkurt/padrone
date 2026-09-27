@@ -1,6 +1,6 @@
 import { extractSchemaMetadata, getJsonSchema, getOptionArity, parsePositionalConfig } from '../core/args.ts';
 import { findCommandByName, getGlobalArgs } from '../core/commands.ts';
-import { parseCommand } from '../core/validate.ts';
+import { getDryRunFlagKeys, parseCommand } from '../core/validate.ts';
 import type { AnyPadroneCommand, PadroneFieldMeta, PadroneSchema } from '../types/index.ts';
 import type { ShellType } from '../util/shell-utils.ts';
 
@@ -135,7 +135,8 @@ export async function getCompletions(rootCommand: AnyPadroneCommand, words: read
       return filter(values.map((v) => `${option}=${v}`));
     }
     const names = fields.filter((f) => !f.meta?.hidden).flatMap((f) => f.longNames.map((n) => `--${n}`));
-    return filter([...names, '--help']);
+    const dryRun = getDryRunFlagKeys(command).includes('dry-run') ? ['--dry-run'] : [];
+    return filter([...names, ...dryRun, '--help']);
   }
 
   const subcommands =

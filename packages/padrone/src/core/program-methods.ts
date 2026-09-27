@@ -18,7 +18,7 @@ import type { ExecContext } from './exec.ts';
 import { collectInterceptors, errorResultWithSignal, execCommand } from './exec.ts';
 import { resolveRegisteredInterceptors, runInterceptorChain } from './interceptors.ts';
 import { errorResult, makeThenable, thenMaybe, warnIfUnexpectedAsync, withDrain, withPromiseDrain } from './results.ts';
-import { coreValidateForParse } from './validate.ts';
+import { coreValidateForParse, takeDryRunFlag } from './validate.ts';
 
 /** The exit code an error asks for: its own `exitCode` (as `PadroneError` carries), or 1. */
 function errorExitCode(error: unknown): number {
@@ -215,6 +215,8 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
       } satisfies Schema<{ command: string }> as Schema<{ command: string }>,
       needsApproval: async (input) => {
         const parsed = await parse(input.command);
+        // A dry run changes nothing
+        if (parsed.dryRun) return false;
         if (typeof parsed.command.needsApproval === 'function') return parsed.command.needsApproval(parsed.args);
         if (parsed.command.needsApproval != null) return !!parsed.command.needsApproval;
         return !!parsed.command.mutation;
@@ -264,12 +266,18 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
 
   const parse: AnyPadroneProgram['parse'] = (input) => {
     const { command, rawArgs, args, issues } = ctx.parseCommandFn(input as string | undefined);
+    const dryRun = takeDryRunFlag(command, rawArgs);
 
     const validatedOrPromise = issues ? { args: undefined, argsResult: { issues } } : coreValidateForParse(command, rawArgs, args);
 
     return makeThenable(
       warnIfUnexpectedAsync(
-        thenMaybe(validatedOrPromise, (v: any) => ({ command: command as any, args: v.args, argsResult: v.argsResult })),
+        thenMaybe(validatedOrPromise, (v: any) => ({
+          command: command as any,
+          args: v.args,
+          argsResult: v.argsResult,
+          ...(dryRun && { dryRun }),
+        })),
         command,
       ),
     ) as any;

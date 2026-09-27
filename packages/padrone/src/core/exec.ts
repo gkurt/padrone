@@ -20,7 +20,7 @@ import { getCommandRuntime } from './commands.ts';
 import { RoutingError, SignalError, ValidationError } from './errors.ts';
 import { resolveRegisteredInterceptors, runInterceptorChain, wrapWithCommandLifecycle, wrapWithLifecycle } from './interceptors.ts';
 import { errorResult, noop, thenMaybe, warnIfUnexpectedAsync, withDrain } from './results.ts';
-import { buildCommandArgs, formatIssueMessages, getDeprecationWarnings, validateCommandArgs } from './validate.ts';
+import { buildCommandArgs, formatIssueMessages, getDeprecationWarnings, takeDryRunFlag, validateCommandArgs } from './validate.ts';
 
 export type ExecContext = {
   rootCommand: AnyPadroneCommand;
@@ -210,6 +210,8 @@ export function execCommand(
 
       const continueAfterRoute = () => {
         pipelineState.phase = 'route';
+        // Taken before validation so it isn't an unknown option; only commands with a dry-run handler have it
+        const dryRun = takeDryRunFlag(command, parsed.rawArgs);
         const runValidateAndExecute = () => {
           // ── Phase 3: Validate ───────────────────────────────────────────
           const validateCtx: InterceptorValidateContext = {
@@ -246,10 +248,12 @@ export function execCommand(
             const executeCtx: InterceptorExecuteContext = {
               ...validateCtx,
               args: v.args,
+              ...(dryRun && { dryRun }),
             };
 
             const coreExecute = (executeCtx: InterceptorExecuteContext): InterceptorExecuteResult => {
-              const handler = command.action ?? noop;
+              // Under --dry-run the action never runs
+              const handler = (dryRun ? command.dryRun : command.action) ?? noop;
               const effectiveRuntime = executeCtx.runtime;
               const actionCtx: PadroneActionContext = {
                 runtime: effectiveRuntime,

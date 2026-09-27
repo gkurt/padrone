@@ -200,6 +200,28 @@ program.action((args, ctx) => {
 
 ---
 
+### .dryRun(handler)
+
+Give the command a dry run. The command then accepts `--dry-run` / `-n`, and under that flag `handler` runs **instead of** the action (the action never runs), after validation and with the same arguments and context. Return what would change; it's printed like an action's result (JSON under `--json`).
+
+```typescript
+program.command('rm', (c) =>
+  c
+    .configure({ mutation: true })
+    .arguments(z.object({ paths: z.string().array() }), { positional: ['...paths'] })
+    .dryRun((args) => args.paths.map((path) => `delete ${path}`).join('\n'))
+    .action((args) => removeFiles(args.paths)),
+);
+// files rm a.txt b.txt --dry-run   → delete a.txt / delete b.txt, nothing deleted
+```
+
+- Only commands with a dry-run handler accept the flag and show it in help; anywhere else `--dry-run` is an unknown option, so it's never silently ignored. A command's own `dryRun` / `dry-run` option, or its own `-n` flag, takes precedence over the framework's.
+- Execute interceptors still run (so context such as a database connection reaches the handler), with `ctx.dryRun` set; `padroneConfirm()` doesn't ask for confirmation in a dry run.
+- `parse()` reports `dryRun: true`; `tool()` needs no approval for a dry run; MCP and serve take `dryRun: true` as an argument on these commands.
+- The result is typed as the action's, but under `--dry-run` it's the dry-run handler's return value.
+
+---
+
 ### padroneEnv(schema)
 
 Extension for parsing environment variables into arguments. The schema validates `process.env` and transforms env var names into argument field names. Imported from `'padrone'`.

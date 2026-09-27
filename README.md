@@ -124,6 +124,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.arguments(schema, meta?)` | Define args with Zod schema, positional config, field metadata |
 | `.globalArgs(schema, meta?)` | Define options shared by a command and all its subcommands, merged into their args |
 | `.action(handler)` | Set handler `(args, ctx, base?) => result` |
+| `.dryRun(handler)` | Add `--dry-run` / `-n`: runs `handler` instead of the action and prints what would change |
 | `.command(name, builder)` | Add subcommand (name or `[name, ...aliases]`) |
 | `.context(transform?)` | Define typed context or transform inherited context |
 | `.mount(name, program, options?)` | Mount another program as subcommand tree |

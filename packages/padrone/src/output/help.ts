@@ -7,6 +7,7 @@ import {
   parsePositionalConfig,
 } from '../core/args.ts';
 import { findCommandByName, getGlobalArgs, resolveCommand } from '../core/commands.ts';
+import { getDryRunFlagKeys } from '../core/validate.ts';
 import type { AnyPadroneCommand, InterceptorMeta, PadroneSchema } from '../types/index.ts';
 import { getRootCommand } from '../util/utils.ts';
 import type { ColorConfig, ColorTheme } from './colorizer.ts';
@@ -355,6 +356,17 @@ export function getHelpInfo(cmd: AnyPadroneCommand, detail: HelpPreferences['det
     : [];
 
   const visibleArgs = [...ownArgs, ...inheritedArgs].filter((arg) => !arg.hidden);
+  // Only commands with a dry-run handler take --dry-run
+  const dryRunKeys = getDryRunFlagKeys(cmd);
+  if (dryRunKeys.includes('dry-run')) {
+    visibleArgs.push({
+      name: 'dry-run',
+      description: 'Show what would change without changing anything',
+      optional: true,
+      type: 'boolean',
+      ...(dryRunKeys.includes('n') && { flags: ['n'] }),
+    });
+  }
   const envVarsOf = collectInterceptorEnv(cmd);
   for (const arg of visibleArgs) {
     const names = envVarsOf(arg.name);

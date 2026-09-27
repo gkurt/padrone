@@ -119,6 +119,34 @@ function getCommandOptionInfo(command: AnyPadroneCommand): CommandOptionInfo {
   };
 }
 
+const DRY_RUN_LONG_NAMES = ['dry-run', 'dryRun'];
+
+/**
+ * The raw-arg keys that mean `--dry-run` / `-n` on a command: only when it has a dry-run handler (`.dryRun()`),
+ * and only names its own options don't use. Anywhere else the flag is an unknown option, so it can't be ignored.
+ */
+function dryRunKeysFor(command: AnyPadroneCommand, info: CommandOptionInfo): string[] {
+  if (!command.dryRun) return [];
+  const free = (name: string, short: boolean) => info.schemaArity([name], short) === undefined && !info.properties.has(name);
+  return [...(DRY_RUN_LONG_NAMES.every((name) => free(name, false)) ? DRY_RUN_LONG_NAMES : []), ...(free('n', true) ? ['n'] : [])];
+}
+
+export function getDryRunFlagKeys(command: AnyPadroneCommand): string[] {
+  return command.dryRun ? dryRunKeysFor(command, getCommandOptionInfo(command)) : [];
+}
+
+/** Removes `--dry-run` / `-n` from `rawArgs`; `true` when it was given (and not negated). */
+export function takeDryRunFlag(command: AnyPadroneCommand, rawArgs: Record<string, unknown>): boolean {
+  let dryRun = false;
+  for (const key of getDryRunFlagKeys(command)) {
+    if (!Object.hasOwn(rawArgs, key)) continue;
+    const value = rawArgs[key];
+    delete rawArgs[key];
+    if (value !== false && value !== 'false') dryRun = true;
+  }
+  return dryRun;
+}
+
 /**
  * Splits args into the command's own and the global ones. A key belongs to the globals only when
  * the global schema defines it and the command's own schema doesn't (a command can override a global).
@@ -166,6 +194,7 @@ export function createParseResolver(
       return (
         own.schemaArity(key, short) ??
         (defaultCommand ? info(defaultCommand).schemaArity(key, short) : undefined) ??
+        (key.length === 1 && dryRunKeysFor(current, own).includes(key[0]!) ? 'flag' : undefined) ??
         (key.length === 1 ? own.interceptorOptions[key[0]!] : undefined)
       );
     },

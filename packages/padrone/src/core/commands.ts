@@ -72,6 +72,7 @@ export function mergeCommands(existing: AnyPadroneCommand, override: AnyPadroneC
 
   // Override fields: take from override if explicitly set (not inherited from existing via spread)
   if (override.action !== existing.action) merged.action = override.action;
+  if (override.dryRun !== existing.dryRun) merged.dryRun = override.dryRun;
   if (override.argsSchema !== existing.argsSchema) merged.argsSchema = override.argsSchema;
   if (override.globalArgsSchema !== existing.globalArgsSchema) merged.globalArgsSchema = override.globalArgsSchema;
   if (override.globalArgsMeta !== existing.globalArgsMeta) merged.globalArgsMeta = override.globalArgsMeta;
@@ -363,8 +364,21 @@ export function collectEndpoints(commands: AnyPadroneCommand[] | undefined, pref
   return endpoints;
 }
 
-/** Build the JSON Schema for a command's arguments. */
+/** Build the JSON Schema for a command's arguments, plus `dryRun` when it has a dry-run handler. */
 export function buildInputSchema(cmd: AnyPadroneCommand): Record<string, unknown> {
+  const schema = buildArgsInputSchema(cmd);
+  const properties = (schema.properties ?? {}) as Record<string, unknown>;
+  if (!cmd.dryRun || (schema.type !== undefined && schema.type !== 'object') || 'dryRun' in properties || 'dry-run' in properties)
+    return schema;
+  // Serve, MCP and tool callers ask for a dry run with `dryRun: true`, like `--dry-run`
+  return {
+    ...schema,
+    type: 'object',
+    properties: { ...properties, dryRun: { type: 'boolean', description: 'Show what would change without changing anything' } },
+  };
+}
+
+function buildArgsInputSchema(cmd: AnyPadroneCommand): Record<string, unknown> {
   const empty = { type: 'object', additionalProperties: false };
   let own: Record<string, any> = empty;
   try {

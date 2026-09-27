@@ -533,6 +533,34 @@ export type PadroneBuilderMethods<
     TGlobals
   >;
 
+  /**
+   * Set a dry-run handler. The command then accepts `--dry-run` / `-n`, and under that flag this handler runs
+   * instead of the action (the action never runs), after validation and with the same context. Return what would
+   * change: it's printed like an action's result (e.g. a string, or a generator yielding one line per change;
+   * JSON under `--json`). Execute interceptors run too, with `ctx.dryRun` set.
+   * Commands without a dry-run handler reject `--dry-run` as an unknown option, so it can't be silently ignored.
+   * @category Builder
+   */
+  dryRun: (
+    handler: (
+      args: StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>,
+      ctx: PadroneActionContext<TContext & TContextProvided>,
+    ) => unknown,
+  ) => BuilderOrProgram<
+    TReturn,
+    TProgramName,
+    TName,
+    TParentName,
+    TArgs,
+    TRes,
+    TCommands,
+    TParentArgs,
+    TAsync,
+    TContext,
+    TContextProvided,
+    TGlobals
+  >;
+
   /** Wrap an external CLI tool, delegating execution to a shell command. @category Builder */
   wrap: <TWrapArgs extends PadroneSchema = TArgs>(
     config: WrapConfig<TArgs, TWrapArgs>,

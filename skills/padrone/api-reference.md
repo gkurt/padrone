@@ -187,6 +187,15 @@ Defines the command handler. Called with no args to create a passthrough command
 - `ctx`: `{ runtime, command, program, progress, context }`
 - `base`: Previous handler when overriding an existing command
 
+### `.dryRun(handler)`
+
+Adds `--dry-run` / `-n` to the command. Under that flag `handler(args, ctx)` runs instead of the action (after validation, with the same context) and its return value is printed as the result. Only commands with a dry-run handler accept the flag; elsewhere it's an unknown option. Execute interceptors see `ctx.dryRun`; `padroneConfirm()` skips the prompt; MCP/serve take `dryRun: true`; `parse()` reports `dryRun`.
+
+```ts
+.dryRun((args) => args.paths.map((p) => `delete ${p}`).join('\n'))
+.action((args) => removeFiles(args.paths))
+```
+
 ### `.command(name, builderFn?)`
 
 Creates or extends a subcommand.

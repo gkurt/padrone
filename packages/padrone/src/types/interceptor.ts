@@ -72,6 +72,11 @@ export type InterceptorValidateResult<TArgs = unknown> = {
 export type InterceptorExecuteContext<TArgs = unknown, TContext = object> = InterceptorValidateContext<TContext> & {
   /** Validated arguments that will be passed to the action. Mutable — modify before `next()` to override. */
   args: TArgs;
+  /**
+   * `true` under `--dry-run`: the command's dry-run handler runs instead of its action.
+   * Interceptors that change things themselves should skip that work.
+   */
+  dryRun?: boolean;
 };
 
 /** Result returned by the execute phase's `next()`. */

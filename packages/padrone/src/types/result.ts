@@ -62,6 +62,8 @@ export type PadroneParseResult<TCommand extends AnyPadroneCommand = AnyPadroneCo
   command: TCommand;
   args?: GetArguments<'out', TCommand>;
   argsResult?: StandardSchemaV1.Result<GetArguments<'out', TCommand>>;
+  /** `--dry-run` / `-n` was given (only on commands with a dry-run handler). */
+  dryRun?: boolean;
 };
 
 export type PadroneAPI<TCommand extends AnyPadroneCommand> = PadroneAPICommand<TCommand> & {

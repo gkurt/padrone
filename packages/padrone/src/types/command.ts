@@ -127,6 +127,8 @@ export type PadroneCommand<
   globalArgsSchema?: PadroneSchema;
   globalArgsMeta?: PadroneGlobalArgsMeta;
   action?: (args: StandardSchemaV1.InferOutput<TArgs>, ctx: PadroneActionContext<TContext & TContextProvided>) => TRes;
+  /** Runs instead of `action` under `--dry-run` / `-n`; the flag only exists on commands that have one. Set by `.dryRun()`. */
+  dryRun?: (args: StandardSchemaV1.InferOutput<TArgs>, ctx: PadroneActionContext<TContext & TContextProvided>) => unknown;
   /** Runtime flag indicating this command uses async validation. Set by `.async()` or `asyncSchema()`. */
   isAsync?: boolean;
   /** Runtime configuration for I/O abstraction. */

@@ -199,7 +199,8 @@ export function createPizza(options: PizzaOptions = {}) {
             {
               positional: ['id'],
               stdin: 'comment',
-              fields: { stars: { flags: 'r', atLeastOne: ['comment'] }, comment: { flags: 'm' } },
+              atLeastOne: ['stars', 'comment'],
+              fields: { stars: { flags: 'r' }, comment: { flags: 'm' } },
             },
           )
           .action((args, ctx) => {

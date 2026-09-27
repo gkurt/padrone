@@ -35,7 +35,7 @@ pizza repl                                    # the built-in REPL
 | Global args (`--store`) | `.globalArgs()` in `src/pizza.ts` |
 | Positionals, variadic positionals, enums, arrays, defaults | `order`, `chef ask`, `admin restock` |
 | Short flags, aliases, custom negatives (`--pickup`), counts (`-ppp`) | `order` |
-| Field rules: `conflicts`, `implies`, `atLeastOne` | `menu`, `order`, `review` |
+| Field rules (`conflicts`, `implies`) and option groups (`atLeastOne`) | `menu`, `order`, `review` |
 | Deprecated options and commands, hidden commands | `order --extra-cheese`, `deliver`, `pineapple` |
 | Interactive prompts (`interactive`, `optionalInteractive`) | `order`, `chef ask` |
 | Async validation (`.async()` + async refine) | `redeem` |

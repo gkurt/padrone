@@ -2,7 +2,6 @@ import { ActionError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
 import type { WithAsync } from '../util/type-utils.ts';
-import { isUpgradeCheck } from './upgrade.ts';
 import { frameworkFlags } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
@@ -13,7 +12,10 @@ export type PadroneConfirmOptions = {
    * A function receives the command and its validated args.
    */
   message?: string | ((command: AnyPadroneCommand, args: unknown) => string);
-  /** Which commands ask for confirmation. Defaults to those configured with `mutation: true` (except `upgrade --check`). */
+  /**
+   * Which commands ask for confirmation. Defaults to those configured with `mutation: true`.
+   * `padroneUpgrade()`'s command only gets here when there's something to install (not `--check`, not up to date).
+   */
   when?: (command: AnyPadroneCommand, args: unknown) => boolean;
   /** Flags that skip the question: long names and single characters. Defaults to `['yes', 'y']`. */
   flags?: readonly string[];
@@ -30,7 +32,7 @@ const flagDisplay = (name: string) => (name.length > 1 ? `--${name}` : `-${name}
 
 function createConfirmInterceptor(options: PadroneConfirmOptions) {
   const confirmFlags = options.flags ?? DEFAULT_CONFIRM_FLAGS;
-  const when = options.when ?? ((command: AnyPadroneCommand, args: unknown) => !!command.mutation && !isUpgradeCheck(command, args));
+  const when = options.when ?? ((command: AnyPadroneCommand) => !!command.mutation);
 
   return defineInterceptor(
     {

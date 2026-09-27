@@ -537,8 +537,13 @@ createPadrone('myapp')
   .command('run', (c) => c.action(() => 'running'))
   .cli();
 
-// After command output, shows:
-// Update available: 1.2.3 → 1.3.0. Run `npm i -g myapp` to update.
+// After command output (from the version cached by an earlier run), shows:
+//   Update available: 1.2.3 → 1.3.0
+//   Run "npm update -g myapp" to update
+// `myapp version --check` asks the registry right away.
+
+// With padroneUpgrade(), the notice suggests `myapp upgrade`, which checks first and only then asks padroneConfirm():
+//   myapp upgrade --check --exit-code   # exits 1 when an update exists
 ```
 
 ## Command Overriding

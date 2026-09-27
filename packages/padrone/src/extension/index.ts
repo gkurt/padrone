@@ -54,5 +54,5 @@ export { padroneUpdateCheck } from './update-check.ts';
 export type { PadroneInstaller, PadroneUpgradeOptions, PadroneUpgradePlan } from './upgrade.ts';
 export { detectInstaller, padroneUpgrade } from './upgrade.ts';
 export { markErrorReported, redactArgs } from './utils.ts';
-export type { PadroneVersionInfo, PadroneVersionOptions, VersionCommand, WithVersion } from './version.ts';
+export type { PadroneVersionCheck, PadroneVersionInfo, PadroneVersionOptions, VersionCommand, WithVersion } from './version.ts';
 export { padroneVersion } from './version.ts';

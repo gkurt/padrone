@@ -616,7 +616,7 @@ Extensions compose naturally — chain multiple `.extend()` calls to layer funct
 
 ### padroneUpdateCheck(config?)
 
-Extension that enables background version checking against a package registry in `cli()`. The program checks for a newer version in the background and displays a notification after command output.
+Extension that enables background version checking against a package registry in `cli()`, like update-notifier. The notice after the command's output comes from the latest version an earlier run cached; a stale cache is refreshed in a detached, unref'd process, so a slow registry never delays the exit (the notice shows from the next run).
 
 ```typescript
 import { padroneUpdateCheck } from 'padrone';
@@ -635,11 +635,11 @@ program.extend(padroneUpdateCheck({
 | `packageName` | `string` | program name | Package name to check |
 | `registry` | `string` | `'npm'` | Registry URL or `'npm'` shorthand |
 | `interval` | `string` | `'1d'` | Check interval (e.g., `'1d'`, `'12h'`, `'30m'`, `'1w'`) |
-| `cache` | `string` | auto | Path to cache file for last check timestamp |
+| `cache` | `string` | `update-check.json` in `program.dirs.cache` | Path to cache file for last check timestamp. The `~/.config/<name>-update-check.json` older versions wrote is moved there |
 | `disableEnvVar` | `string` | auto | Env var name that disables update checking |
-| `updateCommand` | `string \| (packageName, latestVersion) => string` | `npm update -g <name>` | Command suggested in the notice |
+| `updateCommand` | `string \| (packageName, latestVersion) => string` | `<name> upgrade` with `padroneUpgrade()`, else `npm update -g <name>` | Command suggested in the notice |
 
-Non-blocking (the registry request times out after 3 seconds) and caches check timestamps. Needs the program's `version` (`.configure({ version })`); without one nothing is checked. Skipped in CI (`CI` set to anything but `0`/`false`), when stdout isn't a TTY, when `NO_UPDATE_NOTIFIER` or the `disableEnvVar` variable is set, with `--no-update-check`, and for the `padroneUpgrade()` command.
+Needs the program's version: `.configure({ version })`, or the version of the package its script belongs to (see `version`); without one nothing is checked. `packageName` and `registry` default to `padroneUpgrade()`'s when it's registered. Runtimes that can't spawn a script (Deno, Node single-executable apps) refresh in-process instead, with a 3-second timeout. Skipped in CI (`CI` set to anything but `0`/`false`), when stdout isn't a TTY, when `NO_UPDATE_NOTIFIER` or the `disableEnvVar` variable is set, with `--no-update-check`, and for the `padroneUpgrade()` command.
 
 ---
 
@@ -652,12 +652,13 @@ import { padroneUpdateCheck, padroneUpgrade } from 'padrone';
 
 program
   .extend(padroneUpgrade({ packageName: '@acme/my-cli' }))
-  .extend(padroneUpdateCheck({ packageName: '@acme/my-cli', updateCommand: 'my-cli upgrade' }));
+  .extend(padroneUpdateCheck()); // suggests `my-cli upgrade`, checks @acme/my-cli
 ```
 
 ```bash
 my-cli upgrade              # install the latest version with the package manager it was installed with
 my-cli upgrade --check      # only report whether a newer version exists
+my-cli upgrade --check --exit-code  # ...and exit with 1 when one does, like `npm outdated`
 my-cli upgrade --to 2.1.0   # a given version (also a downgrade)
 my-cli upgrade --channel next
 my-cli upgrade --dry-run    # show the install command without running it
@@ -674,7 +675,7 @@ my-cli upgrade --dry-run    # show the install command without running it
 | `command` | `string` | `'upgrade'` | Command name |
 | `exec` | `(command: string[]) => Promise<number>` | spawn with inherited stdio | Runs the installer command |
 
-The command is a `mutation`, so `padroneConfirm()` asks before upgrading (but not for `--check`). `--force` reinstalls when already up to date.
+The command asks the registry first: when already up to date (or with `--check`) it says so and stops. Otherwise, since it's a `mutation`, `padroneConfirm()` asks before installing. `--force` reinstalls when already up to date. `--exit-code` (which implies `--check`) sets the result's `exitCode` to 1 when a newer version exists, which `cli()` exits with. The running version is the configured `version`, or that of the package the program's script belongs to.
 
 ---
 
@@ -823,7 +824,7 @@ program.cli({ context: { db, logger } });
 
 **Errors:** Routing and validation errors are printed with a `--help` hint (by the help extension); any other error, from whichever phase threw it (an interceptor's `route`, a config file, the action), is printed by the auto-output extension.
 
-**Exit code:** When the run ends with an error (routing, validation, or a thrown action — including one that only surfaces on `drain()`), `cli()` sets the exit code through `runtime.setExitCode` to the error's `exitCode` (`PadroneError` carries one; 130 for SIGINT), or `1`. It uses `process.exitCode` rather than `process.exit()`, so output still flushes. Successful runs, `--help` and `--version` leave it at `0`.
+**Exit code:** When the run ends with an error (routing, validation, or a thrown action — including one that only surfaces on `drain()`), `cli()` sets the exit code through `runtime.setExitCode` to the error's `exitCode` (`PadroneError` carries one; 130 for SIGINT), or `1`. It uses `process.exitCode` rather than `process.exit()`, so output still flushes. Successful runs, `--help` and `--version` leave it at `0`, unless the result carries an `exitCode` (as `upgrade --check --exit-code` does when an update exists).
 
 **Note:** Interactive prompting only triggers in `cli()` and `eval()`, not in `parse()` or `run()`. When a command has interactive meta and the runtime can prompt (`interactive` isn't `'disabled'` or `'unsupported'`), missing field values are prompted before validation. The `--repl` flag starts a REPL session (optionally scoped to a command).
 
@@ -1462,7 +1463,7 @@ These extensions are available as named exports from `'padrone'`:
 | `padroneConfirm(options?)` | Asks before running `mutation: true` commands in `cli()`/REPL; `--yes`/`-y` skips it, and without a terminal (CI, piped stdin or stdout, `--no-interactive`) the command fails unless `--yes` is given. Options: `message`, `when`, `flags` |
 | `padroneTiming()` | Execution timing |
 | `padroneUpdateCheck(config)` | Background version checking |
-| `padroneUpgrade(options?)` | `upgrade` command: self-update with the package manager the program was installed with (`--check`, `--to`, `--channel`) |
+| `padroneUpgrade(options?)` | `upgrade` command: self-update with the package manager the program was installed with (`--check`, `--exit-code`, `--to`, `--channel`) |
 | `padroneAliases(options?)` | User-defined command aliases (`alias set|list|delete`), expanded before routing |
 | `padroneResponseFiles(options?)` | Response files: `@file` arguments expand into the file's arguments (`@@` escapes, `prefix` option) |
 
@@ -1482,7 +1483,7 @@ The following extensions are applied automatically by `createPadrone()` and can 
 | Export | Builtin key | Purpose |
 |--------|-------------|---------|
 | `padroneHelp(options?)` | `help` | Help command and `--help` flag. Options: `showHelpOnError` prints the full help after errors; `flags` renames the help flags (default `['help', 'h']`); `pager: true` shows help taller than the terminal through `$PAGER` or `less -FRX` in `cli()` (a string sets the fallback pager; `--no-pager` / `--pager` per run); `pickSubcommand: true` asks which subcommand to run (a select prompt) when a group command runs without one in `cli()`/REPL; `topics: { name: { title?, description?, content } }` adds `help <topic>` guides, listed under "Additional help topics" |
-| `padroneVersion(options?)` | `version` | Version command and `--version` flag (on any command; single-character flags on the root only). `version --verbose` adds the runtime, platform, architecture and shell (an object under `--json`). Options: `flags` renames the version flags (default `['version', 'v', 'V']`); `info` adds fields to `--verbose` |
+| `padroneVersion(options?)` | `version` | Version command and `--version` flag (on any command; single-character flags on the root only). `version --verbose` adds the runtime, platform, architecture and shell (an object under `--json`). `version --check` (or `--version --check`) asks the registry and adds an "Update available" notice like `gh version` (under `--json`: `{ name, version, latest, updateAvailable }`), using `padroneUpdateCheck()`'s or `padroneUpgrade()`'s package and registry, or npm with the program name; remote callers (serve, MCP, `tool()`) get the version without a check. Without `.configure({ version })`, the version comes from the nearest `package.json` above the program's script (symlinks resolved), never from the working directory. Options: `flags` renames the version flags (default `['version', 'v', 'V']`); `info` adds fields to `--verbose` |
 | `padroneRepl()` | `repl` | REPL command and `--repl` flag |
 | `padroneColor()` | `color` | `--color`/`--no-color` support |
 | `padroneSuggestions(options?)` | `suggestions` | "Did you mean?" suggestions. `run: 'prompt'` asks whether to run the closest command after an unknown one in `cli()`/REPL |

@@ -24,6 +24,16 @@ export type PadroneSignalOptions = {
 
 const signalMeta = { id: 'padrone:signal', name: 'padrone:signal', order: -2000 } as const;
 
+const processSignalReleases = new WeakMap<AbortSignal, () => void>();
+
+/**
+ * Stops the run whose signal is `signal` from handling process signals, for a REPL session that runs its commands as runs
+ * of their own: a Ctrl+C then interrupts the command running, not the session.
+ */
+export function releaseProcessSignals(signal: AbortSignal): void {
+  processSignalReleases.get(signal)?.();
+}
+
 const createSignalInterceptor = ({ forceExitMs = 2000, onForceExit }: PadroneSignalOptions) =>
   defineInterceptor(signalMeta, () => {
     const abortController = new AbortController();
@@ -52,10 +62,11 @@ const createSignalInterceptor = ({ forceExitMs = 2000, onForceExit }: PadroneSig
         const onUpstreamAbort = () => abortController.abort(upstream.reason);
         if (upstream.aborted) onUpstreamAbort();
         else upstream.addEventListener('abort', onUpstreamAbort, { once: true });
-        const unsubscribeProcess = ctx.runtime.onSignal?.((sig) => {
+        let unsubscribeProcess = ctx.runtime.onSignal?.((sig) => {
           const elapsed = Date.now() - lastSignalTime;
           lastSignalTime = Date.now();
-          if (abortController.signal.aborted) {
+          // Keyed on a process signal, not the abort: the caller's signal may have aborted the run first
+          if (receivedSignal) {
             // A second SIGINT within `forceExitMs`, or a repeated SIGTERM/SIGHUP, force-exits a command that ignores the abort.
             // The same signal twice in one millisecond is a duplicate delivery, which some runtimes do.
             if (elapsed > 0 && (sig !== 'SIGINT' || elapsed < forceExitMs)) {
@@ -70,8 +81,13 @@ const createSignalInterceptor = ({ forceExitMs = 2000, onForceExit }: PadroneSig
           // A `SignalError` reason, so `signal.throwIfAborted()` or an aborted fetch exits with the signal's code
           abortController.abort(new SignalError(sig));
         });
-        unsubscribe = () => {
+        const releaseProcess = () => {
           unsubscribeProcess?.();
+          unsubscribeProcess = undefined;
+        };
+        processSignalReleases.set(abortController.signal, releaseProcess);
+        unsubscribe = () => {
+          releaseProcess();
           upstream.removeEventListener('abort', onUpstreamAbort);
         };
 

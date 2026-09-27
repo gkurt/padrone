@@ -105,6 +105,19 @@ export function createPadrone<TProgramName extends string, const TBuiltins exten
   return builder as any;
 }
 
+/**
+ * Copies of `commands` under `parent`, with their built subcommands (e.g. a mounted program's) copied under the copies,
+ * so walking up from any of them (`getRootCommand`, events) reaches `parent` and not the tree before this builder call.
+ */
+function withParent(commands: AnyPadroneCommand[], parent: AnyPadroneCommand): AnyPadroneCommand[] {
+  return commands.map((c) => {
+    if (!c.parent) return c;
+    const copy: AnyPadroneCommand = { ...c, parent };
+    if (c.commands?.length) copy.commands = withParent(c.commands, copy);
+    return copy;
+  });
+}
+
 export function createPadroneBuilder<TBuilder extends PadroneProgram = PadroneProgram>(
   inputCommand: AnyPadroneCommand,
 ): TBuilder & { [commandSymbol]: AnyPadroneCommand } {
@@ -113,7 +126,7 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
   // They point at the command object this builder holds, so walking up from a subcommand reaches this tree, not a copy of it.
   const stale = inputCommand.commands?.some((c) => c.parent && c.parent !== inputCommand);
   const existingCommand: AnyPadroneCommand = stale ? { ...inputCommand } : inputCommand;
-  if (stale) existingCommand.commands = inputCommand.commands!.map((c) => (c.parent ? { ...c, parent: existingCommand } : c));
+  if (stale) existingCommand.commands = withParent(inputCommand.commands!, existingCommand);
 
   const parseCommandFn = (input: PadroneInput | undefined) => parseCommand(input, existingCommand, findCommandByName);
   const collectInterceptorsFn = (cmd: AnyPadroneCommand) => collectInterceptors(cmd, existingCommand);

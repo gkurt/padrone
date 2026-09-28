@@ -26,12 +26,13 @@ const configs = new WeakMap<object, UpdateCheckConfig>();
 function updateSettings(
   root: AnyPadroneCommand,
   config = configs.get(root.interceptors?.findLast((interceptor) => interceptor.meta.id === UPDATE_CHECK_ID)?.factory ?? {}) ?? {},
-): UpdateCheckConfig & { packageName: string; registry: string } {
+): UpdateCheckConfig & { packageName: string; registry: string; channel: string } {
   const upgrade = getUpgradeConfig(root);
   return {
     ...config,
     packageName: config.packageName ?? upgrade?.packageName ?? root.name,
     registry: config.registry ?? upgrade?.registry ?? 'npm',
+    channel: config.channel ?? upgrade?.channel ?? 'latest',
     updateCommand: config.updateCommand ?? (upgrade && `${root.name} ${upgrade.command}`),
   };
 }
@@ -42,9 +43,9 @@ export async function checkForUpdate(
   current: string,
 ): Promise<{ latest?: string; updateAvailable: boolean; message?: string }> {
   const settings = updateSettings(root);
-  const found = await fetchLatestVersion(settings.packageName, settings.registry);
+  const found = await fetchLatestVersion(settings.packageName, settings.registry, settings.channel);
   const latest = isVersion(found) ? found : undefined;
-  if (!latest || !isNewerVersion(current, latest)) return { latest, updateAvailable: false };
+  if (!latest || !isNewerVersion(current, latest, { prerelease: settings.channel !== 'latest' })) return { latest, updateAvailable: false };
   return {
     latest,
     updateAvailable: true,

@@ -1,4 +1,7 @@
 import { afterEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createConsoleMocker } from './console-mocker.ts';
 
 // Force a consistent terminal width in tests to avoid non-deterministic output
@@ -11,3 +14,7 @@ createConsoleMocker('outside-test');
 afterEach(() => {
   process.exitCode = 0;
 });
+
+// Tests that run a program's commands for real (an upgrade records its previous version) never touch the user's state directory
+process.env.XDG_STATE_HOME = mkdtempSync(join(tmpdir(), 'padrone-test-state-'));
+process.on('exit', () => rmSync(process.env.XDG_STATE_HOME!, { recursive: true, force: true }));

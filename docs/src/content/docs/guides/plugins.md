@@ -112,7 +112,7 @@ Under JSON output, an error's `message` leaves out the "Did you mean" hint, whic
 
 ### Credential Storage
 
-`padroneCredentials()` keeps tokens and API keys for the program, like `gh auth` or keytar. Actions get `ctx.context.credentials` with async `get(name)`, `set(name, secret)`, `delete(name)` and `backend()`:
+`padroneCredentials()` keeps tokens and API keys for the program, like `gh auth` or keytar. Actions get `ctx.context.credentials` with async `get(name)`, `set(name, secret)`, `delete(name)`, `list()` and `backend()`:
 
 ```typescript
 import { createPadrone, padroneCredentials } from 'padrone';
@@ -135,7 +135,7 @@ const program = createPadrone('my-cli')
 - Windows: no keychain support (the Credential Manager has no CLI that reads secrets); the file is used.
 - The file: `credentials.json` in `program.dirs.data` (or `file`), `{ [service]: { [name]: secret } }`, written atomically with mode `0600` in a `0700` directory. Secrets are plain text there, readable by the user's own processes, like `gh`'s `hosts.yml`.
 
-`backend: 'keychain'` fails where there's no keychain instead of falling back, `'file'` always uses the file, and a `PadroneCredentialBackend` object (`{ name, get, set, delete }`, each taking the service and the name) stores secrets anywhere else. `service` defaults to the program name. Tools are spawned with argv, never through a shell; `runner` replaces the spawner (tests pass a fake so they never touch the real keychain), and `platform` overrides `process.platform`.
+`backend: 'keychain'` fails where there's no keychain instead of falling back, `'file'` always uses the file, and a `PadroneCredentialBackend` object (`{ name, get, set, delete, list? }`, each taking the service and the name; `list(service)` gives `credentials.list()`) stores secrets anywhere else. `service` defaults to the program name. Tools are spawned with argv, never through a shell; `runner` replaces the spawner (tests pass a fake so they never touch the real keychain), and `platform` overrides `process.platform`.
 
 **Remote callers.** Serve, MCP and `tool()` calls get a `credentials` object whose methods reject (`Credentials aren't available to "mcp" calls`), so a command that reads a token can't hand it to an HTTP client or an AI model. Pass `remote: true` when commands only use the secrets themselves (e.g. to call an API) and never return them.
 
@@ -205,16 +205,18 @@ export default (program) =>
 ```bash
 my-cli plugins install my-cli-plugin-deploy   # installs it into the plugins directory with the package manager
 my-cli plugins link ../my-cli-plugin-deploy   # or uses a local checkout, while developing it
-my-cli plugins list
+my-cli plugins list          # --json for scripts
+my-cli plugins info my-cli-plugin-deploy
+my-cli plugins update        # or one plugin by name
 my-cli deploy --env prod
 my-cli plugins uninstall my-cli-plugin-deploy
 ```
 
-Plugins are recorded in `plugins.json` in the plugins directory (`plugins` under `program.dirs.data` by default, or `dir`); `packages` lists plugins the program always loads. A plugin that fails to load is reported on stderr and skipped. The `plugins` commands are built-in and only run on the command line. In tests, pass `exec` (runs the package manager) and `import` (loads a module) so nothing is installed. The loader is a start-phase interceptor that applies the plugins to the program and continues with `next({ program })`, which runs the rest of the pipeline on the program with the plugins; with no plugins, a sync program stays sync. See [`padronePlugins()`](/padrone/reference/api/#padronepluginsoptions).
+Plugins are recorded in `plugins.json` in the plugins directory (`plugins` under `program.dirs.data` by default, or `dir`); `packages` lists plugins the program always loads. A plugin that fails to load is reported on stderr and skipped. Plugins run with the program's permissions, so installed ones are pinned: `plugins.json` records each one's version and a SHA-256 of its module file, and one that changed since (`plugins update` re-records them) isn't loaded. `allow` restricts installable names (`['my-cli-plugin-*', '@acme/*']`), `ignoreScripts` skips install scripts, a plugin may declare the `padroneApi` semver range it needs (checked against `apiVersion`), and one that redefines a command the program has is refused unless `override` is set. The `plugins` commands are built-in and only run on the command line. In tests, pass `exec` (runs the package manager) and `import` (loads a module) so nothing is installed. The loader is a start-phase interceptor that applies the plugins to the program and continues with `next({ program })`, which runs the rest of the pipeline on the program with the plugins; with no plugins, a sync program stays sync. See [`padronePlugins()`](/padrone/reference/api/#padronepluginsoptions).
 
 ### External Commands
 
-`padroneExternalCommands()` gives a program git-style external subcommands, like cargo or clap's `allow_external_subcommands`: `my-cli foo --bar` runs the executable `my-cli-foo` from `PATH` with `--bar`, with the terminal's stdio, and exits with its exit code. They're spawned without a shell, only for local callers (never for serve, MCP or `tool()`), and listed in help under "External Commands" and in shell completion. The program's own commands always win, and when there's no such executable the usual "Unknown command" error follows. Options: `prefix` (default `'<program>-'`), `path` (default the `PATH` variable), `list`, and `spawn` to run them yourself (in tests, for example). See [`padroneExternalCommands()`](/padrone/reference/api/#padroneexternalcommandsoptions).
+`padroneExternalCommands()` gives a program git-style external subcommands, like cargo or clap's `allow_external_subcommands`: `my-cli foo --bar` runs the executable `my-cli-foo` from `PATH` with `--bar`, with the terminal's stdio, and exits with its exit code. They're spawned without a shell, only for local callers (never for serve, MCP or `tool()`), and listed in help under "External Commands" and in shell completion. The program's own commands always win, and when there's no such executable the usual "Unknown command" error follows. Options: `prefix` (default `'<program>-'`), `path` (default the `PATH` variable), `list`, `env` (the variables they inherit: names, `PREFIX_*` patterns or a function; default all), and `spawn` to run them yourself (in tests, for example). See [`padroneExternalCommands()`](/padrone/reference/api/#padroneexternalcommandsoptions).
 
 ## Lifecycle Hooks
 

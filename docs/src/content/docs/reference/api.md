@@ -402,6 +402,7 @@ program.extend(padroneConfig({ files: 'app.config.json', disabled: true }));
 | `xdg` | `boolean \| string` | Also search the user config directory (`~/.config/<app>`, `~/Library/Application Support/<app>`, `%APPDATA%\<app>`) after cwd. `true` uses the program name |
 | `searchParents` | `boolean \| 'project'` | Also search the parent directories of cwd, nearest first, like cosmiconfig: `true` up to the filesystem root (or `stopDir`), `'project'` up to the nearest directory with a `.git` (directory or file) or `package.json`, inclusive, like cosmiconfig's `searchStrategy: 'project'`; outside a project `'project'` searches only cwd (default: `false`) |
 | `stopDir` | `string` | The last directory `searchParents` searches (inclusive), relative to cwd, like cosmiconfig's `stopDir`. When cwd isn't inside it, the search goes on to the root |
+| `scripts` | `boolean \| (file) => boolean \| Promise<boolean>` | Whether script configs (`.js`, `.ts`, …) may be imported, which runs their code: `false` refuses them, a function decides per absolute path (ask once, check an allowlist). Data configs always load, and a file given with `--config` is always allowed (default: `true`) |
 | `envName` | `string \| false \| (env) => string \| undefined` | The environment name for per-environment overrides, like c12's: `$<name>: { ... }`, then `$env: { <name>: { ... } }`, override the config's top-level values (and inside a profile, the profile's). Keys starting with `$` are never option values. `false` ignores the overrides (default: the `NODE_ENV` variable, from `.env` files too) |
 | `packageJson` | `boolean \| string` | Read config from a `package.json` key in each searched directory, after its config files. `true` uses the program name (default: `false`) |
 | `merge` | `boolean` | Merge every config found instead of using the first: the user config directory, then the searched directories from the farthest to cwd, each overriding the last. Objects merge key by key, arrays are replaced. A `--config` file is still used alone (default: `false`) |
@@ -731,6 +732,7 @@ program.extend(padroneUpdateCheck({
 | `packageName` | `string` | program name | Package name to check |
 | `registry` | `string` | `'npm'` | Registry URL or `'npm'` shorthand |
 | `interval` | `string` | `'1d'` | Check interval (e.g., `'1d'`, `'12h'`, `'30m'`, `'1w'`) |
+| `channel` | `string` | `'latest'` (or `padroneUpgrade()`'s) | Dist-tag to follow, e.g. `'next'`: pre-releases count as updates, and each channel has its own cache file `update-check-<channel>.json` |
 | `cache` | `string` | `update-check.json` in `program.dirs.cache` | Path to cache file for last check timestamp. The `~/.config/<name>-update-check.json` older versions wrote is moved there |
 | `disableEnvVar` | `string` | auto | Env var name that disables update checking |
 | `updateCommand` | `string \| (packageName, latestVersion) => string` | `<name> upgrade` with `padroneUpgrade()`, else `npm update -g <name>` | Command suggested in the notice |
@@ -759,6 +761,7 @@ my-cli upgrade --check      # only report whether a newer version exists
 my-cli upgrade --check --exit-code  # ...and exit with 1 when one does, like `npm outdated`
 my-cli upgrade --to 2.1.0   # a given version (also a downgrade)
 my-cli upgrade --channel next
+my-cli upgrade --rollback   # back to the version the last upgrade replaced (recorded in program.dirs.state)
 my-cli upgrade --dry-run    # show the install command without running it
 ```
 
@@ -773,6 +776,8 @@ my-cli upgrade --dry-run    # show the install command without running it
 | `command` | `string` | `'upgrade'` | Command name |
 | `exec` | `(command: string[]) => Promise<number>` | spawn with inherited stdio | Runs the installer command |
 | `verify` | `(plan) => boolean \| void \| Promise<boolean \| void>` | — | Checks the release before installing it (after confirmation, not on `--dry-run`): resolving `false` or throwing refuses the upgrade. `plan.command` is the package manager command about to run |
+
+`verifySignature(data, signature, publicKey, { algorithm? })` (from `'padrone'`) checks a publisher's Ed25519 (default) or `'ECDSA-P256'` signature (bytes, hex or base64) against a PEM `PUBLIC KEY` or raw key baked into the program, for `verify` or a custom installer.
 
 A custom `installer` that downloads a standalone binary can check it with `verifySha256(data, expected, fileName?)` (from `'padrone'`): `expected` is a hex digest, or a `SHA256SUMS` file whose line for `fileName` is used:
 
@@ -879,6 +884,7 @@ my-cli foo --bar baz   # runs my-cli-foo --bar baz (from PATH), with the termina
 - The program's own commands always win. When no executable matches, the usual "Unknown command" error follows, with "Did you mean" suggestions that include the external commands.
 - Found external commands are listed in help under "External Commands" and offered by shell completion (not in generated docs or man pages, nor in help shown to remote callers).
 - Only for `cli()`, `eval()`, `run()` and the REPL: serve, MCP and `tool()` calls never run external commands.
+- `env` limits what they inherit: `env: ['MY_CLI_*', 'GITHUB_TOKEN']` passes those variables plus the basics (`PATH`, `HOME`, `TERM`, `LANG`, `TMPDIR`, the Windows system variables), or a function returns the whole environment. Default: all of it.
 - Built on the [`commandNotFound`](#commandnotfound) event, for top-level names only.
 
 **Configuration:**
@@ -929,9 +935,12 @@ Prefer the extension form: a program export built with another copy of padrone s
 |----------|------|---------|-------------|
 | `dir` | `string` | `plugins` in `program.dirs.data` | Where installed plugins and `plugins.json` live |
 | `packages` | `string[]` | none | Plugin modules the program always loads, before the user's (package names or absolute paths) |
-| `command` | `boolean \| string` | `false` | Add the `plugins` group (`list`/`ls`, `install`/`add`, `uninstall`/`remove`/`rm`, `link`); a string names it |
+| `command` | `boolean \| string` | `false` | Add the `plugins` group (`list`/`ls` (`--json`), `install`/`add`, `update [name]`, `info <name>`, `uninstall`/`remove`/`rm`, `link`); a string names it |
 | `packageManager` | `'npm' \| 'bun' \| 'pnpm' \| 'yarn'` | bun under Bun, else how the program was installed | What `install` / `uninstall` run |
 | `ignoreScripts` | `boolean` | `false` | Install with `--ignore-scripts`, so install scripts don't run |
+| `allow` | `string[]` | any | Names installed plugins may have (exact, `@scope/*` or `prefix*`); `plugins install` refuses others and the loader skips them |
+| `apiVersion` | `string` | none | The program's plugin API version. A plugin module may export `padroneApi`, a semver range (`'^2.0.0'`); one that doesn't include this version isn't loaded |
+| `override` | `boolean` | `false` | Let a plugin redefine a top-level command the program already has; otherwise it's skipped with an error |
 | `exec` | `(command, { cwd }) => Promise<number>` | spawn without a shell | Runs a package manager command (e.g. to test without installing) |
 | `import` | `(specifier) => Promise<unknown>` | `import()` | Imports a plugin module (a `file:` URL, or a name from `packages`); pass your own to resolve `packages` from your program's location |
 

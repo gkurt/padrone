@@ -23,6 +23,8 @@ export type PadroneCredentialBackend = {
   get(service: string, name: string): Promise<string | undefined>;
   set(service: string, name: string, secret: string): Promise<void>;
   delete(service: string, name: string): Promise<void>;
+  /** The names of the credentials stored under `service`. Backends that can't list leave it out. */
+  list?(service: string): Promise<string[]>;
   /** Whether the backend works here (its tool is installed and reachable). Assumed when missing. */
   available?(): Promise<boolean>;
 };
@@ -70,6 +72,18 @@ const ENCODED_PREFIX = 'padrone-base64:';
 /** `security -i` reads commands of up to this many bytes. */
 const SECURITY_LINE_LIMIT = 4096;
 
+/** The account names of the generic passwords of `service` in the output of `security dump-keychain` (which has no secrets). */
+export function parseKeychainDump(dump: string, service: string): string[] {
+  const names = new Set<string>();
+  for (const entry of dump.split(/^keychain: /m)) {
+    if (!/^\s*class: "genp"/m.test(entry)) continue;
+    const svce = /"svce"<blob>="((?:[^"\\]|\\.)*)"/.exec(entry)?.[1];
+    const acct = /"acct"<blob>="((?:[^"\\]|\\.)*)"/.exec(entry)?.[1];
+    if (svce === service && acct) names.add(acct);
+  }
+  return [...names].sort();
+}
+
 /**
  * The macOS login keychain through `/usr/bin/security` (generic passwords: `-s <service> -a <name>`).
  * Secrets are written through `security -i` on stdin (hex-encoded with `-X`), so they never appear in `ps`; names do.
@@ -99,6 +113,11 @@ export function macosKeychainBackend(runner: PadroneCommandRunner = spawnCommand
       if (Buffer.byteLength(line) > SECURITY_LINE_LIMIT) throw new PadroneError('The secret is too long for the macOS keychain');
       const result = await runner('security', ['-i'], { input: line });
       if (result.code !== 0 || result.stderr.trim()) throw failure('security', 'store', result);
+    },
+    async list(service) {
+      const result = await runner('security', ['dump-keychain']);
+      if (result.code !== 0) throw failure('security', 'list', result);
+      return parseKeychainDump(result.stdout, service);
     },
     async delete(service, name) {
       const result = await runner('security', ['delete-generic-password', '-s', service, '-a', name]);
@@ -133,6 +152,13 @@ export function secretServiceBackend(runner: PadroneCommandRunner = spawnCommand
         input: secret,
       });
       if (result.code !== 0) throw failure('secret-tool', 'store', result);
+    },
+    async list(service) {
+      const result = await runner('secret-tool', ['search', '--all', 'service', service]);
+      if (result.code === 1 && !result.stderr.trim()) return [];
+      if (result.code !== 0) throw failure('secret-tool', 'list', result);
+      const names = [...result.stdout.matchAll(/^attribute\.account = (.*)$/gm)].map((match) => match[1]!);
+      return [...new Set(names)].sort();
     },
     async delete(service, name) {
       const result = await runner('secret-tool', ['clear', ...attributes(service, name)]);
@@ -179,6 +205,10 @@ export function fileCredentialBackend(file: string): PadroneCredentialBackend {
       const data = await read();
       data[service] = { ...(Object.hasOwn(data, service) ? data[service] : {}), [name]: secret };
       await write(data);
+    },
+    async list(service) {
+      const data = await read();
+      return Object.hasOwn(data, service) ? Object.keys(data[service]!).sort() : [];
     },
     async delete(service, name) {
       const data = await read();

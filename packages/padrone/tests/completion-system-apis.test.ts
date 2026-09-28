@@ -1,8 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createPadrone, padroneUpdateCheck, padroneUpgrade, verifySha256 } from 'padrone';
+import { createPadrone, padroneUpdateCheck, padroneUpgrade, verifySha256, verifySignature } from 'padrone';
 import { padroneCompletion } from 'padrone/completion';
 import { padroneMan } from 'padrone/man';
 import * as z from 'zod/v4';
@@ -253,11 +253,14 @@ describe('padroneUpgrade verify', () => {
   });
   afterAll(() => server.stop(true));
 
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'padrone-upgrade-state-'));
+  afterAll(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+
   const create = (verify: NonNullable<Parameters<typeof padroneUpgrade>[0]>['verify'], installer?: 'npm' | (() => undefined)) => {
     const exec = mock(async (_command: readonly string[]) => 0);
     const program = createPadrone('tool')
       .configure({ version: '1.0.0' })
-      .runtime(quiet)
+      .runtime({ ...quiet, env: () => ({ XDG_STATE_HOME: stateDir }) })
       .extend(padroneUpgrade({ registry: server.url.href, installer: installer ?? 'npm', exec, verify }));
     return { program, exec };
   };
@@ -299,6 +302,75 @@ describe('padroneUpgrade verify', () => {
     expect(verify.mock.calls[0]?.[0].command).toBeUndefined();
     await program.eval('upgrade --dry-run');
     expect(verify).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('padroneUpgrade --rollback', () => {
+  let server: ReturnType<typeof Bun.serve>;
+  let stateDir: string;
+  beforeAll(() => {
+    server = Bun.serve({ port: 0, fetch: () => Response.json({ version: '2.0.0' }) });
+  });
+  afterAll(() => server.stop(true));
+  beforeEach(() => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'padrone-rollback-'));
+  });
+  afterEach(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+
+  const create = (version: string, commands: (readonly string[])[]) =>
+    createPadrone('tool')
+      .configure({ version })
+      .runtime({ ...quiet, env: () => ({ XDG_STATE_HOME: stateDir }) })
+      .extend(
+        padroneUpgrade({
+          registry: server.url.href,
+          installer: 'npm',
+          exec: async (command) => {
+            commands.push(command);
+            return 0;
+          },
+        }),
+      );
+
+  it('goes back to the version the last upgrade replaced', async () => {
+    const commands: (readonly string[])[] = [];
+    expect((await create('1.0.0', commands).eval('upgrade')).result as unknown).toBe('Upgraded tool to 2.0.0');
+    expect(JSON.parse(fs.readFileSync(path.join(stateDir, 'tool', 'upgrade.json'), 'utf-8')).previous).toBe('1.0.0');
+    expect((await create('2.0.0', commands).eval('upgrade --rollback')).result as unknown).toBe('Rolled back tool to 1.0.0');
+    expect(commands.at(-1)).toEqual(['npm', 'install', '-g', 'tool@1.0.0']);
+  });
+
+  it('fails without a record, and with --to', async () => {
+    const program = create('2.0.0', []);
+    expect(((await program.eval('upgrade --rollback')).error as Error).message).toBe('No previous version is recorded to roll back to');
+    expect(((await program.eval('upgrade --rollback --to 1.5.0')).error as Error).message).toContain("can't be combined");
+  });
+});
+
+describe('verifySignature', () => {
+  it('verifies Ed25519 and ECDSA signatures with PEM or raw keys, in hex or base64', async () => {
+    const data = new TextEncoder().encode('release bytes');
+    const ed = (await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify'])) as unknown as CryptoKeyPair;
+    const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, ed.privateKey, data));
+    const spki = new Uint8Array(await crypto.subtle.exportKey('spki', ed.publicKey));
+    const pem = `-----BEGIN PUBLIC KEY-----\n${btoa(String.fromCharCode(...spki))}\n-----END PUBLIC KEY-----`;
+    const hex = Array.from(sig, (b) => b.toString(16).padStart(2, '0')).join('');
+    expect(await verifySignature(data, sig, pem)).toBe(true);
+    expect(await verifySignature('release bytes', hex, pem)).toBe(true);
+    expect(
+      await verifySignature(data, btoa(String.fromCharCode(...sig)), new Uint8Array(await crypto.subtle.exportKey('raw', ed.publicKey))),
+    ).toBe(true);
+    expect(await verifySignature('tampered', sig, pem)).toBe(false);
+    expect(await verifySignature(data, 'not a signature', pem)).toBe(false);
+
+    const ec = (await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+      'sign',
+      'verify',
+    ])) as unknown as CryptoKeyPair;
+    const ecSig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, ec.privateKey, data);
+    const ecKey = new Uint8Array(await crypto.subtle.exportKey('raw', ec.publicKey));
+    expect(await verifySignature(data, ecSig, ecKey, { algorithm: 'ECDSA-P256' })).toBe(true);
+    expect(await verifySignature(data, ecSig, ecKey)).toBe(false);
   });
 });
 
@@ -350,6 +422,28 @@ describe('padroneUpdateCheck shouldNotify and format', () => {
     );
     (await createUpdateChecker('tool', '1.0.0', config, runtime(errors) as never)).notify();
     expect(errors.join('')).toContain('Update available: 1.0.0 → 2.0.0');
+  });
+
+  it('follows a channel: pre-releases count, and each channel has its own cache file', async () => {
+    const errors: string[] = [];
+    const home = tmp();
+    const env = { HOME: home, XDG_CACHE_HOME: path.join(home, 'cache') };
+    const cacheDir = path.join(home, 'cache', 'tool');
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.writeFileSync(path.join(cacheDir, 'update-check.json'), JSON.stringify({ lastCheck: Date.now(), latestVersion: '3.0.0' }));
+    fs.writeFileSync(
+      path.join(cacheDir, 'update-check-next.json'),
+      JSON.stringify({ lastCheck: Date.now(), latestVersion: '2.0.0-beta.2' }),
+    );
+    const registry = 'http://127.0.0.1:9/';
+    (await createUpdateChecker('tool', '2.0.0-beta.1', { registry, channel: 'next' }, runtime(errors, env) as never)).notify();
+    expect(errors.join('')).toContain('Update available: 2.0.0-beta.1 → 2.0.0-beta.2');
+    errors.length = 0;
+    (await createUpdateChecker('tool', '1.0.0', { registry, channel: 'next' }, runtime(errors, env) as never)).notify();
+    expect(errors.join('')).toContain('1.0.0 → 2.0.0-beta.2');
+    errors.length = 0;
+    (await createUpdateChecker('tool', '1.0.0', { registry }, runtime(errors, env) as never)).notify();
+    expect(errors.join('')).toContain('1.0.0 → 3.0.0');
   });
 
   it('rewords the notice with format, also for version --check', async () => {

@@ -364,7 +364,15 @@ describe('padroneExternalCommands()', () => {
     const program = (env: Parameters<typeof padroneExternalCommands>[0]) =>
       createPadrone('app')
         .runtime({ ...quiet, env: () => ({ PATH: bin, HOME: '/h', APP_TOKEN: 't', MY_X: '1', SECRET: 's' }) })
-        .extend(padroneExternalCommands({ ...env, spawn: async (_file, _args, { env }) => (envs.push(env), 0) }));
+        .extend(
+          padroneExternalCommands({
+            ...env,
+            spawn: async (_file, _args, { env }) => {
+              envs.push(env);
+              return 0;
+            },
+          }),
+        );
     await program({ env: ['MY_*'] }).eval('hello');
     await program({ env: (e) => ({ PATH: e.PATH, ONLY: 'x' }) }).eval('hello');
     await program({}).eval('hello');

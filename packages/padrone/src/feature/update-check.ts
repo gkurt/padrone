@@ -28,6 +28,11 @@ export type UpdateCheckConfig = {
    */
   cache?: string;
   /**
+   * The dist-tag to follow, e.g. `'next'` for a pre-release channel, so users on it hear about newer pre-releases and are
+   * not nagged about `latest`. Each channel has its own cache file (`update-check-<channel>.json`). Defaults to `'latest'`.
+   */
+  channel?: string;
+  /**
    * Environment variable name to disable update checks (e.g. `'MYAPP_NO_UPDATE_CHECK'`).
    * When set to a truthy value, update checks are skipped.
    * Defaults to `'<PROGRAM_NAME>_NO_UPDATE_CHECK'` (uppercased, hyphens to underscores).
@@ -179,12 +184,15 @@ async function resolveCachePath(cachePath: string): Promise<string> {
 }
 
 /** The default cache file, `update-check.json` in `program.dirs.cache`, and the one older versions wrote. */
-async function defaultCachePaths(programName: string, env: Record<string, string | undefined>) {
+async function defaultCachePaths(programName: string, env: Record<string, string | undefined>, channel: string) {
   const { homedir } = await import('node:os');
   const { join } = await import('node:path');
   const home = env.HOME || env.USERPROFILE || homedir();
   return {
-    cache: join(getProgramDirs(programName, { ...env, HOME: home }).cache, 'update-check.json'),
+    cache: join(
+      getProgramDirs(programName, { ...env, HOME: home }).cache,
+      channel === 'latest' ? 'update-check.json' : `update-check-${channel}.json`,
+    ),
     legacy: join(home, '.config', `${programName}-update-check.json`),
   };
 }
@@ -334,21 +342,27 @@ export async function createUpdateChecker(
   if (isCI(env) || env.NO_UPDATE_NOTIFIER || env[disableEnvVar]) return skipped;
   if (runtime.terminal && !runtime.terminal.isTTY) return skipped;
 
-  const defaults = config.cache ? undefined : await defaultCachePaths(programName, env);
+  const channel = config.channel ?? 'latest';
+  // The tag ends up in a file name and a URL
+  if (!/^[\w+][\w.+-]*$/.test(channel)) return skipped;
+  const defaults = config.cache ? undefined : await defaultCachePaths(programName, env, channel);
   const cachePath = defaults?.cache ?? (await resolveCachePath(config.cache!));
-  const cached = (await readCache(cachePath)) ?? (defaults && (await migrateLegacyCache(defaults.legacy, cachePath)));
+  const cached =
+    (await readCache(cachePath)) ?? (defaults && channel === 'latest' ? await migrateLegacyCache(defaults.legacy, cachePath) : undefined);
   const latest = cached?.latestVersion;
   const info =
-    latest && isNewerVersion(currentVersion, latest) ? updateInfo(packageName, currentVersion, latest, config, runtime) : undefined;
+    latest && isNewerVersion(currentVersion, latest, { prerelease: channel !== 'latest' })
+      ? updateInfo(packageName, currentVersion, latest, config, runtime)
+      : undefined;
   const notify = info && config.shouldNotify?.(info) !== false ? () => runtime.error(formatUpdateNotice(info, config)) : noop;
   const age = cached ? Date.now() - cached.lastCheck : -1;
   if (age >= 0 && age < intervalMs) return { notify, refresh: skipped.refresh };
 
   // Recorded before checking, so runs in the meantime don't check too; a failed check waits for the next interval
   await writeCache(cachePath, { lastCheck: Date.now(), latestVersion: latest ?? '' });
-  const url = registryUrl(packageName, config.registry ?? 'npm', 'latest');
-  const background = await refreshInBackground([url, 'latest', cachePath, BACKGROUND_FETCH_TIMEOUT_MS]);
-  const refresh = background?.exited ?? refreshCacheFile(url, 'latest', cachePath, FETCH_TIMEOUT_MS);
+  const url = registryUrl(packageName, config.registry ?? 'npm', channel);
+  const background = await refreshInBackground([url, channel, cachePath, BACKGROUND_FETCH_TIMEOUT_MS]);
+  const refresh = background?.exited ?? refreshCacheFile(url, channel, cachePath, FETCH_TIMEOUT_MS);
   return { notify, refresh };
 }
 

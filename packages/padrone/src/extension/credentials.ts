@@ -25,6 +25,8 @@ export type PadroneCredentials = {
   set(name: string, secret: string): Promise<void>;
   /** Removes the secret stored under `name`, if any. */
   delete(name: string): Promise<void>;
+  /** The names of the stored secrets. Fails for a custom backend without `list`. */
+  list(): Promise<string[]>;
   /** The backend in use: `'keychain'` (macOS), `'secret-service'` (Linux), `'file'`, or a custom backend's name. */
   backend(): Promise<string>;
 };
@@ -102,6 +104,11 @@ function createCredentialsInterceptor(options: PadroneCredentialsOptions) {
           return use(name, (b) => b.set(service, name, secret));
         },
         delete: (name) => use(name, (b) => b.delete(service, name)),
+        list: () =>
+          use(undefined, async (b) => {
+            if (!b.list) throw new PadroneError(`The "${b.name}" credential backend can't list credentials`);
+            return b.list(service);
+          }),
         backend: () => use(undefined, async (b) => b.name),
       };
       return next({ context: { credentials } });
@@ -113,7 +120,7 @@ function createCredentialsInterceptor(options: PadroneCredentialsOptions) {
 
 /**
  * Extension that stores secrets for the program, like `gh auth` or keytar: actions get `ctx.context.credentials`
- * with async `get(name)`, `set(name, secret)`, `delete(name)` and `backend()`.
+ * with async `get(name)`, `set(name, secret)`, `delete(name)`, `list()` and `backend()`.
  *
  * - `backend: 'auto'` (default) uses the OS keychain through its CLI tool: macOS `security` (secrets go through
  *   `security -i` on stdin, not argv) or Linux `secret-tool` (libsecret; secrets on stdin). Tools are spawned with argv, never a shell.

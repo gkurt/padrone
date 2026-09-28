@@ -17,7 +17,7 @@ import {
 import { testCli } from 'padrone/test';
 import * as z from 'zod/v4';
 import { runEnquirerPrompt } from '../src/core/default-runtime.ts';
-import { spawnCommandRunner } from '../src/feature/credentials.ts';
+import { parseKeychainDump, spawnCommandRunner } from '../src/feature/credentials.ts';
 
 const quiet = { output: () => {}, error: () => {}, setExitCode: () => {} } satisfies PadroneRuntime;
 
@@ -345,6 +345,7 @@ describe('padroneCredentials', () => {
       )
       .command('token', (c) => c.action((_, ctx) => ctx.context.credentials.get('github')))
       .command('logout', (c) => c.action((_, ctx) => ctx.context.credentials.delete('github')))
+      .command('names', (c) => c.action((_, ctx) => ctx.context.credentials.list()))
       .command('where', (c) => c.action((_, ctx) => ctx.context.credentials.backend()));
 
   it('stores secrets in a 0600 file in the data directory', async () => {
@@ -361,6 +362,50 @@ describe('padroneCredentials', () => {
     await program.eval('logout');
     expect((await program.eval('token')).result as unknown).toBeUndefined();
     expect(JSON.parse(fs.readFileSync(file, 'utf-8'))).toEqual({});
+  });
+
+  it('lists the stored names of the service', async () => {
+    const file = path.join(tempDir, 'shared.json');
+    await build({ backend: 'file', file, service: 'one' }).eval('login a');
+    await build({ backend: 'file', file, service: 'two' }).eval('login b');
+    expect((await build({ backend: 'file', file, service: 'one' }).eval('names')).result as unknown).toEqual(['github']);
+    expect((await build({ backend: 'file', file, service: 'none' }).eval('names')).result as unknown).toEqual([]);
+  });
+
+  it('lists through secret-tool and reads the macOS keychain dump', async () => {
+    const runner: PadroneCommandRunner = async (_command, args) =>
+      args[0] === 'search'
+        ? {
+            code: 0,
+            stdout: 'attribute.account = b\nattribute.service = my-cli\n\nattribute.account = a\nattribute.service = my-cli\n',
+            stderr: '',
+          }
+        : { code: 0, stdout: '', stderr: '' };
+    expect((await build({ platform: 'linux', runner }).eval('names')).result as unknown).toEqual(['a', 'b']);
+
+    const dump = [
+      'keychain: "/Users/x/Library/Keychains/login.keychain-db"',
+      'class: "genp"',
+      'attributes:',
+      '    "acct"<blob>="github"',
+      '    "svce"<blob>="my-cli"',
+      'keychain: "/Users/x/Library/Keychains/login.keychain-db"',
+      'class: "genp"',
+      'attributes:',
+      '    "acct"<blob>="other"',
+      '    "svce"<blob>="another-cli"',
+      'keychain: "/Users/x/Library/Keychains/login.keychain-db"',
+      'class: "inet"',
+      'attributes:',
+      '    "acct"<blob>="web"',
+      '    "svce"<blob>="my-cli"',
+    ].join('\n');
+    expect(parseKeychainDump(dump, 'my-cli')).toEqual(['github']);
+  });
+
+  it('fails to list on a custom backend without list', async () => {
+    const backend: PadroneCredentialBackend = { name: 'custom', get: async () => undefined, set: async () => {}, delete: async () => {} };
+    expect((await build({ backend }).eval('names')).error).toBeInstanceOf(Error);
   });
 
   it('keeps services apart in a shared file', async () => {

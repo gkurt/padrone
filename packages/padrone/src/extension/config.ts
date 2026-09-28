@@ -321,7 +321,7 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
         const { xdgAppName, context } = located;
         // A file the user named with --config is trusted
         const { scripts: _scripts, ...searchWithoutScripts } = located.search ?? {};
-        const search = explicitConfigPath ? searchWithoutScripts : located.search;
+        const search = explicitConfigPath ? (Object.keys(searchWithoutScripts).length ? searchWithoutScripts : undefined) : located.search;
         const loaded = nothingToLoad
           ? {}
           : loadConfigData(options?.loadConfig, explicitConfigPath ?? configFiles ?? [], xdgAppName, search, context);

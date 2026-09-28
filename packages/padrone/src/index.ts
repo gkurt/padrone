@@ -134,6 +134,7 @@ export {
   padroneVersion,
   redactArgs,
   verifySha256,
+  verifySignature,
 } from './extension/index.ts';
 export type {
   PadroneCommandRunner,

@@ -3,6 +3,8 @@ import { defineInterceptor } from '../core/interceptors.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import { fetchLatestVersion, isNewerVersion } from '../feature/update-check.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
+import { getProgramDirs } from '../util/dirs.ts';
+import { readTextFile, writeTextFileAtomic } from '../util/files.ts';
 import { findExecutable, pathDirs, spawnInherited } from '../util/spawn.ts';
 import { getRootCommand, getVersion } from '../util/utils.ts';
 import { passthroughSchema } from './utils.ts';
@@ -74,6 +76,53 @@ export async function verifySha256(data: Uint8Array | ArrayBuffer | string, expe
   const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data instanceof Uint8Array ? data : new Uint8Array(data);
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>));
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('') === entry[1]!.toLowerCase();
+}
+
+const toBytes = (data: Uint8Array | ArrayBuffer | string): Uint8Array<ArrayBuffer> =>
+  (typeof data === 'string'
+    ? new TextEncoder().encode(data)
+    : data instanceof Uint8Array
+      ? data
+      : new Uint8Array(data)) as Uint8Array<ArrayBuffer>;
+
+/** Bytes of a hex or base64 string (or the bytes themselves) */
+function decodeBinary(value: Uint8Array | ArrayBuffer | string): Uint8Array<ArrayBuffer> {
+  if (typeof value !== 'string') return toBytes(value);
+  const text = value.trim();
+  if (/^(?:[0-9a-f]{2})+$/i.test(text)) return Uint8Array.from(text.match(/../g)!, (byte) => Number.parseInt(byte, 16));
+  return Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0));
+}
+
+/**
+ * Whether `signature` (bytes, hex or base64) is `publicKey`'s signature of `data`. The key is a PEM `PUBLIC KEY` (SPKI) or
+ * its raw bytes; the algorithm is Ed25519 (default) or `'ECDSA-P256'` (SHA-256, the raw `r || s` signature WebCrypto uses).
+ * Use it in `verify` or a custom installer to check a release against the publisher's key baked into the program.
+ * Resolves `false` for a signature that doesn't match or can't be read.
+ *
+ * ```ts
+ * padroneUpgrade({ verify: async ({ version }) => verifySignature(await fetchBinary(version), await fetchSig(version), PUBLIC_KEY) })
+ * ```
+ */
+export async function verifySignature(
+  data: Uint8Array | ArrayBuffer | string,
+  signature: Uint8Array | ArrayBuffer | string,
+  publicKey: Uint8Array | ArrayBuffer | string,
+  options: { algorithm?: 'Ed25519' | 'ECDSA-P256' } = {},
+): Promise<boolean> {
+  try {
+    const algorithm = options.algorithm ?? 'Ed25519';
+    const pem = typeof publicKey === 'string' ? publicKey.match(/-----BEGIN PUBLIC KEY-----([\s\S]+?)-----END PUBLIC KEY-----/) : undefined;
+    const keyBytes = pem ? decodeBinary(pem[1]!.replace(/\s+/g, '')) : decodeBinary(publicKey);
+    const format = pem ? 'spki' : 'raw';
+    const key =
+      algorithm === 'Ed25519'
+        ? await crypto.subtle.importKey(format, keyBytes, { name: 'Ed25519' }, false, ['verify'])
+        : await crypto.subtle.importKey(format, keyBytes, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+    const params = algorithm === 'Ed25519' ? { name: 'Ed25519' } : { name: 'ECDSA', hash: 'SHA-256' };
+    return await crypto.subtle.verify(params, key, decodeBinary(signature), toBytes(data));
+  } catch {
+    return false;
+  }
 }
 
 function installerFromPath(path: string): PadroneInstaller | undefined {
@@ -148,6 +197,27 @@ async function spawnCommand(command: readonly string[]): Promise<number> {
   return spawnInherited(file, command.slice(1));
 }
 
+const stateFile = (programName: string, runtime: ResolvedPadroneRuntime) =>
+  `${getProgramDirs(programName, runtime.env()).state}${globalThis.process?.platform === 'win32' ? '\\' : '/'}upgrade.json`;
+
+/** The version the last upgrade replaced, for `--rollback` */
+async function previousVersion(programName: string, runtime: ResolvedPadroneRuntime): Promise<string> {
+  let previous: unknown;
+  try {
+    previous = JSON.parse(await readTextFile(stateFile(programName, runtime))).previous;
+  } catch {
+    // No record
+  }
+  if (typeof previous !== 'string' || !VERSION_PATTERN.test(previous))
+    throw new ActionError('No previous version is recorded to roll back to');
+  return previous;
+}
+
+const recordPreviousVersion = (programName: string, runtime: ResolvedPadroneRuntime, previous: string) =>
+  writeTextFileAtomic(stateFile(programName, runtime), `${JSON.stringify({ previous, upgradedAt: new Date().toISOString() })}\n`).catch(
+    () => {},
+  );
+
 /** On the upgrade command, so `padroneUpdateCheck()` doesn't suggest upgrading right after it ran. */
 const UPGRADE_ID = 'padrone:upgrade';
 /** On the program, so `padroneUpdateCheck()` and `version --check` find the command and package without loading it. */
@@ -158,7 +228,7 @@ export function isUpgradeCommand(command: AnyPadroneCommand): boolean {
   return !!command.interceptors?.some((interceptor) => interceptor.meta.id === UPGRADE_ID);
 }
 
-type UpgradeConfig = { command: string; packageName?: string; registry?: string };
+type UpgradeConfig = { command: string; packageName?: string; registry?: string; channel?: string };
 const upgradeConfigs = new WeakMap<object, UpgradeConfig>();
 
 /** The command name, package and registry of the `padroneUpgrade()` registered on `root`. */
@@ -167,7 +237,7 @@ export function getUpgradeConfig(root: AnyPadroneCommand): UpgradeConfig | undef
   return registered && upgradeConfigs.get(registered.factory);
 }
 
-type UpgradeArgs = { check?: boolean; exitCode?: boolean; to?: string; channel?: string; force?: boolean };
+type UpgradeArgs = { check?: boolean; exitCode?: boolean; to?: string; channel?: string; force?: boolean; rollback?: boolean };
 type Plan = PadroneUpgradePlan & { upToDate: boolean; pinned: boolean };
 
 /** The exit code of `upgrade --check --exit-code` when a newer version exists, like `npm outdated`. */
@@ -184,6 +254,7 @@ const UPDATE_AVAILABLE_EXIT_CODE = 1;
  * - `--dry-run` shows the command without running it; the command is a `mutation`, so `padroneConfirm()` asks first,
  *   once the registry says there's something to install
  * - `verify` checks the release before installing it, and refuses the upgrade when it resolves `false`
+ * - `--rollback` installs the version the last upgrade replaced
  *
  * `padroneUpdateCheck()` suggests running it in its notice.
  *
@@ -201,16 +272,16 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
     if (!PACKAGE_PATTERN.test(packageName)) throw new ActionError(`Invalid package name "${packageName}"`);
     const current = await getVersion(root.version);
     const channel = args.channel ?? options.channel ?? 'latest';
+    if (args.rollback && (args.to || args.channel)) throw new ActionError("--rollback can't be combined with --to or --channel");
+    const to = args.rollback ? await previousVersion(root.name, runtime) : args.to;
     if (!VERSION_PATTERN.test(channel)) throw new ActionError(`Invalid channel "${channel}"`);
-    const found = args.to ?? (await fetchLatestVersion(packageName, options.registry ?? 'npm', channel));
+    const found = to ?? (await fetchLatestVersion(packageName, options.registry ?? 'npm', channel));
     if (!found) throw new ActionError(`Couldn't find the ${channel} version of ${packageName}; check your connection or the registry`);
     if (!VERSION_PATTERN.test(found)) throw new ActionError(`Invalid version "${found}"`);
     const version = normalizeVersion(found);
     // A channel other than `latest` may point at a pre-release, which is what the user asked for
-    const upToDate = args.to
-      ? version === normalizeVersion(current)
-      : !isNewerVersion(current, version, { prerelease: channel !== 'latest' });
-    return { packageName, current, version, upToDate, runtime, pinned: !!args.to || channel !== 'latest' };
+    const upToDate = to ? version === normalizeVersion(current) : !isNewerVersion(current, version, { prerelease: channel !== 'latest' });
+    return { packageName, current, version, upToDate, runtime, pinned: !!to || channel !== 'latest' };
   };
 
   /** The plan, with the message to return instead when there's nothing to install (`--check`, up to date). */
@@ -257,7 +328,12 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
   };
 
   const configMarker = defineInterceptor({ id: UPGRADE_CONFIG_ID, name: UPGRADE_CONFIG_ID }, () => ({}));
-  upgradeConfigs.set(configMarker, { command: commandName, packageName: options.packageName, registry: options.registry });
+  upgradeConfigs.set(configMarker, {
+    command: commandName,
+    packageName: options.packageName,
+    registry: options.registry,
+    channel: options.channel,
+  });
 
   return ((builder: AnyPadroneBuilder) =>
     builder.intercept(configMarker).command(commandName, (c) =>
@@ -271,6 +347,7 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
             to: { type: 'string', description: 'Install this version instead of the latest' },
             channel: { type: 'string', description: 'Dist-tag to upgrade to (e.g. next)' },
             force: { type: 'boolean', description: 'Reinstall even when up to date' },
+            rollback: { type: 'boolean', description: 'Go back to the version the last upgrade replaced' },
           }),
         )
         .async()
@@ -295,7 +372,8 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
             const code = await exec(command);
             if (code !== 0) throw new ActionError(`"${command.join(' ')}" failed with exit code ${code}`, { exitCode: code });
           }
-          return `Upgraded ${p.packageName} to ${p.version}`;
+          if (p.current !== p.version) await recordPreviousVersion(getRootCommand(ctx.command).name, ctx.runtime, p.current);
+          return `${args.rollback ? 'Rolled back' : 'Upgraded'} ${p.packageName} to ${p.version}`;
         })
         .dryRun(async (args, ctx) => {
           const { plan: p, message } = await resolvePlan(args, ctx.command, ctx.runtime);

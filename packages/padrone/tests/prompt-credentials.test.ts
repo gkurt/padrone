@@ -348,6 +348,14 @@ describe('padroneCredentials', () => {
       .command('names', (c) => c.action((_, ctx) => ctx.context.credentials.list()))
       .command('where', (c) => c.action((_, ctx) => ctx.context.credentials.backend()));
 
+  it('refuses the file backend without a home directory instead of writing into cwd', async () => {
+    const program = createPadrone('my-cli')
+      .runtime({ ...quiet, env: () => ({}) })
+      .extend(padroneCredentials({ backend: 'file' }))
+      .command('where', (c) => c.action((_, ctx) => ctx.context.credentials.backend()));
+    expect(((await program.eval('where')).error as Error).message).toMatch(/No home directory/);
+  });
+
   it('stores secrets in a 0600 file in the data directory', async () => {
     const program = build({ backend: 'file' });
     await program.eval('login abc123');

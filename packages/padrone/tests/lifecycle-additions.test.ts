@@ -572,6 +572,12 @@ describe('systemOpenCommand', () => {
     expect(systemOpenCommand('/tmp/my file.txt', 'linux')).toEqual(['xdg-open', ['/tmp/my file.txt']]);
   });
 
+  it('keeps a leading dash from being read as an option and refuses control characters', () => {
+    expect(systemOpenCommand('-a evil', 'darwin')).toEqual(['open', ['./-a evil']]);
+    expect(systemOpenCommand('--manual', 'linux')).toEqual(['xdg-open', ['./--manual']]);
+    expect(() => systemOpenCommand('http://x/\ncalc', 'win32')).toThrow();
+  });
+
   it('quotes paths with spaces for cmd start on Windows', () => {
     expect(systemOpenCommand('C:\\My Files\\a.txt', 'win32')).toEqual(['cmd', ['/d', '/s', '/c', '"start "" ^"C:\\My^ Files\\a.txt^""']]);
   });

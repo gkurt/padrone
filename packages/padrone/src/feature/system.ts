@@ -45,11 +45,16 @@ export async function openInEditor(
 /**
  * The command that opens `target` on `platform`. On Windows it's `cmd /d /s /c "start "" ^"<target>^""`, spawned with
  * `windowsVerbatimArguments`: every cmd metacharacter of the target (`&`, `|`, `%`, `^`, spaces, …) is `^`-escaped so cmd
- * passes it to `start` literally, and a `"` (not valid in paths) is URL-encoded.
+ * passes it to `start` literally, and a `"` (not valid in paths) is URL-encoded. Targets with control characters are refused,
+ * and on other platforms a target starting with `-` gets a `./` so it isn't taken as an option.
  */
 export function systemOpenCommand(target: string, platform: string = process.platform): [command: string, args: string[]] {
-  if (platform === 'darwin') return ['open', [target]];
-  if (platform !== 'win32') return ['xdg-open', [target]];
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters is the point
+  if (/[\u0000-\u001f\u007f]/.test(target)) throw new Error('Cannot open a target with control characters');
+  // A leading dash would be read as an option by `open` / `xdg-open`
+  const arg = target.startsWith('-') ? `./${target}` : target;
+  if (platform === 'darwin') return ['open', [arg]];
+  if (platform !== 'win32') return ['xdg-open', [arg]];
   const escaped = `"${target.replace(/"/g, '%22')}"`.replace(/[()[\]%!^"`<>&|;, *?]/g, '^$&');
   return ['cmd', ['/d', '/s', '/c', `"start "" ${escaped}"`]];
 }

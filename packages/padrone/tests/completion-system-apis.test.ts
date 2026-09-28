@@ -385,6 +385,11 @@ describe('verifySha256', () => {
     expect(await verifySha256('hello', 'not a digest')).toBe(false);
   });
 
+  it('accepts a bare digest for a named file', async () => {
+    expect(await verifySha256('hello', digest, 'tool-linux-x64')).toBe(true);
+    expect(await verifySha256('hello!', digest, 'tool-linux-x64')).toBe(false);
+  });
+
   it('picks the file’s line from a SHA256SUMS file', async () => {
     const sums = `${'0'.repeat(64)}  tool-linux-arm64\n${digest} *tool-linux-x64\n`;
     expect(await verifySha256('hello', sums, 'tool-linux-x64')).toBe(true);

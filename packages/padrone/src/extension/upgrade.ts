@@ -71,7 +71,8 @@ export async function verifySha256(data: Uint8Array | ArrayBuffer | string, expe
     .split(/\r?\n/)
     .map((line) => line.trim().match(/^([0-9a-f]{64})(?:\s+\*?(?:\.\/)?(.+))?$/i))
     .filter((match) => !!match);
-  const entry = fileName ? entries.find((match) => match[2] === fileName) : entries.length === 1 ? entries[0] : undefined;
+  const bare = entries.length === 1 && !entries[0]![2] ? entries[0] : undefined;
+  const entry = fileName ? (entries.find((match) => match[2] === fileName) ?? bare) : entries.length === 1 ? entries[0] : undefined;
   if (!entry) return false;
   const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data instanceof Uint8Array ? data : new Uint8Array(data);
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>));
@@ -282,7 +283,7 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
     if (!VERSION_PATTERN.test(channel)) throw new ActionError(`Invalid channel "${channel}"`);
     const found = to ?? (await fetchLatestVersion(packageName, options.registry ?? 'npm', channel));
     if (!found) throw new ActionError(`Couldn't find the ${channel} version of ${packageName}; check your connection or the registry`);
-    if (!VERSION_PATTERN.test(found)) throw new ActionError(`Invalid version "${found}"`);
+    if (!VERSION_PATTERN.test(found)) throw new ActionError(`Invalid version ${JSON.stringify(found)}`);
     const version = normalizeVersion(found);
     // A channel other than `latest` may point at a pre-release, which is what the user asked for
     const upToDate = to ? version === normalizeVersion(current) : !isNewerVersion(current, version, { prerelease: channel !== 'latest' });

@@ -65,7 +65,11 @@ function createCredentialsInterceptor(options: PadroneCredentialsOptions) {
     (keychainWorks ??= Promise.resolve(backend.available?.() ?? true).catch(() => false));
 
   const fileBackend = (programName: string, runtime: ResolvedPadroneRuntime) => {
-    const dirs = getProgramDirs(programName, runtime.env(), platform);
+    const env = runtime.env();
+    // Without a home directory the data directory would be relative to cwd, likely a project
+    if (!options.file && !env.XDG_DATA_HOME && !env.HOME && !env.USERPROFILE && !(platform === 'win32' && env.LOCALAPPDATA))
+      throw new PadroneError('No home directory to store credentials in: set HOME or use padroneCredentials({ file })');
+    const dirs = getProgramDirs(programName, env, platform);
     return fileCredentialBackend(options.file ?? `${dirs.data}${platform === 'win32' ? '\\' : '/'}credentials.json`);
   };
 

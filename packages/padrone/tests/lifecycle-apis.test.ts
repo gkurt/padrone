@@ -661,7 +661,9 @@ describe('padronePlugins()', () => {
 
       expect((await program.eval('plugins install deployer@2')).result as unknown).toBe('Installed plugin deployer@2.0.0');
       expect(commands).toEqual([{ command: ['npm', 'install', 'deployer@2'], cwd: dir }]);
-      expect(readManifest(dir)).toEqual([{ name: 'deployer', spec: 'deployer@2' }]);
+      expect(readManifest(dir)).toEqual([
+        { name: 'deployer', spec: 'deployer@2', version: '2.0.0', integrity: expect.stringMatching(/^sha256-[0-9a-f]{64}$/) },
+      ]);
       expect(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf-8')).private).toBe(true);
       expect((await program.eval('ship')).result as unknown).toBe('ship from plugin');
 
@@ -705,6 +707,118 @@ describe('padronePlugins()', () => {
       const program = makeProgram({ dir, command: true });
       await program.eval(`plugins link ${pluginFile(src, 'p.mjs', 'p')}`);
       if (process.platform !== 'win32') expect(statSync(join(dir, 'plugins.json')).mode & 0o077).toBe(0);
+    });
+
+    describe('safeguards', () => {
+      const captured = () => {
+        const errors: string[] = [];
+        return { errors, runtime: { output: () => {}, error: (m: string) => errors.push(m) } };
+      };
+      const installed = (dir: string, name: string, version: string, command: string) => {
+        const target = join(dir, 'node_modules', name);
+        mkdirSync(target, { recursive: true });
+        writeFileSync(join(target, 'package.json'), JSON.stringify({ name, version, description: 'A plugin', main: 'index.mjs' }));
+        pluginFile(target, 'index.mjs', command);
+        return target;
+      };
+
+      it('refuses plugins outside `allow`', async () => {
+        const dir = tempDir();
+        installed(dir, 'acme-good', '1.0.0', 'good');
+        installed(dir, 'evil', '1.0.0', 'bad');
+        manifest(dir, [
+          { name: 'acme-good', spec: 'acme-good' },
+          { name: 'evil', spec: 'evil' },
+        ]);
+        const { errors, runtime } = captured();
+        const program = makeProgram({ dir, allow: ['acme-*'] }, runtime);
+        expect((await program.eval('good')).result as unknown).toBe('good from plugin');
+        expect((await program.eval('bad')).error).toBeInstanceOf(Error);
+        expect(errors).toEqual(['Plugin "evil" failed to load: not in the allowed plugins']);
+      });
+
+      it('skips a plugin whose files changed since they were recorded', async () => {
+        const dir = tempDir();
+        const target = installed(dir, 'deployer', '1.0.0', 'ship');
+        const { createHash } = await import('node:crypto');
+        const integrity = `sha256-${createHash('sha256')
+          .update(readFileSync(join(target, 'index.mjs')))
+          .digest('hex')}`;
+        manifest(dir, [{ name: 'deployer', spec: 'deployer', version: '1.0.0', integrity }]);
+        expect((await makeProgram({ dir }).eval('ship')).result as unknown).toBe('ship from plugin');
+        writeFileSync(join(target, 'index.mjs'), "export default (p) => p.command('ship', (c) => c.action(() => 'tampered'));");
+        const { errors, runtime } = captured();
+        expect((await makeProgram({ dir }, runtime).eval('ship')).error).toBeInstanceOf(Error);
+        expect(errors[0]).toContain('its files changed');
+      });
+
+      it('skips a plugin whose installed version differs from the recorded one', async () => {
+        const dir = tempDir();
+        installed(dir, 'deployer', '1.1.0', 'ship');
+        manifest(dir, [{ name: 'deployer', spec: 'deployer', version: '1.0.0' }]);
+        const { errors, runtime } = captured();
+        await makeProgram({ dir }, runtime).eval('ship');
+        expect(errors[0]).toContain('version 1.1.0 is installed, but 1.0.0 was recorded');
+      });
+
+      it('checks the plugin API range', async () => {
+        const dir = tempDir();
+        const src = tempDir();
+        const file = join(src, 'api.mjs');
+        writeFileSync(file, "export const padroneApi = '^2.0.0';\nexport default (p) => p.command('api', (c) => c.action(() => 'api'));\n");
+        manifest(dir, [{ name: 'api', link: file }]);
+        const { errors, runtime } = captured();
+        expect((await makeProgram({ dir, apiVersion: '3.0.0' }, runtime).eval('api')).error).toBeInstanceOf(Error);
+        expect(errors[0]).toContain('needs plugin API ^2.0.0, but this program has 3.0.0');
+        expect((await makeProgram({ dir, apiVersion: '2.4.1' }).eval('api')).result as unknown).toBe('api');
+        expect((await makeProgram({ dir }).eval('api')).result as unknown).toBe('api');
+      });
+
+      it('refuses a plugin that replaces an existing command unless `override`', async () => {
+        const dir = tempDir();
+        const src = tempDir();
+        manifest(dir, [{ name: 'own', link: pluginFile(src, 'own.mjs', 'own') }]);
+        const { errors, runtime } = captured();
+        expect((await makeProgram({ dir }, runtime).eval('own')).result).toBe('own');
+        expect(errors[0]).toContain('would replace the "own" command');
+        expect((await makeProgram({ dir, override: true }).eval('own')).result as unknown).toBe('own from plugin');
+      });
+    });
+
+    it('updates plugins, shows their info and lists them as JSON', async () => {
+      const dir = tempDir();
+      let version = '1.0.0';
+      const exec = async (command: readonly string[], { cwd }: { cwd: string }) => {
+        const target = join(cwd, 'node_modules', 'deployer');
+        mkdirSync(target, { recursive: true });
+        writeFileSync(
+          join(target, 'package.json'),
+          JSON.stringify({ name: 'deployer', version, description: 'Ships it', main: 'index.mjs' }),
+        );
+        pluginFile(target, 'index.mjs', 'ship');
+        const pkgFile = join(cwd, 'package.json');
+        const pkg = JSON.parse(readFileSync(pkgFile, 'utf-8'));
+        if (command[1] === 'install') pkg.dependencies = { deployer: '^1.0.0' };
+        writeFileSync(pkgFile, JSON.stringify(pkg));
+        return 0;
+      };
+      const program = makeProgram({ dir, command: true, packageManager: 'npm', exec });
+      await program.eval('plugins install deployer');
+
+      expect((await program.eval('plugins update')).result as unknown).toBe('deployer is up to date (1.0.0)');
+      version = '1.2.0';
+      expect((await program.eval('plugins update deployer')).result as unknown).toBe('deployer 1.0.0 → 1.2.0');
+      expect(readManifest(dir)[0].version).toBe('1.2.0');
+      expect((await program.eval('ship')).result as unknown).toBe('ship from plugin');
+      expect((await program.eval('plugins update nope')).error).toBeInstanceOf(Error);
+
+      const info = (await program.eval('plugins info deployer')).result as unknown as string;
+      expect(info).toContain('Version:     1.2.0');
+      expect(info).toContain('Description: Ships it');
+      expect(info).toContain('Installed as: deployer');
+
+      const listed = JSON.parse((await program.eval('plugins list --json')).result as unknown as string);
+      expect(listed).toEqual([expect.objectContaining({ name: 'deployer', spec: 'deployer', version: '1.2.0' })]);
     });
 
     it('uses the chosen package manager', async () => {

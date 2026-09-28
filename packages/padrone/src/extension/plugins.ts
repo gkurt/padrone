@@ -4,7 +4,8 @@ import { defineInterceptor } from '../core/interceptors.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, AnyPadroneProgram, CommandTypesBase } from '../types/index.ts';
 import { getProgramDirs } from '../util/dirs.ts';
-import { readTextFile } from '../util/files.ts';
+import { readTextFile, writeTextFileAtomic } from '../util/files.ts';
+import { satisfiesRange } from '../util/semver-range.ts';
 import { findExecutable, pathDirs, spawnInherited } from '../util/spawn.ts';
 import { getRootCommand } from '../util/utils.ts';
 import { detectInstaller } from './upgrade.ts';
@@ -32,6 +33,18 @@ export type PadronePluginsOptions = {
    * still imported, and runs, when the program starts). Defaults to `false`.
    */
   ignoreScripts?: boolean;
+  /**
+   * Names that plugins installed at runtime may have: exact names, `@scope/*` or `prefix*`. Others are refused by
+   * `plugins install` and skipped, with an error, when `plugins.json` lists them. Links and `packages` are always allowed.
+   */
+  allow?: readonly string[];
+  /**
+   * The plugin API version of this program. A plugin module may export `padroneApi`, the semver range it works with
+   * (`'^2.0.0'`); one whose range doesn't include this version isn't loaded. Without it the range isn't checked.
+   */
+  apiVersion?: string;
+  /** Let a plugin replace a command the program already has. Defaults to `false`: such a plugin is skipped with an error. */
+  override?: boolean;
   /** Runs a package manager command (`['npm', 'install', 'x']`) in `cwd`, resolving with its exit code. Defaults to spawning it without a shell. */
   exec?: (command: readonly string[], options: { cwd: string }) => Promise<number>;
   /** Imports a plugin module: a `file:` URL, or a package name from `packages`. Defaults to `import()`. */
@@ -39,7 +52,15 @@ export type PadronePluginsOptions = {
 };
 
 /** An entry of `plugins.json`: a package installed into the plugins directory, or a linked local path. */
-type PluginEntry = { name: string; spec?: string; link?: string };
+type PluginEntry = {
+  name: string;
+  spec?: string;
+  link?: string;
+  /** The version installed, checked when the plugin loads */
+  version?: string;
+  /** `sha256-<hex>` of the plugin's module file, checked when the plugin loads (not for links) */
+  integrity?: string;
+};
 
 // ── Storage ──────────────────────────────────────────────────────────────
 
@@ -90,19 +111,9 @@ async function readManifest(dir: string): Promise<PluginEntry[]> {
   return parseManifest(await readManifestText(dir), dir);
 }
 
-async function writeManifest(dir: string, plugins: PluginEntry[]): Promise<void> {
-  const fs = await import('node:fs');
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+const writeManifest = (dir: string, plugins: PluginEntry[]) =>
   // The list decides which code runs at startup: written atomically, readable and writable by the user only
-  const temp = `${manifestPath(dir)}.${globalThis.process?.pid ?? 0}.tmp`;
-  fs.writeFileSync(temp, `${JSON.stringify({ plugins }, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 });
-  try {
-    fs.renameSync(temp, manifestPath(dir));
-  } catch (err) {
-    fs.rmSync(temp, { force: true });
-    throw err;
-  }
-}
+  writeTextFileAtomic(manifestPath(dir), `${JSON.stringify({ plugins }, null, 2)}\n`, { private: true });
 
 async function readJson(file: string): Promise<Record<string, unknown> | undefined> {
   const fs = await import('node:fs');
@@ -138,6 +149,17 @@ async function moduleFile(path: string): Promise<string> {
 const installedPath = (dir: string, name: string) => join(dir, 'node_modules', ...name.split('/'));
 const entryPath = (dir: string, entry: PluginEntry) => entry.link ?? installedPath(dir, entry.name);
 
+/** `sha256-<hex>` of the plugin's module file */
+async function fileIntegrity(file: string): Promise<string> {
+  const fs = await import('node:fs');
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', fs.readFileSync(file)));
+  return `sha256-${Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** Whether `name` matches an `allow` pattern: exact, `@scope/*` or `prefix*` */
+const isAllowed = (name: string, allow: readonly string[] | undefined) =>
+  !allow || allow.some((pattern) => (pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern));
+
 // ── Loading ──────────────────────────────────────────────────────────────
 
 /** The command tree of a program export, also from another copy of padrone (its symbol has the same description). */
@@ -157,11 +179,41 @@ function pluginExport(mod: unknown): unknown {
   return isPlugin(value) ? value : ((value as { default?: unknown })?.default ?? value);
 }
 
-function applyPlugin(program: AnyPadroneProgram, plugin: unknown, name: string): AnyPadroneProgram {
-  if (typeof plugin === 'function') return program.extend(plugin as (builder: AnyPadroneProgram) => AnyPadroneProgram);
+/**
+ * `builder` wrapped so the names of the top-level commands defined through it are pushed to `names`, and the wrapper for
+ * every builder a call returns; `unwrap` gives the real builder back.
+ */
+function trackCommands(builder: AnyPadroneProgram, names: string[]) {
+  const originals = new WeakMap<object, AnyPadroneProgram>();
+  const wrap = (target: AnyPadroneProgram): AnyPadroneProgram => {
+    const proxy = new Proxy(target, {
+      get(object, property, receiver) {
+        const value = Reflect.get(object, property, receiver);
+        if (typeof value !== 'function') return value;
+        return (...args: unknown[]) => {
+          if (property === 'command' || property === 'mount') names.push(String([args[0]].flat()[0]));
+          const result = value.apply(object, args);
+          return result && typeof result === 'object' && commandSymbol in result ? wrap(result) : result;
+        };
+      },
+    });
+    originals.set(proxy, target);
+    return proxy;
+  };
+  return { program: wrap(builder), unwrap: (value: AnyPadroneProgram) => originals.get(value) ?? value };
+}
+
+/** Applies a plugin; `defined` collects the names of the top-level commands it defines */
+function applyPlugin(program: AnyPadroneProgram, plugin: unknown, name: string, defined: string[]): AnyPadroneProgram {
+  if (typeof plugin === 'function') {
+    const tracked = trackCommands(program, defined);
+    return tracked.unwrap((plugin as (builder: AnyPadroneProgram) => AnyPadroneProgram)(tracked.program));
+  }
   const command = programCommand(plugin);
-  if (command)
+  if (command) {
+    defined.push(command.name);
     return program.mount(command.name, { [commandSymbol]: command } as unknown as AnyPadroneProgram) as unknown as AnyPadroneProgram;
+  }
   throw new Error(`"${name}" doesn't export a padrone extension or program`);
 }
 
@@ -169,6 +221,13 @@ const toSpecifier = async (path: string) => {
   const { pathToFileURL } = await import('node:url');
   return pathToFileURL(path).href;
 };
+
+const rootOf = (program: AnyPadroneProgram) => (program as unknown as { [commandSymbol]: AnyPadroneCommand })[commandSymbol];
+
+async function readVersion(dir: string, entry: PluginEntry): Promise<string | undefined> {
+  const pkg = await readJson(join(entryPath(dir, entry), 'package.json'));
+  return typeof pkg?.version === 'string' ? pkg.version : undefined;
+}
 
 // ── Extension ────────────────────────────────────────────────────────────
 
@@ -235,15 +294,48 @@ export function padronePlugins(options: PadronePluginsOptions = {}): <T extends 
     if (!('package' in entry)) return toSpecifier(await moduleFile(entryPath(dir, entry)));
     return /^([/\\]|[a-z]:[\\/])/i.test(entry.package) ? toSpecifier(await moduleFile(entry.package)) : entry.package;
   };
+  const importEntry = async (dir: string, entry: PluginEntry | { name: string; package: string }) =>
+    importModule(await specifierOf(dir, entry));
   const loadModule = async (dir: string, entry: PluginEntry | { name: string; package: string }) =>
-    pluginExport(await importModule(await specifierOf(dir, entry)));
+    pluginExport(await importEntry(dir, entry));
+
+  /** Refuses a plugin that isn't allowed, or whose installed version or module file changed since it was recorded */
+  const verifyEntry = async (dir: string, entry: PluginEntry) => {
+    if (entry.link) return;
+    if (!isAllowed(entry.name, options.allow)) throw new Error('not in the allowed plugins');
+    if (entry.version) {
+      const installed = await readVersion(dir, entry);
+      if (installed !== entry.version)
+        throw new Error(`version ${installed ?? 'unknown'} is installed, but ${entry.version} was recorded; run \`update\``);
+    }
+    if (entry.integrity && (await fileIntegrity(await moduleFile(entryPath(dir, entry)))) !== entry.integrity) {
+      throw new Error('its files changed since it was installed; run `update` to trust the new ones');
+    }
+  };
+
+  /** Applies a plugin, checking its API range and that it doesn't replace a command the program has */
+  const applyChecked = (program: AnyPadroneProgram, mod: unknown, name: string): AnyPadroneProgram => {
+    const range = (mod as { padroneApi?: unknown })?.padroneApi;
+    if (options.apiVersion && typeof range === 'string' && !satisfiesRange(options.apiVersion, range)) {
+      throw new Error(`it needs plugin API ${range}, but this program has ${options.apiVersion}`);
+    }
+    const defined: string[] = [];
+    const result = applyPlugin(program, pluginExport(mod), name, defined);
+    if (!options.override) {
+      const existing = new Set(rootOf(program).commands?.map((c) => c.name));
+      const replaced = defined.find((commandName) => existing.has(commandName));
+      if (replaced) throw new Error(`it would replace the "${replaced}" command`);
+    }
+    return result;
+  };
 
   const load = async (program: AnyPadroneProgram, dir: string, entries: PluginEntry[], runtime: ResolvedPadroneRuntime) => {
     let result = program;
     const all = [...(options.packages ?? []).map((name) => ({ name, package: name })), ...entries];
     for (const entry of all) {
       try {
-        result = applyPlugin(result, await loadModule(dir, entry), entry.name);
+        if ('spec' in entry || 'link' in entry) await verifyEntry(dir, entry as PluginEntry);
+        result = applyChecked(result, await importEntry(dir, entry), entry.name);
       } catch (err) {
         runtime.error(`Plugin "${entry.name}" failed to load: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -282,10 +374,7 @@ export function padronePlugins(options: PadronePluginsOptions = {}): <T extends 
       pluginsDir(options, getRootCommand(command), env);
     const manager = () => managerCommands[options.packageManager ?? detectPackageManager()];
     const dependencies = async (dir: string) => Object.keys((await readJson(join(dir, 'package.json')))?.dependencies ?? {});
-    const version = async (dir: string, entry: PluginEntry) => {
-      const pkg = await readJson(join(entryPath(dir, entry), 'package.json'));
-      return typeof pkg?.version === 'string' ? pkg.version : undefined;
-    };
+    const version = readVersion;
     const run = async (command: readonly string[], cwd: string) => {
       const code = await exec(command, { cwd });
       if (code !== 0) throw new ActionError(`"${command.join(' ')}" failed with exit code ${code}`, { exitCode: code });
@@ -295,6 +384,11 @@ export function padronePlugins(options: PadronePluginsOptions = {}): <T extends 
       const plugin = await loadModule(dir, entry);
       if (!isPlugin(plugin)) throw new Error(`"${entry.name}" doesn't export a padrone extension or program`);
     };
+    /** Records the version and module file the entry has now, which are checked when it loads */
+    const record = async (dir: string, entry: PluginEntry) => {
+      entry.version = await readVersion(dir, entry);
+      entry.integrity = await fileIntegrity(await moduleFile(entryPath(dir, entry)));
+    };
     const nameField = { type: 'string', description: 'The plugin' } as const;
 
     return result.command(commandName, (c) =>
@@ -303,10 +397,21 @@ export function padronePlugins(options: PadronePluginsOptions = {}): <T extends 
         .command(['list', 'ls'], (l) =>
           l
             .configure({ description: 'List installed plugins' })
+            .arguments(passthroughSchema({ json: { type: 'boolean', description: 'Print the plugins as JSON' } }))
             .async()
-            .action(async (_args, ctx) => {
+            .action(async (args, ctx) => {
               const dir = dirOf(ctx.command, ctx.runtime.env());
               const entries = await readManifest(dir);
+              if (args.json) {
+                return JSON.stringify(
+                  [
+                    ...(options.packages ?? []).map((name) => ({ name, builtIn: true })),
+                    ...(await Promise.all(entries.map(async (entry) => ({ ...entry, version: await version(dir, entry) })))),
+                  ],
+                  null,
+                  2,
+                );
+              }
               const rows = [
                 ...(options.packages ?? []).map((name) => [name, '(built in)']),
                 ...(await Promise.all(
@@ -346,7 +451,9 @@ export function padronePlugins(options: PadronePluginsOptions = {}): <T extends 
               if (!name) throw new ActionError(`Couldn't tell which package "${spec}" installed`);
               const entry: PluginEntry = { name, spec };
               try {
+                if (!isAllowed(name, options.allow)) throw new Error(`"${name}" is not in the allowed plugins`);
                 await check(dir, entry);
+                await record(dir, entry);
               } catch (err) {
                 await run([...manager().remove, name], dir);
                 throw new ActionError(`"${name}" isn't a plugin: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
@@ -377,6 +484,58 @@ export function padronePlugins(options: PadronePluginsOptions = {}): <T extends 
                 entries.filter((e) => e !== entry),
               );
               return `${entry.link ? 'Unlinked' : 'Uninstalled'} plugin ${entry.name}`;
+            }),
+        )
+        .command('update', (u) =>
+          u
+            .configure({ description: 'Update installed plugins (all, or the named one)', mutation: true })
+            .arguments(passthroughSchema({ name: { type: 'string', description: 'The plugin; all when omitted' } }), {
+              positional: ['name'],
+            })
+            .async()
+            .action(async (args, ctx) => {
+              const dir = dirOf(ctx.command, ctx.runtime.env());
+              const entries = await readManifest(dir);
+              const targets = entries.filter((e) => !e.link && e.spec && (!args.name || e.name === args.name));
+              if (args.name && targets.length === 0) throw new ActionError(`No installed plugin "${args.name}"`);
+              if (targets.length === 0) return 'No plugins to update';
+              const lines: string[] = [];
+              for (const entry of targets) {
+                const before = await version(dir, entry);
+                await run([...manager().add, ...(options.ignoreScripts ? ['--ignore-scripts'] : []), entry.spec!], dir);
+                await check(dir, entry);
+                await record(dir, entry);
+                lines.push(
+                  entry.version === before
+                    ? `${entry.name} is up to date (${before})`
+                    : `${entry.name} ${before ?? '?'} → ${entry.version}`,
+                );
+              }
+              await writeManifest(dir, entries);
+              return lines.join('\n');
+            }),
+        )
+        .command('info', (n) =>
+          n
+            .configure({ description: 'Show details of a plugin' })
+            .arguments(passthroughSchema({ name: nameField }), { positional: ['name'] })
+            .async()
+            .action(async (args, ctx) => {
+              if (!args.name) throw new ActionError(`Usage: ${commandName} info <name>`);
+              const dir = dirOf(ctx.command, ctx.runtime.env());
+              const entry = (await readManifest(dir)).find((e) => e.name === args.name);
+              if (!entry) throw new ActionError(`No plugin "${args.name}"`);
+              const pkg = await readJson(join(entryPath(dir, entry), 'package.json'));
+              return [
+                `Name:        ${entry.name}`,
+                `Version:     ${typeof pkg?.version === 'string' ? pkg.version : 'unknown'}`,
+                typeof pkg?.description === 'string' && `Description: ${pkg.description}`,
+                entry.link ? `Linked from: ${entry.link}` : `Installed as: ${entry.spec}`,
+                `Location:    ${entryPath(dir, entry)}`,
+                entry.integrity && `Integrity:   ${entry.integrity}`,
+              ]
+                .filter(Boolean)
+                .join('\n');
             }),
         )
         .command('link', (k) =>

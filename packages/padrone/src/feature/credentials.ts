@@ -1,4 +1,5 @@
 import { ConfigError, PadroneError } from '../core/errors.ts';
+import { writeTextFileAtomic } from '../util/files.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -166,18 +167,7 @@ export function fileCredentialBackend(file: string): PadroneCredentialBackend {
     }
     throw new ConfigError(`Invalid credentials file ${file}: must be an object`);
   };
-  const write = async (data: CredentialFile) => {
-    const [fs, path] = await Promise.all([import('node:fs'), import('node:path')]);
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    const temp = `${file}.${globalThis.process?.pid ?? 0}.${Date.now()}.tmp`;
-    fs.writeFileSync(temp, `${JSON.stringify(data, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
-    try {
-      fs.renameSync(temp, file);
-    } catch (err) {
-      fs.rmSync(temp, { force: true });
-      throw err;
-    }
-  };
+  const write = (data: CredentialFile) => writeTextFileAtomic(file, `${JSON.stringify(data, null, 2)}\n`, { private: true });
   return {
     name: 'file',
     async get(service, name) {

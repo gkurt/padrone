@@ -1,5 +1,6 @@
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import { getProgramDirs } from '../util/dirs.ts';
+import { writeTextFileAtomic } from '../util/files.ts';
 import { isCI } from '../util/utils.ts';
 
 /**
@@ -163,17 +164,8 @@ async function readCache(cachePath: string): Promise<CacheData | undefined> {
  * Writes the update check cache file.
  */
 async function writeCache(cachePath: string, data: CacheData): Promise<void> {
-  try {
-    const { existsSync, mkdirSync, writeFileSync } = await import('node:fs');
-    const { dirname } = await import('node:path');
-    const dir = dirname(cachePath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
-    writeFileSync(cachePath, JSON.stringify(data), 'utf-8');
-  } catch {
-    // Ignore errors — cache is best-effort
-  }
+  // Best-effort: a cache that can't be written only means checking again
+  await writeTextFileAtomic(cachePath, JSON.stringify(data)).catch(() => {});
 }
 
 /**

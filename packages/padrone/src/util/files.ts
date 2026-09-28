@@ -31,3 +31,20 @@ export function fileErrorReason(err: unknown): string {
   if (code === 'EACCES') return 'permission denied';
   return err instanceof Error ? err.message : String(err);
 }
+
+/**
+ * Writes `text` to `path` through a temp file and a rename, so a reader never sees half a file, creating the directory
+ * (mode `0700` with `private`, and the file `0600`). The temp file is removed when the rename fails.
+ */
+export async function writeTextFileAtomic(path: string, text: string, options: { private?: boolean } = {}): Promise<void> {
+  const [nodeFs, nodePath] = await Promise.all([import('node:fs'), import('node:path')]);
+  nodeFs.mkdirSync(nodePath.dirname(path), { recursive: true, ...(options.private && { mode: 0o700 }) });
+  const temp = `${path}.${globalThis.process?.pid ?? 0}.${Date.now()}.tmp`;
+  nodeFs.writeFileSync(temp, text, { encoding: 'utf-8', flag: 'wx', ...(options.private && { mode: 0o600 }) });
+  try {
+    nodeFs.renameSync(temp, path);
+  } catch (err) {
+    nodeFs.rmSync(temp, { force: true });
+    throw err;
+  }
+}

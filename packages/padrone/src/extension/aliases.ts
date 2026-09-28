@@ -6,7 +6,7 @@ import { tokenizeInput } from '../core/parse.ts';
 import { thenMaybe } from '../core/results.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
 import { getProgramDirs } from '../util/dirs.ts';
-import { fileErrorReason } from '../util/files.ts';
+import { fileErrorReason, writeTextFileAtomic } from '../util/files.ts';
 import { getRootCommand } from '../util/utils.ts';
 import { parseFlatYaml, toYaml } from '../util/yaml.ts';
 import { expandResponseFiles, responseFilesOptions } from './response-files.ts';
@@ -54,11 +54,7 @@ async function readAliases(file: string): Promise<AliasMap> {
   throw new ConfigError(`Invalid aliases file ${file}: must be an object of alias names to commands`);
 }
 
-async function writeText(file: string, text: string): Promise<void> {
-  const [fs, path] = await Promise.all([import('node:fs'), import('node:path')]);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, text, 'utf-8');
-}
+const writeText = (file: string, text: string) => writeTextFileAtomic(file, text);
 
 const writeAliases = (file: string, aliases: AliasMap) => writeText(file, `${JSON.stringify(aliases, null, 2)}\n`);
 

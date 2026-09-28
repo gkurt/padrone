@@ -98,14 +98,24 @@ function parseManifest(text: string | undefined, dir: string): PluginEntry[] {
   const plugins = (data as { plugins?: unknown })?.plugins;
   if (!Array.isArray(plugins)) throw new ConfigError(`Invalid plugins file ${manifestPath(dir)}: expected { "plugins": [...] }`);
   return plugins.filter(
-    (entry): entry is PluginEntry =>
-      !!entry && isSafeName(entry.name) && (typeof entry.spec === 'string' || typeof entry.link === 'string'),
+    (entry): entry is PluginEntry => !!entry && isSafeName(entry.name) && (isSafeSpec(entry.spec) || typeof entry.link === 'string'),
   );
 }
 
-/** A name that's later joined into `node_modules/<name>` and passed to the package manager: no `..` segments, no leading `-`. */
+/**
+ * A name that's later joined into `node_modules/<name>`, passed to the package manager and printed: no `..` segments, no
+ * leading `-`, no control characters (terminal escapes).
+ */
 const isSafeName = (name: unknown): name is string =>
-  typeof name === 'string' && !!name && !name.startsWith('-') && !name.split(/[\\/]/).some((part) => part === '..' || part === '.');
+  typeof name === 'string' &&
+  !!name &&
+  !name.startsWith('-') &&
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters is the point
+  !/[\x00-\x1f\x7f]/.test(name) &&
+  !name.split(/[\\/]/).some((part) => part === '..' || part === '.');
+
+/** A spec from `plugins.json` reaches the package manager on `update`, so it gets the same check as `install`'s. */
+const isSafeSpec = (spec: unknown): spec is string => typeof spec === 'string' && SPEC_PATTERN.test(spec);
 
 async function readManifest(dir: string): Promise<PluginEntry[]> {
   return parseManifest(await readManifestText(dir), dir);
@@ -497,6 +507,8 @@ export function padronePlugins(options: PadronePluginsOptions = {}): <T extends 
               const dir = dirOf(ctx.command, ctx.runtime.env());
               const entries = await readManifest(dir);
               const targets = entries.filter((e) => !e.link && e.spec && (!args.name || e.name === args.name));
+              const denied = targets.find((e) => !isAllowed(e.name, options.allow));
+              if (denied) throw new ActionError(`"${denied.name}" is not in the allowed plugins`);
               if (args.name && targets.length === 0) throw new ActionError(`No installed plugin "${args.name}"`);
               if (targets.length === 0) return 'No plugins to update';
               const lines: string[] = [];

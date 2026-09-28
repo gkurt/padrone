@@ -761,6 +761,18 @@ describe('padronePlugins()', () => {
         expect(errors).toEqual(['Plugin "evil" failed to load: not in the allowed plugins']);
       });
 
+      it('ignores manifest entries with option-like specs or control characters in names', async () => {
+        const dir = tempDir();
+        const src = tempDir();
+        manifest(dir, [
+          { name: 'sneaky', spec: '--registry=http://evil.example' },
+          { name: 'bad\u001b[2Jname', link: pluginFile(src, 'x.mjs', 'x') },
+        ]);
+        const { errors, runtime } = captured();
+        expect((await makeProgram({ dir, command: true }, runtime).eval('plugins list')).result as unknown).toBe('No plugins installed');
+        expect(errors).toEqual([]);
+      });
+
       it('skips a plugin whose files changed since they were recorded', async () => {
         const dir = tempDir();
         const target = installed(dir, 'deployer', '1.0.0', 'ship');

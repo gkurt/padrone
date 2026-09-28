@@ -213,10 +213,15 @@ async function previousVersion(programName: string, runtime: ResolvedPadroneRunt
   return previous;
 }
 
-const recordPreviousVersion = (programName: string, runtime: ResolvedPadroneRuntime, previous: string) =>
-  writeTextFileAtomic(stateFile(programName, runtime), `${JSON.stringify({ previous, upgradedAt: new Date().toISOString() })}\n`).catch(
-    () => {},
-  );
+const recordPreviousVersion = (programName: string, runtime: ResolvedPadroneRuntime, previous: string) => {
+  const env = runtime.env();
+  // Without a home directory the state directory would be relative to cwd
+  if (!env.XDG_STATE_HOME && !env.HOME && !env.USERPROFILE) return;
+  return writeTextFileAtomic(
+    stateFile(programName, runtime),
+    `${JSON.stringify({ previous, upgradedAt: new Date().toISOString() })}\n`,
+  ).catch(() => {});
+};
 
 /** On the upgrade command, so `padroneUpdateCheck()` doesn't suggest upgrading right after it ran. */
 const UPGRADE_ID = 'padrone:upgrade';

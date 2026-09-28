@@ -46,6 +46,12 @@ export type ConfigSearchOptions = {
   merge?: boolean;
   /** Set to `false` to not follow `extends` keys. */
   extends?: boolean;
+  /**
+   * Whether script configs (`.js`, `.ts`, …) may be imported, which runs their code: `false` refuses all of them, a function
+   * decides per file (given its absolute path), e.g. to ask the user once or check an allowlist. Data configs (JSON, YAML,
+   * TOML, `package.json`) always load. A file given with `--config` is always allowed. Defaults to `true`.
+   */
+  scripts?: boolean | ((file: string) => boolean | Promise<boolean>);
   /** Environment that locates the user config directory (`XDG_CONFIG_HOME`, `HOME`, `APPDATA`). Defaults to `process.env`. */
   env?: Record<string, string | undefined>;
 };
@@ -71,7 +77,7 @@ try {
   // Non-CLI environments (browser, edge) — ignore
 }
 
-type NodeModules = { fs: typeof import('node:fs'); path: typeof import('node:path') };
+type NodeModules = { fs: typeof import('node:fs'); path: typeof import('node:path'); scripts?: ConfigSearchOptions['scripts'] };
 
 /** The user config directory (`program.dirs.config`); `XDG_CONFIG_HOME` is honored on every platform. */
 function getUserConfigDir(appName: string, env: Record<string, string | undefined> = process.env): string | undefined {
@@ -223,7 +229,11 @@ export function isConfigObject(value: unknown): value is ConfigData {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readConfig({ fs, path }: NodeModules, { file, key }: FoundConfig, context: PadroneConfigContext): MaybePromise<ConfigData> {
+function readConfig(
+  { fs, path, scripts }: NodeModules,
+  { file, key }: FoundConfig,
+  context: PadroneConfigContext,
+): MaybePromise<ConfigData> {
   const check = (data: unknown): ConfigData => {
     if (isConfigObject(data)) return data;
     throw new ConfigError(`Invalid config in ${file}${key ? `: "${key}"` : ''} must be an object`);
@@ -234,9 +244,15 @@ function readConfig({ fs, path }: NodeModules, { file, key }: FoundConfig, conte
   if (SCRIPT_EXTENSIONS.has(ext)) {
     // A file URL: Node's ESM loader rejects Windows paths like `C:\...`
     const specifier = _url ? _url.pathToFileURL(file).href : file;
-    return import(/* @vite-ignore */ specifier).then((mod) => {
-      const exported = mod.default ?? mod;
-      return typeof exported === 'function' ? thenMaybe(exported(context), check) : check(exported);
+    const refuse = () => new ConfigError(`Refusing to run the script config ${file}: script configs aren't trusted here`);
+    if (scripts === false) throw refuse();
+    const allowed = typeof scripts === 'function' ? scripts(path.resolve(file)) : true;
+    return thenMaybe(allowed, (ok) => {
+      if (!ok) throw refuse();
+      return import(/* @vite-ignore */ specifier).then((mod) => {
+        const exported = mod.default ?? mod;
+        return typeof exported === 'function' ? thenMaybe(exported(context), check) : check(exported);
+      });
     });
   }
   // Unknown extensions are read as JSON (comments and trailing commas allowed)
@@ -411,7 +427,7 @@ export function loadConfigLayers(
 ): MaybePromise<ConfigLayer[]> {
   if (typeof process === 'undefined') return [];
   const load = () => {
-    const modules = { fs: _fs!, path: _path! };
+    const modules = { fs: _fs!, path: _path!, scripts: search?.scripts };
     const followExtends = search?.extends !== false;
     const ctx = context ?? { command: '', env: search?.env ?? process.env };
     return reduceMaybe(findConfigs(modules, process.cwd(), files, xdgAppName, search), [] as ConfigLayer[], (layers, config) =>

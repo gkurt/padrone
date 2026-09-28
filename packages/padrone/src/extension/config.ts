@@ -76,6 +76,13 @@ export type PadroneConfigOptions = {
    * Defaults to `false`.
    */
   searchParents?: boolean | 'project';
+  /**
+   * Whether script configs (`.js`, `.ts`, …) found by the search may be imported, which runs their code (a config in a
+   * parent directory is code from wherever you happen to be): `false` refuses them, a function decides per absolute
+   * path, e.g. `(file) => askOnce(file)`. Data configs always load, and a file given with `--config` is always allowed.
+   * Defaults to `true`.
+   */
+  scripts?: boolean | ((file: string) => boolean | Promise<boolean>);
   /** The last directory `searchParents` searches (inclusive), relative to cwd, like cosmiconfig's `stopDir`. */
   stopDir?: string;
   /**
@@ -202,7 +209,13 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
       const xdgAppName = typeof xdgOption === 'string' ? xdgOption : xdgOption ? programName : undefined;
       const packageJsonKey =
         typeof packageJsonOption === 'string' ? packageJsonOption : packageJsonOption === true ? programName : undefined;
-      const searching = options?.searchParents || packageJsonKey || options?.merge || options?.extends === false || xdgAppName;
+      const searching =
+        options?.searchParents ||
+        packageJsonKey ||
+        options?.merge ||
+        options?.extends === false ||
+        xdgAppName ||
+        options?.scripts !== undefined;
       const search: ConfigSearchOptions | undefined = searching
         ? {
             parents: options?.searchParents,
@@ -210,6 +223,7 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
             packageJsonKey,
             merge: options?.merge,
             ...(options?.extends === false && { extends: false }),
+            ...(options?.scripts !== undefined && { scripts: options.scripts }),
             ...(xdgAppName && { env }),
           }
         : undefined;
@@ -303,7 +317,11 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
 
         // Load config data: explicit --config flag takes priority, then auto-detect
         const env = ctx.runtime.env();
-        const { xdgAppName, search, context } = source.locate(ctx.command, env, profile);
+        const located = source.locate(ctx.command, env, profile);
+        const { xdgAppName, context } = located;
+        // A file the user named with --config is trusted
+        const { scripts: _scripts, ...searchWithoutScripts } = located.search ?? {};
+        const search = explicitConfigPath ? searchWithoutScripts : located.search;
         const loaded = nothingToLoad
           ? {}
           : loadConfigData(options?.loadConfig, explicitConfigPath ?? configFiles ?? [], xdgAppName, search, context);

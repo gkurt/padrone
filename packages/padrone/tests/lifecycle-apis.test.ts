@@ -357,6 +357,22 @@ describe('padroneExternalCommands()', () => {
     expect(spawned).toEqual([file, ['--name', 'Ada L', '--', 'x']]);
   });
 
+  it('passes only the allowed variables with `env`', async () => {
+    const bin = tempDir();
+    script(bin, 'app-hello', 'exit 0');
+    const envs: Record<string, string | undefined>[] = [];
+    const program = (env: Parameters<typeof padroneExternalCommands>[0]) =>
+      createPadrone('app')
+        .runtime({ ...quiet, env: () => ({ PATH: bin, HOME: '/h', APP_TOKEN: 't', MY_X: '1', SECRET: 's' }) })
+        .extend(padroneExternalCommands({ ...env, spawn: async (_file, _args, { env }) => (envs.push(env), 0) }));
+    await program({ env: ['MY_*'] }).eval('hello');
+    await program({ env: (e) => ({ PATH: e.PATH, ONLY: 'x' }) }).eval('hello');
+    await program({}).eval('hello');
+    expect(envs[0]).toEqual({ PATH: bin, HOME: '/h', MY_X: '1' });
+    expect(envs[1]).toEqual({ PATH: bin, ONLY: 'x' });
+    expect(Object.keys(envs[2]!)).toContain('SECRET');
+  });
+
   it('passes the exit code on, and cli() exits with it', async () => {
     const bin = tempDir();
     script(bin, 'app-fail', 'exit 3');

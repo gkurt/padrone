@@ -12,11 +12,21 @@ export type PadroneExternalCommandsOptions = {
   /** List the external commands found in the program's help (under "External Commands") and in shell completion. Defaults to `true`. */
   list?: boolean;
   /**
+   * The environment external commands get, so they don't inherit every variable (tokens, API keys): the names of the
+   * variables to pass on (together with the basics a program needs, such as `PATH`, `HOME`, `TERM`, `LANG`, `TMPDIR` and
+   * the Windows system variables, and any name ending in `*` as a prefix, e.g. `MY_CLI_*`), or a function that
+   * returns the environment. Defaults to the whole environment.
+   */
+  env?: readonly string[] | ((env: Record<string, string | undefined>) => Record<string, string | undefined>);
+  /**
    * Runs an external command and resolves with its exit code. Defaults to spawning `file` with `args` (no shell) with the
    * terminal's stdio; on Windows a `.cmd` / `.bat` file runs under `cmd.exe`, its arguments escaped.
    */
   spawn?: (file: string, args: readonly string[], options: { env: Record<string, string | undefined> }) => Promise<number>;
 };
+
+const BASIC_ENV =
+  /^(PATH|PATHEXT|HOME|USER|USERNAME|USERPROFILE|LOGNAME|SHELL|TERM|COLORTERM|LANG|LC_.*|TMPDIR|TMP|TEMP|SYSTEMROOT|COMSPEC|WINDIR|APPDATA|LOCALAPPDATA|NO_COLOR|FORCE_COLOR|TZ)$/i;
 
 const EXTERNAL_ID = 'padrone:external-commands';
 
@@ -36,6 +46,14 @@ export function padroneExternalCommands(options: PadroneExternalCommandsOptions 
   const spawn = options.spawn ?? ((file, args, { env }) => spawnInherited(file, args, { env }));
   const prefixOf = (root: AnyPadroneCommand) => options.prefix ?? `${root.name}-`;
   const dirsOf = (env: Record<string, string | undefined>) => options.path ?? pathDirs(env);
+  const envFor = (env: Record<string, string | undefined>) => {
+    const filter = options.env;
+    if (!filter) return env;
+    if (typeof filter === 'function') return filter(env);
+    const allowed = (name: string) =>
+      BASIC_ENV.test(name) || filter.some((pattern) => (pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern));
+    return Object.fromEntries(Object.entries(env).filter(([name]) => allowed(name)));
+  };
   /** Exit codes of the external commands run, by their stand-in command, for the result */
   const exitCodes = new WeakMap<AnyPadroneCommand, number>();
 
@@ -72,7 +90,7 @@ export function padroneExternalCommands(options: PadroneExternalCommandsOptions 
     const file = await findExecutable(`${prefixOf(event.command)}${event.name}`, dirsOf(env), { env });
     if (!file) return;
     event.handle(async (actionCtx) => {
-      const code = await spawn(file, event.args, { env: actionCtx.runtime.env() });
+      const code = await spawn(file, event.args, { env: envFor(actionCtx.runtime.env()) });
       if (code !== 0) exitCodes.set(actionCtx.command, code);
     });
   });

@@ -53,6 +53,28 @@ describe('function configs', () => {
     expect((await program.eval('')).result).toEqual({ port: 2, host: 'h//test' });
   });
 
+  it('refuses script configs with `scripts: false`, but still reads data configs and --config files', async () => {
+    write('app.config.mjs', 'export default () => ({ host: "script" })');
+    const refused = await configProgram({ files: 'app.config.mjs', scripts: false }).eval('serve');
+    expect(message(refused)).toContain('Refusing to run the script config');
+    write('app.json', '{ "host": "json" }');
+    expect((await configProgram({ files: 'app.json', scripts: false }).eval('serve')).result).toEqual({ host: 'json' });
+    const explicit = await configProgram({ files: 'app.json', scripts: false }).eval('serve --config app.config.mjs');
+    expect(explicit.result).toEqual({ host: 'script' });
+  });
+
+  it('asks `scripts` per file (absolute path)', async () => {
+    const file = write('app.config.mjs', 'export default () => ({ host: "script" })');
+    const seen: string[] = [];
+    const scripts = async (f: string) => {
+      seen.push(f);
+      return false;
+    };
+    expect(message(await configProgram({ files: 'app.config.mjs', scripts }).eval('serve'))).toContain('Refusing');
+    expect(seen).toEqual([file]);
+    expect((await configProgram({ files: 'app.config.mjs', scripts: () => true }).eval('serve')).result).toEqual({ host: 'script' });
+  });
+
   it('awaits an async function', async () => {
     write('app.config.mjs', 'export default async ({ command }) => ({ host: `from ${command || "root"}` })');
     expect((await configProgram({ files: 'app.config.mjs' }).eval('serve')).result).toEqual({ host: 'from serve' });

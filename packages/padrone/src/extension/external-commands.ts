@@ -12,6 +12,11 @@ export type PadroneExternalCommandsOptions = {
   /** List the external commands found in the program's help (under "External Commands") and in shell completion. Defaults to `true`. */
   list?: boolean;
   /**
+   * Names external commands may have (the part after the prefix): exact names, `prefix*`, or a predicate. Others are neither
+   * run, listed nor completed. Defaults to any name.
+   */
+  allow?: readonly string[] | ((name: string) => boolean);
+  /**
    * The environment external commands get, so they don't inherit every variable (tokens, API keys): the names of the
    * variables to pass on (together with the basics a program needs, such as `PATH`, `HOME`, `TERM`, `LANG`, `TMPDIR` and
    * the Windows system variables, and any name ending in `*` as a prefix, e.g. `MY_CLI_*`), or a function that
@@ -57,15 +62,23 @@ export function padroneExternalCommands(options: PadroneExternalCommandsOptions 
   /** Exit codes of the external commands run, by their stand-in command, for the result */
   const exitCodes = new WeakMap<AnyPadroneCommand, number>();
 
+  const isAllowed = (name: string) => {
+    const allow = options.allow;
+    if (!allow) return true;
+    if (typeof allow === 'function') return allow(name);
+    return allow.some((pattern) => (pattern.endsWith('*') ? name.startsWith(pattern.slice(0, -1)) : name === pattern));
+  };
   const extraCommands = (command: AnyPadroneCommand): PadroneExtraCommand[] => {
     if (command.parent) return [];
     const env = getCommandRuntime(command).env();
     const prefix = prefixOf(command);
-    return listExecutables(prefix, dirsOf(env), { env }).map(({ name }) => ({
-      name,
-      description: `Runs ${prefix}${name}`,
-      group: 'External Commands',
-    }));
+    return listExecutables(prefix, dirsOf(env), { env })
+      .filter(({ name }) => isAllowed(name))
+      .map(({ name }) => ({
+        name,
+        description: `Runs ${prefix}${name}`,
+        group: 'External Commands',
+      }));
   };
 
   const interceptor = defineInterceptor(
@@ -85,7 +98,7 @@ export function padroneExternalCommands(options: PadroneExternalCommandsOptions 
       },
     }),
   ).on(commandNotFound, async (event, ctx) => {
-    if (event.command.parent) return;
+    if (event.command.parent || !isAllowed(event.name)) return;
     const env = ctx.runtime.env();
     const file = await findExecutable(`${prefixOf(event.command)}${event.name}`, dirsOf(env), { env });
     if (!file) return;

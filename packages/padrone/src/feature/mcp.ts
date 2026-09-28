@@ -16,6 +16,7 @@ import {
   createAuthenticator,
   createCallLimiter,
   createCommandFilter,
+  createOfferedView,
   linkedController,
   type PadroneRemotePreferences,
   serverBaseUrl,
@@ -124,6 +125,7 @@ export function createMcpHandler(
   const taken = new Set(endpoints.map((t) => toToolName(t.name)));
   const rootTools = endpoints.map((t) => ({ ...t, toolName: t.name ? toToolName(t.name) : toRootToolName(existingCommand.name, taken) }));
   const limit = createCallLimiter(prefs);
+  const helpView = createOfferedView(existingCommand, endpoints, 'mcp');
 
   const toolMap = new Map(rootTools.map((t) => [t.toolName, t]));
 
@@ -220,7 +222,10 @@ export function createMcpHandler(
               result: { content: [{ type: 'text', text: `Unknown command: ${cmdName}` }], isError: true },
             };
           }
-          const helpText = generateHelp(existingCommand, targetCmd ?? existingCommand, { format: 'text', detail: 'full' });
+          const helpText = generateHelp(helpView.root, targetCmd ? helpView.of(targetCmd) : helpView.root, {
+            format: 'text',
+            detail: 'full',
+          });
           return {
             jsonrpc: '2.0',
             id: id ?? null,
@@ -423,7 +428,12 @@ async function startStdioTransport(handleRequest: McpRequestHandler): Promise<vo
       (res) => {
         if (res) send(res);
       },
-      () => {},
+      () => {
+        // A request (it has an id) must get a reply, or the client waits for it forever
+        const id = (message as { id?: unknown } | null)?.id;
+        if (typeof id === 'string' || typeof id === 'number')
+          send({ jsonrpc: '2.0', id, error: { code: -32603, message: 'Internal error' } });
+      },
     );
     pending.add(call);
     call.finally(() => pending.delete(call));
@@ -576,7 +586,8 @@ async function startHttpTransport(
     const done = session && reqSessionId ? sessions.begin(reqSessionId, session, call) : undefined;
     let response: JsonRpcResponse | undefined;
     try {
-      response = await handleRequest(rpcRequest, call.signal, reqSessionId, auth);
+      // Without a session, request ids are scoped to who made the request, so others can't cancel these calls
+      response = await handleRequest(rpcRequest, call.signal, reqSessionId ?? `~${sessionOwner(auth) ?? ''}`, auth);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       sendJson(500, { jsonrpc: '2.0', id: null, error: { code: -32603, message: `Internal error: ${message}` } });

@@ -23,7 +23,7 @@ let run: (JqRunOptions & { steps: number }) | undefined;
 export function tick(count = 1): void {
   if (!run) return;
   run.steps += count;
-  if (run.steps > run.maxSteps) throw new JqLimitError(`The expression exceeded its budget of ${run.maxSteps} steps`);
+  if (!(run.steps <= run.maxSteps)) throw new JqLimitError(`The expression exceeded its budget of ${run.maxSteps} steps`);
 }
 
 export const runEnv = (): Record<string, string> => run?.env ?? {};
@@ -180,21 +180,31 @@ export function arithmetic(op: string, a: unknown, b: unknown): unknown {
         tick(a.length + b.length);
         return [...a, ...b];
       }
-      if (isObject(a) && isObject(b)) return { ...a, ...b };
+      if (isObject(a) && isObject(b)) {
+        tick(Object.keys(a).length + Object.keys(b).length);
+        return { ...a, ...b };
+      }
       return fail('added');
     case '-':
       if (numbers) return a - b;
-      if (Array.isArray(a) && Array.isArray(b)) return a.filter((x) => !b.some((y) => compareValues(x, y) === 0));
+      if (Array.isArray(a) && Array.isArray(b)) {
+        tick(a.length * b.length);
+        return a.filter((x) => !b.some((y) => compareValues(x, y) === 0));
+      }
       return fail('subtracted');
     case '*': {
       if (numbers) return a * b;
       const [text, times] = typeof a === 'string' ? [a, b] : [b, a];
       if (typeof text === 'string' && typeof times === 'number') {
         if (times < 0) return null;
+        if (text === '') return '';
         tick(text.length * Math.floor(times));
         return text.repeat(Math.floor(times));
       }
-      if (isObject(a) && isObject(b)) return deepMerge(a, b);
+      if (isObject(a) && isObject(b)) {
+        tick(Object.keys(a).length + Object.keys(b).length);
+        return deepMerge(a, b);
+      }
       return fail('multiplied');
     }
     case '/':

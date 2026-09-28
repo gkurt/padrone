@@ -45,6 +45,8 @@ export type PadronePluginsOptions = {
   apiVersion?: string;
   /** Let a plugin replace a command the program already has. Defaults to `false`: such a plugin is skipped with an error. */
   override?: boolean;
+  /** Called for a plugin that fails to load, instead of printing to stderr. */
+  onError?: (error: Error, plugin: { name: string }) => void;
   /** Runs a package manager command (`['npm', 'install', 'x']`) in `cwd`, resolving with its exit code. Defaults to spawning it without a shell. */
   exec?: (command: readonly string[], options: { cwd: string }) => Promise<number>;
   /** Imports a plugin module: a `file:` URL, or a package name from `packages`. Defaults to `import()`. */
@@ -347,7 +349,9 @@ export function padronePlugins(options: PadronePluginsOptions = {}): <T extends 
         if ('spec' in entry || 'link' in entry) await verifyEntry(dir, entry as PluginEntry);
         result = applyChecked(result, await importEntry(dir, entry), entry.name);
       } catch (err) {
-        runtime.error(`Plugin "${entry.name}" failed to load: ${err instanceof Error ? err.message : String(err)}`);
+        const error = err instanceof Error ? err : new Error(String(err));
+        if (options.onError) options.onError(error, { name: entry.name });
+        else runtime.error(`Plugin "${entry.name}" failed to load: ${error.message}`);
       }
     }
     augmented.add(result);
@@ -489,9 +493,10 @@ export function padronePlugins(options: PadronePluginsOptions = {}): <T extends 
                 throw new ActionError(builtIn ? `"${args.name}" is built into the program` : `No plugin "${args.name}"`);
               }
               if (!entry.link) await run([...manager().remove, entry.name], dir);
+              // Read again: the package manager may have taken a while, and another run may have changed the list
               await writeManifest(
                 dir,
-                entries.filter((e) => e !== entry),
+                (await readManifest(dir)).filter((e) => e.name !== entry.name),
               );
               return `${entry.link ? 'Unlinked' : 'Uninstalled'} plugin ${entry.name}`;
             }),
@@ -523,7 +528,11 @@ export function padronePlugins(options: PadronePluginsOptions = {}): <T extends 
                     : `${entry.name} ${before ?? '?'} → ${entry.version}`,
                 );
               }
-              await writeManifest(dir, entries);
+              const fresh = await readManifest(dir);
+              await writeManifest(
+                dir,
+                fresh.map((e) => targets.find((t) => t.name === e.name) ?? e),
+              );
               return lines.join('\n');
             }),
         )

@@ -730,7 +730,7 @@ program.extend(padroneUpdateCheck({
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
 | `packageName` | `string` | program name | Package name to check |
-| `registry` | `string` | `'npm'` | Registry URL or `'npm'` shorthand |
+| `registry` | `string` | `'npm'` | Registry URL (HTTPS, or HTTP to localhost) or `'npm'` shorthand |
 | `interval` | `string` | `'1d'` | Check interval (e.g., `'1d'`, `'12h'`, `'30m'`, `'1w'`) |
 | `channel` | `string` | `'latest'` (or `padroneUpgrade()`'s) | Dist-tag to follow, e.g. `'next'`: pre-releases count as updates, and each channel has its own cache file `update-check-<channel>.json` |
 | `cache` | `string` | `update-check.json` in `program.dirs.cache` | Path to cache file for last check timestamp. The `~/.config/<name>-update-check.json` older versions wrote is moved there |
@@ -885,6 +885,7 @@ my-cli foo --bar baz   # runs my-cli-foo --bar baz (from PATH), with the termina
 - Found external commands are listed in help under "External Commands" and offered by shell completion (not in generated docs or man pages, nor in help shown to remote callers).
 - Only for `cli()`, `eval()`, `run()` and the REPL: serve, MCP and `tool()` calls never run external commands.
 - `env` limits what they inherit: `env: ['MY_CLI_*', 'GITHUB_TOKEN']` passes those variables plus the basics (`PATH`, `HOME`, `TERM`, `LANG`, `TMPDIR`, the Windows system variables), or a function returns the whole environment. Default: all of it.
+- `allow` limits the names (after the prefix) that run, are listed and complete: exact names, `prefix*` patterns, or a predicate. Default: any name.
 - Built on the [`commandNotFound`](#commandnotfound) event, for top-level names only.
 
 **Configuration:**
@@ -941,6 +942,7 @@ Prefer the extension form: a program export built with another copy of padrone s
 | `allow` | `string[]` | any | Names installed plugins may have (exact, `@scope/*` or `prefix*`); `plugins install` refuses others and the loader skips them |
 | `apiVersion` | `string` | none | The program's plugin API version. A plugin module may export `padroneApi`, a semver range (`'^2.0.0'`); one that doesn't include this version isn't loaded |
 | `override` | `boolean` | `false` | Let a plugin redefine a top-level command the program already has; otherwise it's skipped with an error |
+| `onError` | `(error, { name }) => void` | print to stderr | Called for a plugin that fails to load, instead of printing |
 | `exec` | `(command, { cwd }) => Promise<number>` | spawn without a shell | Runs a package manager command (e.g. to test without installing) |
 | `import` | `(specifier) => Promise<unknown>` | `import()` | Imports a plugin module (a `file:` URL, or a name from `packages`); pass your own to resolve `packages` from your program's location |
 
@@ -1765,7 +1767,7 @@ The following extensions are applied automatically by `createPadrone()` and can 
 | Export | Builtin key | Purpose |
 |--------|-------------|---------|
 | `padroneHelp(options?)` | `help` | Help command and `--help` flag. Options: `showHelpOnError` prints the full help after errors; `flags` renames the help flags (default `['help', 'h']`); `pager: true` shows help taller than the terminal through `$PAGER` or `less -FRX` in `cli()` (a string sets the fallback pager; `--no-pager` / `--pager` per run); `pickSubcommand: true` asks which subcommand to run (a select prompt) when a group command runs without one in `cli()`/REPL; `topics: { name: { title?, description?, content } }` adds `help <topic>` guides, listed under "Additional help topics" |
-| `padroneVersion(options?)` | `version` | Version command and `--version` flag (on any command; single-character flags on the root only). `version --verbose` adds the runtime, platform, architecture and shell (an object under `--json`). `version --check` (or `--version --check`) asks the registry and adds an "Update available" notice like `gh version` (under `--json`: `{ name, version, latest, updateAvailable }`), using `padroneUpdateCheck()`'s or `padroneUpgrade()`'s package and registry, or npm with the program name; remote callers (serve, MCP, `tool()`) get the version without a check. Without `.configure({ version })`, the version comes from the nearest `package.json` above the program's script (symlinks resolved), never from the working directory. Options: `flags` renames the version flags (default `['version', 'v', 'V']`); `info` adds fields to `--verbose` |
+| `padroneVersion(options?)` | `version` | Version command and `--version` flag (on any command; single-character flags on the root only). `version --verbose` adds the runtime, platform, architecture and shell (an object under `--json`). `version --check` (or `--version --check`) asks the registry and adds an "Update available" notice like `gh version` (under `--json`: `{ name, version, latest, updateAvailable }`), using `padroneUpdateCheck()`'s or `padroneUpgrade()`'s package and registry, or npm with the program name; remote callers (serve, MCP, `tool()`) get the version without a check, and without `--verbose` details unless `remoteVerbose: true`. Without `.configure({ version })`, the version comes from the nearest `package.json` above the program's script (symlinks resolved), never from the working directory. Options: `flags` renames the version flags (default `['version', 'v', 'V']`); `info` adds fields to `--verbose`; `remoteVerbose` lets remote callers use it |
 | `padroneRepl()` | `repl` | REPL command and `--repl` flag |
 | `padroneColor()` | `color` | `--color`/`--no-color` support; an unknown `--color=<theme>` is an error listing the themes |
 | `padroneSuggestions(options?)` | `suggestions` | "Did you mean?" suggestions for unknown commands (and `padroneAliases()` names) and options (including extensions' `--json`, `--yes`, …). `run: 'prompt'` asks whether to run the closest command after an unknown one in `cli()`/REPL |

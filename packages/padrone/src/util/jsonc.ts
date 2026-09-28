@@ -209,6 +209,14 @@ function removeMember(text: string, parent: Node, member: Member): string {
   return previousComma === undefined ? removed : splice(removed, previousComma - 1, previousComma, '');
 }
 
+/** The character after `index`, past whitespace and comments (`undefined` at the end). */
+export function nextSignificantChar(text: string, index: number): string | undefined {
+  const scanner = new JsoncScanner(text);
+  scanner.i = index;
+  scanner.skipTrivia();
+  return text[scanner.i];
+}
+
 /** The index after the comma that follows `index` (past whitespace and comments), if one does. */
 function commaAfter(text: string, index: number): number | undefined {
   const scanner = new JsoncScanner(text);

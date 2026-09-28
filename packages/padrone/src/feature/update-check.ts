@@ -220,12 +220,23 @@ function registryUrl(packageName: string, registry: string, tag: string): string
     : registry;
 }
 
+/** Whether a registry URL is fetched over HTTPS, or plain HTTP to the local machine (tests, local mirrors): a network attacker can't steer the version. */
+export function isSecureRegistryUrl(url: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(url);
+    return protocol === 'https:' || (protocol === 'http:' && /^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$/.test(hostname));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Fetches the version a dist-tag (`latest` by default, or e.g. `next`) points to on the registry.
  * Resolves `undefined` when the registry can't be reached or doesn't know the package.
  */
 export async function fetchLatestVersion(packageName: string, registry: string, tag = 'latest'): Promise<string | undefined> {
   const url = registryUrl(packageName, registry, tag);
+  if (!isSecureRegistryUrl(url)) return undefined;
   try {
     // A slow registry must not keep the CLI from exiting
     const response = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
@@ -361,6 +372,7 @@ export async function createUpdateChecker(
   // Recorded before checking, so runs in the meantime don't check too; a failed check waits for the next interval
   await writeCache(cachePath, { lastCheck: Date.now(), latestVersion: latest ?? '' });
   const url = registryUrl(packageName, config.registry ?? 'npm', channel);
+  if (!isSecureRegistryUrl(url)) return { notify, refresh: skipped.refresh };
   const background = await refreshInBackground([url, channel, cachePath, BACKGROUND_FETCH_TIMEOUT_MS]);
   const refresh = background?.exited ?? refreshCacheFile(url, channel, cachePath, FETCH_TIMEOUT_MS);
   return { notify, refresh };

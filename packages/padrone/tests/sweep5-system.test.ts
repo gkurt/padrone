@@ -102,6 +102,10 @@ describe('update check: registry versions', () => {
     expect(await checkForUpdate(getCommand(root), '1.0.0')).toEqual({ latest: undefined, updateAvailable: false });
   });
 
+  it('does not fetch from a plain http registry on another host', async () => {
+    expect(await fetchLatestVersion('tool', 'http://registry.example.com/tool')).toBeUndefined();
+  });
+
   it('ignores a non-string dist-tag instead of throwing', async () => {
     state.body = { 'dist-tags': { latest: 2 } };
     expect(await fetchLatestVersion('tool', server.url.href)).toBeUndefined();

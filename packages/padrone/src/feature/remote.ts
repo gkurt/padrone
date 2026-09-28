@@ -1,5 +1,7 @@
 import type { IncomingHttpHeaders } from 'node:http';
-import type { AnyPadroneCommand } from '../types/index.ts';
+import type { CollectedEndpoint } from '../core/commands.ts';
+import { exposeRefusal } from '../core/commands.ts';
+import type { AnyPadroneCommand, PadroneCaller } from '../types/index.ts';
 
 /**
  * Commands to offer: paths (`'db migrate'` or `'db.migrate'`) and globs over them (`*` any part of one name, `**` any number
@@ -55,6 +57,26 @@ export function createCommandFilter(prefs: Pick<PadroneRemotePreferences, 'inclu
     typeof filter === 'function' ? filter(command) : filter.some((pattern) => matchesCommandPattern(pattern, path));
   return (command: AnyPadroneCommand, path: string) =>
     (!prefs?.include || matches(prefs.include, command, path)) && !(prefs?.exclude && matches(prefs.exclude, command, path));
+}
+
+/**
+ * The command tree as a remote caller may see it, for help output: the offered commands, the groups leading to them and the
+ * built-ins it can run, so help doesn't list what `include` / `exclude` / `expose` withhold (or hidden commands).
+ * `of(command)` is the copy of a command in the view.
+ */
+export function createOfferedView(root: AnyPadroneCommand, endpoints: readonly CollectedEndpoint[], caller: PadroneCaller) {
+  const offered = new Set<AnyPadroneCommand>(endpoints.map((endpoint) => endpoint.command));
+  const copies = new Map<AnyPadroneCommand, AnyPadroneCommand>();
+  const keep = (command: AnyPadroneCommand): boolean =>
+    offered.has(command) || (!!command.builtin && !exposeRefusal(command, caller)) || !!command.commands?.some(keep);
+  const copy = (command: AnyPadroneCommand, parent: AnyPadroneCommand | undefined): AnyPadroneCommand => {
+    const clone = { ...command, parent };
+    copies.set(command, clone);
+    clone.commands = command.commands?.filter(keep).map((sub) => copy(sub, clone));
+    return clone;
+  };
+  const view = copy(root, root.parent);
+  return { root: view, of: (command: AnyPadroneCommand) => copies.get(command) ?? view };
 }
 
 async function digest(text: string): Promise<Uint8Array> {

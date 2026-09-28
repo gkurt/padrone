@@ -2,6 +2,7 @@ import { ConfigError } from '../core/errors.ts';
 import { thenMaybe } from '../core/results.ts';
 import type { AnyPadroneCommand } from '../types/index.ts';
 import { getProgramDirs } from '../util/dirs.ts';
+import { nextSignificantChar } from '../util/jsonc.ts';
 import { getRootCommand } from '../util/utils.ts';
 import { programEnvVar } from './utils.ts';
 
@@ -175,7 +176,7 @@ function findConfigs(
 // ── Reading config files ────────────────────────────────────────────────
 
 /** Removes comments and trailing commas so JSONC parses with `JSON.parse` (runtimes without a native JSONC parser). */
-function stripJsonc(text: string): string {
+export function stripJsonc(text: string): string {
   let out = '';
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]!;
@@ -189,7 +190,7 @@ function stripJsonc(text: string): string {
     } else if (ch === '/' && text[i + 1] === '*') {
       const close = text.indexOf('*/', i + 2);
       i = close === -1 ? text.length : close + 1;
-    } else if (ch === ',' && /^\s*(?:\/\/[^\n]*\s*|\/\*[\s\S]*?\*\/\s*)*[}\]]/.test(text.slice(i + 1))) {
+    } else if (ch === ',' && /[}\]]/.test(nextSignificantChar(text, i + 1) ?? '')) {
       // trailing comma
     } else {
       out += ch;

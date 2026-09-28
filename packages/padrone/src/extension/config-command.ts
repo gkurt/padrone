@@ -145,6 +145,13 @@ function findOptions(target: AnyPadroneCommand, key: string, groupName: string) 
   return { matches, loose };
 }
 
+/** Whether the option `key` is `sensitive` (in the config `schema`, else in any option of the command or its subcommands). */
+function isSensitiveKey(source: ConfigSource, target: AnyPadroneCommand, groupName: string, key: string): boolean {
+  return source.schema
+    ? isSensitiveOption(source.schema as PadroneSchema, undefined, key)
+    : findOptions(target, key, groupName).matches.some((match) => match.sensitive);
+}
+
 async function validationIssues(schema: StandardSchemaV1, value: unknown, path: readonly string[]) {
   const result = await schema['~standard'].validate(value);
   return (result.issues ?? []).filter((issue) => concerns(issue, path));
@@ -247,10 +254,11 @@ function parseFile(text: string, file: string): ConfigData {
   return data;
 }
 
-async function writeText(file: string, text: string): Promise<void> {
+/** Writes a config file; a new `private` one (the user config, which may hold secrets) is only readable by its owner. */
+async function writeText(file: string, text: string, isPrivate = false): Promise<void> {
   const [fs, path] = await Promise.all([import('node:fs'), import('node:path')]);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, text, 'utf-8');
+  fs.mkdirSync(path.dirname(file), { recursive: true, ...(isPrivate && { mode: 0o700 }) });
+  fs.writeFileSync(file, text, { encoding: 'utf-8', ...(isPrivate && { mode: 0o600 }) });
 }
 
 async function readData(file: string): Promise<ConfigData> {
@@ -380,8 +388,13 @@ export function addConfigCommand(
             const { data: current } = await effective(ctx.command, env, profile, true);
             const resolved = await resolveSetValue(source, targetOf(ctx.command), groupName, path, args.value, current);
             const stored = filePath(resolved.path, profile);
-            await writeText(file, updatedText(file, text, setPath(data, stored, resolved.value), stored, resolved.value));
-            return `Set ${resolved.path.join('.')} = ${formatValue(resolved.value)}${profile ? ` in profile "${profile}"` : ''} (${file})`;
+            const isUserFile = !args.local && !args.file;
+            await writeText(file, updatedText(file, text, setPath(data, stored, resolved.value), stored, resolved.value), isUserFile);
+            const target = targetOf(ctx.command);
+            const shown = resolved.path.some((key) => isSensitiveKey(source, target, groupName, key))
+              ? REDACTED
+              : formatValue(resolved.value);
+            return `Set ${resolved.path.join('.')} = ${shown}${profile ? ` in profile "${profile}"` : ''} (${file})`;
           }),
       )
       .command('unset', (c) =>
@@ -419,10 +432,7 @@ export function addConfigCommand(
                 .map((prefix) => layers?.findLast((layer) => getPath(layer.data, [...prefix, ...path]) !== undefined)?.file)
                 .find(Boolean);
             const target = targetOf(ctx.command);
-            const sensitive = (key: string) =>
-              source.schema
-                ? isSensitiveOption(source.schema as PadroneSchema, undefined, key)
-                : findOptions(target, key, groupName).matches.some((match) => match.sensitive);
+            const sensitive = (key: string) => isSensitiveKey(source, target, groupName, key);
             const lines = entries.map(
               ([path, value]) => [`${path.join('.')}=${sensitive(path[0]!) ? REDACTED : formatValue(value)}`, sourceOf(path)] as const,
             );
@@ -472,7 +482,7 @@ export function addConfigCommand(
             } catch (err) {
               throw new ActionError(`Not saved: ${err instanceof Error ? err.message : String(err)}`, { cause: err });
             }
-            await writeText(file, edited);
+            await writeText(file, edited, !args.local && !args.file);
             return `Saved ${file}`;
           }),
       ),

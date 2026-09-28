@@ -19,6 +19,7 @@ import {
   createAuthenticator,
   createCallLimiter,
   createCommandFilter,
+  createOfferedView,
   linkedController,
   type PadroneRemotePreferences,
   serverBaseUrl,
@@ -322,6 +323,7 @@ export function createServeHandler(
   const endpoints = collectEndpoints(existingCommand, 'serve', createCommandFilter(prefs));
   const authenticate = createAuthenticator(prefs);
   const limit = createCallLimiter(prefs);
+  const helpView = createOfferedView(existingCommand, endpoints, 'serve');
 
   const routeMap = new Map<string, CollectedEndpoint>();
   for (const ep of endpoints) {
@@ -468,7 +470,7 @@ export function createServeHandler(
       if (builtins.help && routePath === '_help') {
         const accept = req.headers.get('accept') ?? '';
         const format = accept.includes('application/json') ? 'json' : 'markdown';
-        const helpText = generateHelp(existingCommand, existingCommand, { format, detail: 'full' });
+        const helpText = generateHelp(helpView.root, helpView.root, { format, detail: 'full' });
         if (format === 'json') return addCorsHeaders(jsonResponse(JSON.parse(helpText)));
         return addCorsHeaders(new Response(helpText, { status: 200, headers: { 'Content-Type': 'text/markdown' } }));
       }
@@ -479,7 +481,7 @@ export function createServeHandler(
         if (!ep) return addCorsHeaders(jsonResponse({ ok: false, error: 'not_found', message: `Command not found: ${cmdPath}` }, 404));
         const accept = req.headers.get('accept') ?? '';
         const format = accept.includes('application/json') ? 'json' : 'markdown';
-        const helpText = generateHelp(existingCommand, ep.command, { format, detail: 'full' });
+        const helpText = generateHelp(helpView.root, helpView.of(ep.command), { format, detail: 'full' });
         if (format === 'json') return addCorsHeaders(jsonResponse(JSON.parse(helpText)));
         return addCorsHeaders(new Response(helpText, { status: 200, headers: { 'Content-Type': 'text/markdown' } }));
       }

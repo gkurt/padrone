@@ -1675,6 +1675,16 @@ describe('CLI', () => {
       expect(program.eval('build --version 2').result as unknown as string).toBe('build 2');
     });
 
+    it('should give remote callers the plain version for --verbose unless `remoteVerbose`', async () => {
+      const make = (remoteVerbose?: boolean) =>
+        createPadrone('test-cli', { builtins: { version: { remoteVerbose } } }).configure({ version: '6.0.0' });
+      const runtime = { env: () => ({}), output: () => {} };
+      expect((await make().eval('version --verbose', { runtime, caller: 'serve' })).result as unknown).toBe('6.0.0');
+      expect(((await make(true).eval('version --verbose', { runtime, caller: 'serve' })).result as unknown as string).split('\n')[0]).toBe(
+        'test-cli 6.0.0',
+      );
+    });
+
     it('should show runtime, platform and shell with version --verbose', async () => {
       const program = createPadrone('test-cli', { builtins: { version: { info: () => ({ Channel: 'beta', Skipped: undefined }) } } })
         .configure({ version: '6.0.0' })

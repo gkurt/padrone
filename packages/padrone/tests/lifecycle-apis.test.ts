@@ -357,6 +357,19 @@ describe('padroneExternalCommands()', () => {
     expect(spawned).toEqual([file, ['--name', 'Ada L', '--', 'x']]);
   });
 
+  it('only runs names matching `allow`', async () => {
+    const bin = tempDir();
+    script(bin, 'app-hello', 'exit 0');
+    script(bin, 'app-evil', 'exit 0');
+    const spawned: unknown[] = [];
+    const program = createPadrone('app')
+      .runtime({ ...quiet, env: () => ({ PATH: bin }) })
+      .extend(padroneExternalCommands({ allow: ['hel*'], spawn: async (file) => (spawned.push(file), 0) }));
+    expect((await program.eval('evil')).error).toBeInstanceOf(Error);
+    expect((await program.eval('hello')).error).toBeUndefined();
+    expect(spawned).toHaveLength(1);
+  });
+
   it('passes only the allowed variables with `env`', async () => {
     const bin = tempDir();
     script(bin, 'app-hello', 'exit 0');
@@ -641,6 +654,20 @@ describe('padronePlugins()', () => {
     const program = makeProgram({ dir }, { output: () => {}, error: (text: string) => errors.push(text) });
     expect((await program.eval('hello')).result as unknown).toBe('hello from plugin');
     expect(errors).toEqual(['Plugin "broken" failed to load: "broken" doesn\'t export a padrone extension or program']);
+  });
+
+  it('passes load failures to `onError` instead of printing them', async () => {
+    const dir = tempDir();
+    const src = tempDir();
+    const broken = join(src, 'broken.mjs');
+    writeFileSync(broken, 'export default 42;\n');
+    manifest(dir, [{ name: 'broken', link: broken }]);
+    const errors: string[] = [];
+    const seen: string[] = [];
+    const runtime = { output: () => {}, error: (text: string) => errors.push(text) };
+    await makeProgram({ dir, onError: (error, plugin) => seen.push(`${plugin.name}: ${error.message}`) }, runtime).eval('--help');
+    expect(seen).toEqual(['broken: "broken" doesn\'t export a padrone extension or program']);
+    expect(errors).toEqual([]);
   });
 
   describe('plugins command', () => {

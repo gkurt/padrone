@@ -64,6 +64,11 @@ export type PadroneVersionOptions = {
    * Extra fields for `version --verbose`, e.g. `() => ({ 'API endpoint': config.apiUrl })`.
    * Fields that are `undefined` are left out.
    */
+  /**
+   * Let serve, MCP and `tool()` callers use `--verbose`, which shows the runtime, platform and shell and the `info` fields.
+   * Defaults to `false`: they get the plain version.
+   */
+  remoteVerbose?: boolean;
   info?: (command: AnyPadroneCommand) => Record<string, string | undefined> | Promise<Record<string, string | undefined>>;
 };
 
@@ -193,13 +198,14 @@ export function padroneVersion(options: PadroneVersionOptions = {}): <T extends 
             const version = getVersion(rootCommand.version);
             // Remote requests never make the program reach out to the registry
             const check = args.check && !isRemoteCaller(ctx.caller);
-            if (!args.verbose && !check) return version;
+            const verbose = args.verbose && (options.remoteVerbose || !isRemoteCaller(ctx.caller));
+            if (!verbose && !check) return version;
             const json = ctx.runtime.format === 'json';
             return thenMaybe(version, (resolved) =>
               thenMaybe<Record<string, string | undefined> | undefined, VersionResult>(
-                args.verbose ? options.info?.(rootCommand) : undefined,
+                verbose ? options.info?.(rootCommand) : undefined,
                 (extra) => {
-                  const info = args.verbose ? versionInfo(rootCommand, resolved, ctx.runtime, extra) : undefined;
+                  const info = verbose ? versionInfo(rootCommand, resolved, ctx.runtime, extra) : undefined;
                   const text = info ? formatVersionInfo(info) : resolved;
                   if (!check) return json ? info! : text;
                   return import('./update-check.ts')

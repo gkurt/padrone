@@ -19,6 +19,7 @@ export type PadroneResponseFilesOptions = {
 };
 
 const MAX_DEPTH = 10;
+const MAX_FILES = 1000;
 
 /** The arguments in a response file: each line is split like a command line; blank lines and `#` comment lines are skipped. */
 export function parseResponseFile(text: string): string[] {
@@ -37,7 +38,7 @@ function besideFile(file: string, including: string): string {
 }
 
 /**
- * Replaces each `@file` token before `--` with the file's arguments (nested response files expand too, up to 10 levels,
+ * Replaces each `@file` token before `--` with the file's arguments (nested response files expand too, up to 10 levels and 1000 files,
  * relative to cwd or, with `relativeTo: 'file'`, to the file that names them); `@@text` passes `@text`. A missing file is
  * an error. Tokens for which `keep` (given the tokens before them) is true stay as they are.
  */
@@ -49,6 +50,7 @@ export function expandResponseFiles(
 ): string[] | Promise<string[]> {
   const out: string[] = [];
   let afterDoubleDash = false;
+  let files = 0;
 
   const read = (file: string): string | Promise<string> => {
     const fail = (err: unknown): never => {
@@ -81,6 +83,7 @@ export function expandResponseFiles(
       if (!named) throw new PadroneError(`Expected a response file path after "${prefix}"`, { phase: 'parse' });
       if (depth >= MAX_DEPTH)
         throw new PadroneError(`Response files nested more than ${MAX_DEPTH} levels deep: "${file}"`, { phase: 'parse' });
+      if (++files > MAX_FILES) throw new PadroneError(`More than ${MAX_FILES} response files expanded`, { phase: 'parse' });
       const rest = list.slice(i + 1);
       const expanded = thenMaybe(read(file), (text) => expand(parseResponseFile(text), depth + 1, file));
       if (expanded instanceof Promise) return expanded.then(() => expand(rest, depth, including));

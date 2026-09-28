@@ -55,7 +55,7 @@ export const spawnCommandRunner: PadroneCommandRunner = async (command, args, op
 /** Names and services must be non-empty and free of control characters (they end up in keychain commands). */
 export function checkCredentialName(kind: 'service' | 'name', value: string): void {
   // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters is the point
-  if (typeof value !== 'string' || !value || /[\u0000-\u001f\u007f]/.test(value))
+  if (typeof value !== 'string' || !value || value === '__proto__' || /[\u0000-\u001f\u007f]/.test(value))
     throw new PadroneError(`Invalid credential ${kind}: ${JSON.stringify(value)}`);
 }
 
@@ -171,22 +171,28 @@ export function fileCredentialBackend(file: string): PadroneCredentialBackend {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     const temp = `${file}.${globalThis.process?.pid ?? 0}.${Date.now()}.tmp`;
     fs.writeFileSync(temp, `${JSON.stringify(data, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600, flag: 'wx' });
-    fs.renameSync(temp, file);
+    try {
+      fs.renameSync(temp, file);
+    } catch (err) {
+      fs.rmSync(temp, { force: true });
+      throw err;
+    }
   };
   return {
     name: 'file',
     async get(service, name) {
-      const secret = (await read())[service]?.[name];
+      const entries = (await read())[service];
+      const secret = entries && Object.hasOwn(entries, name) ? entries[name] : undefined;
       return typeof secret === 'string' ? secret : undefined;
     },
     async set(service, name, secret) {
       const data = await read();
-      data[service] = { ...data[service], [name]: secret };
+      data[service] = { ...(Object.hasOwn(data, service) ? data[service] : {}), [name]: secret };
       await write(data);
     },
     async delete(service, name) {
       const data = await read();
-      const entries = data[service];
+      const entries = Object.hasOwn(data, service) ? data[service] : undefined;
       if (!entries || !Object.hasOwn(entries, name)) return;
       const { [name]: _, ...rest } = entries;
       if (Object.keys(rest).length) data[service] = rest;

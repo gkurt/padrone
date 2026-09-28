@@ -27,6 +27,11 @@ export type PadronePluginsOptions = {
   command?: boolean | string;
   /** Package manager `plugins install` / `uninstall` run. Defaults to bun under Bun, else the one the program was installed with. */
   packageManager?: PadronePluginPackageManager;
+  /**
+   * Install with the package manager's `--ignore-scripts`, so a package's install scripts don't run (the plugin's module is
+   * still imported, and runs, when the program starts). Defaults to `false`.
+   */
+  ignoreScripts?: boolean;
   /** Runs a package manager command (`['npm', 'install', 'x']`) in `cwd`, resolving with its exit code. Defaults to spawning it without a shell. */
   exec?: (command: readonly string[], options: { cwd: string }) => Promise<number>;
   /** Imports a plugin module: a `file:` URL, or a package name from `packages`. Defaults to `import()`. */
@@ -73,9 +78,13 @@ function parseManifest(text: string | undefined, dir: string): PluginEntry[] {
   if (!Array.isArray(plugins)) throw new ConfigError(`Invalid plugins file ${manifestPath(dir)}: expected { "plugins": [...] }`);
   return plugins.filter(
     (entry): entry is PluginEntry =>
-      !!entry && typeof entry.name === 'string' && (typeof entry.spec === 'string' || typeof entry.link === 'string'),
+      !!entry && isSafeName(entry.name) && (typeof entry.spec === 'string' || typeof entry.link === 'string'),
   );
 }
+
+/** A name that's later joined into `node_modules/<name>` and passed to the package manager: no `..` segments, no leading `-`. */
+const isSafeName = (name: unknown): name is string =>
+  typeof name === 'string' && !!name && !name.startsWith('-') && !name.split(/[\\/]/).some((part) => part === '..' || part === '.');
 
 async function readManifest(dir: string): Promise<PluginEntry[]> {
   return parseManifest(await readManifestText(dir), dir);
@@ -83,8 +92,16 @@ async function readManifest(dir: string): Promise<PluginEntry[]> {
 
 async function writeManifest(dir: string, plugins: PluginEntry[]): Promise<void> {
   const fs = await import('node:fs');
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(manifestPath(dir), `${JSON.stringify({ plugins }, null, 2)}\n`, 'utf-8');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // The list decides which code runs at startup: written atomically, readable and writable by the user only
+  const temp = `${manifestPath(dir)}.${globalThis.process?.pid ?? 0}.tmp`;
+  fs.writeFileSync(temp, `${JSON.stringify({ plugins }, null, 2)}\n`, { encoding: 'utf-8', mode: 0o600 });
+  try {
+    fs.renameSync(temp, manifestPath(dir));
+  } catch (err) {
+    fs.rmSync(temp, { force: true });
+    throw err;
+  }
 }
 
 async function readJson(file: string): Promise<Record<string, unknown> | undefined> {
@@ -324,7 +341,7 @@ export function padronePlugins(options: PadronePluginsOptions = {}): <T extends 
                 fs.writeFileSync(pkgFile, `${JSON.stringify({ name: `${root.name}-plugins`, private: true }, null, 2)}\n`, 'utf-8');
               }
               const before = new Set(await dependencies(dir));
-              await run([...manager().add, spec], dir);
+              await run([...manager().add, ...(options.ignoreScripts ? ['--ignore-scripts'] : []), spec], dir);
               const name = (await dependencies(dir)).find((dep) => !before.has(dep)) ?? specName(spec);
               if (!name) throw new ActionError(`Couldn't tell which package "${spec}" installed`);
               const entry: PluginEntry = { name, spec };

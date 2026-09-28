@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, expectTypeOf, it, test } from 'bun:test';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AnyPadroneCommand, PadroneCommandNotFound, PadroneEventHandler, PadroneHookContext } from 'padrone';
@@ -668,6 +668,43 @@ describe('padronePlugins()', () => {
       expect((await program.eval('plugins uninstall deployer')).result as unknown).toBe('Uninstalled plugin deployer');
       expect(commands.at(-1)).toEqual({ command: ['npm', 'uninstall', 'deployer'], cwd: dir });
       expect(readManifest(dir)).toEqual([]);
+    });
+
+    it('installs with --ignore-scripts when asked', async () => {
+      const dir = tempDir();
+      const commands: (readonly string[])[] = [];
+      const program = makeProgram({
+        dir,
+        command: true,
+        packageManager: 'npm',
+        ignoreScripts: true,
+        exec: async (command) => {
+          commands.push(command);
+          return 1;
+        },
+      });
+      await program.eval('plugins install deployer');
+      expect(commands[0]).toEqual(['npm', 'install', '--ignore-scripts', 'deployer']);
+    });
+
+    it('ignores manifest entries whose names could escape node_modules or look like options', async () => {
+      const dir = tempDir();
+      manifest(dir, [
+        { name: '../../evil', spec: 'x' },
+        { name: '-g', spec: 'x' },
+      ]);
+      const errors: string[] = [];
+      const program = makeProgram({ dir, command: true }, { output: () => {}, error: (m: string) => errors.push(m) });
+      expect((await program.eval('plugins list')).result as unknown).toBe('No plugins installed');
+      expect(errors).toEqual([]);
+    });
+
+    it('writes the manifest privately', async () => {
+      const dir = tempDir();
+      const src = tempDir();
+      const program = makeProgram({ dir, command: true });
+      await program.eval(`plugins link ${pluginFile(src, 'p.mjs', 'p')}`);
+      if (process.platform !== 'win32') expect(statSync(join(dir, 'plugins.json')).mode & 0o077).toBe(0);
     });
 
     it('uses the chosen package manager', async () => {

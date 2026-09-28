@@ -3,6 +3,7 @@ import { defineInterceptor } from '../core/interceptors.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
 import { fetchLatestVersion, isNewerVersion } from '../feature/update-check.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
+import { findExecutable, pathDirs, spawnInherited } from '../util/spawn.ts';
 import { getRootCommand, getVersion } from '../util/utils.ts';
 import { passthroughSchema } from './utils.ts';
 
@@ -133,18 +134,18 @@ async function installPaths(): Promise<(string | undefined)[]> {
   return [real, globalThis.process?.execPath];
 }
 
-/** Versions and dist-tags end up in a shell command on Windows */
-const VERSION_PATTERN = /^[\w.+-]+$/;
+/** Versions and dist-tags end up in the installer's arguments, so they can't look like options */
+const VERSION_PATTERN = /^[\w+][\w.+-]*$/;
+/** An npm package name, or a Homebrew formula (`tap/name`) */
+const PACKAGE_PATTERN = /^(@[\w.-]+\/)?[\w][\w.-]*(\/[\w][\w.-]*)*$/;
 const normalizeVersion = (version: string) => version.replace(/^v(?=\d)/, '');
 
+/** Runs the installer found on `PATH` without a shell (Windows `.cmd` shims get an escaped `cmd.exe` line). */
 async function spawnCommand(command: readonly string[]): Promise<number> {
-  const { spawn } = await import('node:child_process');
-  return new Promise((resolve, reject) => {
-    // Package managers are `.cmd` shims on Windows
-    const child = spawn(command[0]!, command.slice(1), { stdio: 'inherit', shell: globalThis.process?.platform === 'win32' });
-    child.on('error', reject);
-    child.on('close', (code) => resolve(code ?? 1));
-  });
+  const env = globalThis.process?.env ?? {};
+  const file = await findExecutable(command[0]!, pathDirs(env), { env });
+  if (!file) throw new ActionError(`"${command[0]}" was not found on PATH`);
+  return spawnInherited(file, command.slice(1));
 }
 
 /** On the upgrade command, so `padroneUpdateCheck()` doesn't suggest upgrading right after it ran. */
@@ -197,6 +198,7 @@ export function padroneUpgrade(options: PadroneUpgradeOptions = {}): <T extends 
   const plan = async (args: UpgradeArgs, command: AnyPadroneCommand, runtime: ResolvedPadroneRuntime): Promise<Plan> => {
     const root = getRootCommand(command);
     const packageName = options.packageName ?? root.name;
+    if (!PACKAGE_PATTERN.test(packageName)) throw new ActionError(`Invalid package name "${packageName}"`);
     const current = await getVersion(root.version);
     const channel = args.channel ?? options.channel ?? 'latest';
     if (!VERSION_PATTERN.test(channel)) throw new ActionError(`Invalid channel "${channel}"`);

@@ -931,6 +931,7 @@ Prefer the extension form: a program export built with another copy of padrone s
 | `packages` | `string[]` | none | Plugin modules the program always loads, before the user's (package names or absolute paths) |
 | `command` | `boolean \| string` | `false` | Add the `plugins` group (`list`/`ls`, `install`/`add`, `uninstall`/`remove`/`rm`, `link`); a string names it |
 | `packageManager` | `'npm' \| 'bun' \| 'pnpm' \| 'yarn'` | bun under Bun, else how the program was installed | What `install` / `uninstall` run |
+| `ignoreScripts` | `boolean` | `false` | Install with `--ignore-scripts`, so install scripts don't run |
 | `exec` | `(command, { cwd }) => Promise<number>` | spawn without a shell | Runs a package manager command (e.g. to test without installing) |
 | `import` | `(specifier) => Promise<unknown>` | `import()` | Imports a plugin module (a `file:` URL, or a name from `packages`); pass your own to resolve `packages` from your program's location |
 

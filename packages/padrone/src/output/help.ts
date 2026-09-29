@@ -380,10 +380,11 @@ export function getHelpInfo(
         .map((arg) => ({ ...arg, group: arg.group ?? 'Global Options' }))
     : [];
 
-  const visibleArgs = [...ownArgs, ...inheritedArgs].filter((arg) => !arg.hidden);
+  const visibleArgs = ownArgs.filter((arg) => !arg.hidden);
+  const visibleInherited = inheritedArgs.filter((arg) => !arg.hidden);
   // Interceptors read env variables into the command's own options (not into framework options like --dry-run or --config)
   const envVarsOf = collectInterceptorEnv(cmd);
-  for (const arg of visibleArgs) {
+  for (const arg of [...visibleArgs, ...visibleInherited]) {
     const names = envVarsOf(arg.name);
     if (names) arg.env = typeof names === 'string' ? names : [...names];
   }
@@ -398,8 +399,10 @@ export function getHelpInfo(
       ...(dryRunKeys.includes('n') && { flags: ['n'] }),
     });
   }
-  const listedNames = new Set(visibleArgs.map((arg) => arg.name));
+  const listedNames = new Set([...visibleArgs, ...visibleInherited].map((arg) => arg.name));
   for (const option of collectInterceptorHelpOptions(cmd)) if (!listedNames.has(option.name)) visibleArgs.push({ ...option });
+  // Global options come after the command's own (and those interceptors add)
+  visibleArgs.push(...visibleInherited);
   if (visibleArgs.length > 0) {
     helpInfo.arguments = visibleArgs;
     helpInfo.usage.hasArguments = true;

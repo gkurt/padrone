@@ -118,6 +118,31 @@ const api = admin.api();
 api.users.create({ name: 'Bob' });
 ```
 
+## Commands in Separate Files
+
+For a command defined in a file of its own, wrap the builder function in `defineCommand()`. The program keeps its full type (args, result and subcommands), under the name it's added with:
+
+```typescript
+// commands/remove.ts
+import { defineCommand } from 'padrone';
+
+export const remove = defineCommand((c) =>
+  c
+    .describe('Remove bookmarks')
+    .arguments(z.object({ ids: z.array(z.number()) }), { positional: ['...ids'] })
+    .action((args) => store.remove(args.ids)),
+);
+
+// A command that uses the program's context: pass its type, then the builder function
+export const list = defineCommand<{ store: Store }>()((c) => c.action((_args, ctx) => ctx.context.store.items));
+
+// cli.ts
+const program = createPadrone('bm').context<{ store: Store }>().command(['remove', 'rm'], remove).command('list', list);
+program.run('rm', { ids: [1] }, { context: { store } }); // typed args and result
+```
+
+`defineCommand().requires<{ logger: PadroneLogger }>().define(fn)` declares context that an interceptor must provide: added to a program that doesn't provide it, `.command()` returns a `DefineCommandRequiresError` type, so the next use of the program is a type error.
+
 ## Command Override
 
 Re-registering a command with the same name merges the new definition with the existing one instead of duplicating it.

@@ -179,7 +179,7 @@ describe('help with minimal detail mode', () => {
   it('should generate minimal usage for command with args only (void arguments)', () => {
     const help = program.help('batch', { detail: 'minimal' });
     // batch has variadic args
-    expect(help).toBe('padrone-test batch <...ids>');
+    expect(help).toBe('padrone-test batch <ids...>');
   });
 
   it('should generate minimal usage for command with arguments only (void args)', () => {

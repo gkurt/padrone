@@ -35,7 +35,7 @@ const program = createPadrone('todo')
     c
       .arguments(z.object({
         status: z.enum(['all', 'pending', 'done']).default('all'),
-        limit: z.coerce.number().min(1).max(100).default(10),
+        limit: z.number().min(1).max(100).default(10),
       }))
       .action((args) => {
         // fetch and return tasks...
@@ -138,7 +138,7 @@ import { createPadrone, padroneEnv } from 'padrone';
 .command('serve', (c) =>
   c
     .arguments(z.object({
-      port: z.coerce.number().default(3000),
+      port: z.number().default(3000),
       host: z.string().default('localhost'),
     }))
     .extend(padroneEnv(z.object({

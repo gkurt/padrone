@@ -1,3 +1,4 @@
+import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { Schema } from 'ai';
 import type { ShellType } from '../feature/completion.ts';
 import { createPrompt } from '../feature/prompt.ts';
@@ -19,17 +20,18 @@ import {
   exposeRefusal,
   findCommandByName,
   getCommandRuntime,
+  getGlobalArgs,
   resolveAllCommands,
   resolveContext,
   serializeArgsToFlags,
 } from './commands.ts';
-import { ActionError, RoutingError } from './errors.ts';
+import { ActionError, RoutingError, ValidationError } from './errors.ts';
 import { withEmit } from './events.ts';
 import type { ExecContext } from './exec.ts';
 import { collectInterceptors, errorResultWithSignal, execCommand } from './exec.ts';
 import { checkInterceptorRequirements, resolveRegisteredInterceptors, runInterceptorChain } from './interceptors.ts';
 import { errorResult, finalizeResult, makeThenable, thenMaybe, warnIfUnexpectedAsync, withPromiseDrain } from './results.ts';
-import { coreValidateForParse, formatIssueMessages, takeDryRunFlag } from './validate.ts';
+import { coreValidateForParse, formatIssueMessages, takeDryRunFlag, validateCommandArgs } from './validate.ts';
 
 /** The exit code an error asks for: its own `exitCode` (as `PadroneError` carries), or 1. */
 function errorExitCode(error: unknown): number {
@@ -49,6 +51,14 @@ function finalizeCliResult<T extends { error?: unknown; exitCode?: number }>(
   const code = result.exitCode ?? (result.error !== undefined ? errorExitCode(result.error) : undefined);
   if (code) setExitCode(code);
   return finalizeResult(result, (error) => setExitCode(result.exitCode ?? errorExitCode(error)));
+}
+
+/** What an `api()` function returns for a `run()` result: the action's result, or a throw for invalid args or a failing action. */
+function unwrapApiResult(result: { error?: unknown; result?: unknown; argsResult?: StandardSchemaV1.Result<unknown> }): unknown {
+  if (result.error !== undefined) throw result.error;
+  const issues = result.argsResult?.issues;
+  if (issues) throw new ValidationError(`Validation error:\n${formatIssueMessages(issues)}`, issues as any);
+  return result.result;
 }
 
 /** Quotes a token for `eval()`'s tokenizer when it has spaces or quotes (JSON values do), escaping `\` and the quote. */
@@ -102,6 +112,28 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
       const refusal = exposeRefusal(commandObj, 'run');
       if (refusal) throw new ActionError(refusal, { command: commandObj.path });
 
+      if (!commandObj.argsSchema && !getGlobalArgs(commandObj)) return executeValidated(commandObj, args, prefs);
+      // Args are checked against the schema, which applies its defaults and transforms (the validate phase doesn't run)
+      const validatedOrPromise = validateCommandArgs(commandObj, (args ?? {}) as Record<string, unknown>);
+      const execute = (validated: { args: unknown; argsResult: StandardSchemaV1.Result<unknown> }) => {
+        if (validated.argsResult.issues) {
+          return finalizeResult({ command: commandObj as any, args: undefined, argsResult: validated.argsResult, result: undefined });
+        }
+        return executeValidated(commandObj, validated.args, prefs);
+      };
+      if (validatedOrPromise instanceof Promise) {
+        return validatedOrPromise
+          .then(execute)
+          .catch((err: unknown) => finalizeResult(errorResult(err, { command: commandObj, args }))) as any;
+      }
+      return execute(validatedOrPromise) as any;
+    } catch (err) {
+      return finalizeResult(errorResult(err)) as any;
+    }
+  };
+
+  const executeValidated = (commandObj: AnyPadroneCommand, args: unknown, prefs?: { context?: unknown; signal?: AbortSignal }) => {
+    try {
       const resolvedCtx = resolveContext(commandObj, prefs?.context);
       const commandRuntime = getCommandRuntime(commandObj);
       const executeCtx: InterceptorExecuteContext = withEmit({
@@ -145,7 +177,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
       }
       return toResult(executedOrPromise);
     } catch (err) {
-      return finalizeResult(errorResult(err)) as any;
+      return finalizeResult(errorResult(err, { command: commandObj, args })) as any;
     }
   };
 
@@ -298,10 +330,10 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
     });
   };
 
-  const api: AnyPadroneProgram['api'] = () => {
+  const api: AnyPadroneProgram['api'] = (prefs) => {
     resolveAllCommands(rootCommand);
     function buildApi(command: AnyPadroneCommand) {
-      const runCommand = ((args) => run(command, args).result) as PadroneAPI<AnyPadroneCommand>;
+      const runCommand = ((args) => thenMaybe(run(command, args, prefs), unwrapApiResult)) as PadroneAPI<AnyPadroneCommand>;
       if (!command.commands) return runCommand;
       for (const cmd of command.commands) runCommand[cmd.name] = buildApi(cmd);
       return runCommand;

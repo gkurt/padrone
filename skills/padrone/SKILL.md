@@ -61,12 +61,13 @@ program.cli();
 | `.arguments(schema, meta?)` | Define options/args with a Standard Schema |
 | `.globalArgs(schema, meta?)` | Options for this command and all subcommands (before or after the subcommand name), merged into their args. Subcommands override by redefining a field, or extend via `.globalArgs((inherited) => inherited.extend({...}))` |
 | `.action(handler?)` | Set the command handler `(args, ctx, base?) => result` |
-| `.command(name, builderFn?)` | Add or extend a subcommand |
+| `.command(name, builderFn?)` | Add or extend a subcommand. For a builder in its own file: `defineCommand((c) => ...)`, or `defineCommand<Ctx>()((c) => ...)` with the program's context (never `defineCommand<Ctx>(fn)`, a type error), or `defineCommand().requires<Ctx>().define(fn)` for interceptor-provided context |
 | `.context(transform?)` | Define typed context or transform inherited context |
 | `.mount(name, program, options?)` | Mount another Padrone program as a subcommand (with optional `{ context }`) |
 | `.configure(config)` | Set title, description, version, deprecated, hidden, group, mutation, needsApproval, outputSchema, expose (which callers may run it: `false` = local only) |
 | `.intercept(interceptor)` | Register a middleware interceptor |
-| `.extend(extension)` | Apply a build-time extension (bundle of config, commands, interceptors) |
+| `.extend(...extensions)` | Apply build-time extensions in order (bundles of config, commands, interceptors): `.extend(padroneJson(), padroneFormat())` |
+| `.describe(text)` | Set the description (shorthand for `.configure({ description })`) |
 | `.extend(padroneEnv(schema))` | Parse environment variables into args; `{ prefix: 'APP' }` reads every option (`APP_DB__HOST` → `db.host`, `nestedSeparator` changes `__`), array options split on `arraySeparator` (`APP_TAGS=a,b`), empty variables count as unset unless `allowEmpty` (import `padroneEnv` from `'padrone'`) |
 | `.extend(padroneConfig({ files, schema? }))` | Load args from config files; `profiles: true` adds `--profile`, `sections: true` per-command sections (`serve: { port: 3000 }`), `command: true` a `config get\|set\|unset\|list\|path\|edit` command (`--local`/`--file`) (import `padroneConfig` from `'padrone'`) |
 | `.dryRun(handler)` | Adds `--dry-run`/`-n`: `handler(args, ctx)` runs instead of the action and returns what would change (ideally the action's type; otherwise the result type becomes a union; call after `.action()`). Commands without one reject `--dry-run` |
@@ -83,13 +84,13 @@ program.cli();
 |---|---|
 | `.cli(prefs?)` | Entry point from `process.argv` (one token per entry) — prints errors and sets the exit code (error's `exitCode`, or 1). Pass `context` in prefs. |
 | `.eval(input, prefs?)` | Parse + validate + execute a string — returns issues softly. Pass `context` in prefs. |
-| `.run(name, args, prefs?)` | Execute by name with args object (sync, no validation). Pass `context` in prefs. |
+| `.run(name, args, prefs?)` | Execute by name with args object: checked against the schema (defaults applied; invalid args in `argsResult.issues`), no parse/validate phases, nothing printed. Pass `context` in prefs (required when the program declares one). |
 | `.parse(input?)` | Parse without executing |
 | `.repl(options?)` | Start interactive REPL session |
 | `.help(command?, prefs?)` | Generate help text |
 | `.completion(shell?)` | Generate shell completion script |
 | `.find(command)` | Look up a command by path |
-| `.api()` | Type-safe programmatic API |
+| `.api(prefs?)` | Type-safe programmatic API: `api(prefs).db.migrate(args)` returns the result, throws on invalid args or a failing action |
 | `.tool(prefs?)` | Vercel AI SDK tool definition; `timeout` aborts long calls |
 | `.mcp(prefs?)` | Start MCP server (HTTP or stdio); hidden, built-in and unexposed commands are left out; `include`/`exclude`, `auth`/`bearer`, `allowedHosts`, `timeout`, `maxConcurrent`, `sessionTtl`, `maxSessions` *(experimental)* |
 | `.serve(prefs?)` | Start REST server with OpenAPI docs; cross-site `Origin`s other than `cors` get 403, `maxBodySize` caps bodies; `include`/`exclude`, `auth`/`bearer` (401, identity in `ctx.auth`), `allowedHosts`, `timeout` (504), `maxConcurrent` (503) *(experimental)* |
@@ -158,7 +159,7 @@ const timer = defineInterceptor({ name: 'timer', order: -10 }, () => {
 program.intercept(timer);
 ```
 
-`defineInterceptor()` returns a factory — each execution gets fresh closure state. Supports `.provides<T>()` and `.requires<T>()` for typed context (`.requires()` and `.on()` return a new interceptor, leaving a shared one unchanged); `.requires<T>('padrone:logger')` also checks at runtime that the interceptor with that id is registered. `callers: LOCAL_CALLERS` (or `['cli', 'repl']`, `REMOTE_CALLERS`) in the meta runs it only for those callers. Custom events: `const deployed = defineEvent<{ env: string }>('myapp:deployed')`, handled with `interceptor.on(deployed, (payload, ctx) => ...)` and emitted with `await ctx.emit(deployed, { env })` from actions/interceptors (handlers on the command chain run in order) or `program.emit()` (root handlers). The built-in `commandNotFound` event (import from `'padrone'`) fires for an unknown command name: `event.handle((ctx) => result)` runs something in its place, `event.reroute(['deploy', ...event.args])` routes another input; otherwise the usual "Unknown command" error with suggestions follows (only emitted when a handler exists, so sync programs stay sync). Meta `extraCommands: (command) => [{ name, description, group }]` lists such commands in help and completion.
+`defineInterceptor()` returns a factory — each execution gets fresh closure state. Supports `.provides<T>()` and `.requires<T>()` for typed context (`defineInterceptor(meta).provides<T>().factory(fn)` type-checks the `context` passed to `next()`) (`.requires()` and `.on()` return a new interceptor, leaving a shared one unchanged); `.requires<T>('padrone:logger')` also checks at runtime that the interceptor with that id is registered. `callers: LOCAL_CALLERS` (or `['cli', 'repl']`, `REMOTE_CALLERS`) in the meta runs it only for those callers. Custom events: `const deployed = defineEvent<{ env: string }>('myapp:deployed')`, handled with `interceptor.on(deployed, (payload, ctx) => ...)` and emitted with `await ctx.emit(deployed, { env })` from actions/interceptors (handlers on the command chain run in order) or `program.emit()` (root handlers). The built-in `commandNotFound` event (import from `'padrone'`) fires for an unknown command name: `event.handle((ctx) => result)` runs something in its place, `event.reroute(['deploy', ...event.args])` routes another input; otherwise the usual "Unknown command" error with suggestions follows (only emitted when a handler exists, so sync programs stay sync). Meta `extraCommands: (command) => [{ name, description, group }]` lists such commands in help and completion.
 
 ## Extension-First Architecture
 

@@ -193,7 +193,9 @@ export type {
   InterceptorStartContext,
   InterceptorValidateContext,
   InterceptorValidateResult,
+  MaybePromiseCommandResult,
   PadroneActionContext,
+  PadroneAPI,
   PadroneBuilder,
   PadroneCaller,
   PadroneCommand,
@@ -239,4 +241,4 @@ export type {
   InferInterceptorContext,
   InferInterceptorRequires,
 } from './util/type-helpers.ts';
-export type { Drained } from './util/type-utils.ts';
+export type { Drained, MaybePromise, Thenable } from './util/type-utils.ts';

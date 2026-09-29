@@ -175,10 +175,11 @@ export type PadroneHelpContext = {
  */
 export type PadroneHelpTransform = (info: HelpInfo, ctx: PadroneHelpContext) => HelpInfo | string;
 
-/** A positional's name in usage and argument lists: its `valueName` when set (keeping `...` for variadic ones). */
+/** A positional's name in usage and argument lists: its `valueName` when set, with `...` after a variadic one (`files...`). */
 export function positionalLabel(arg: HelpPositionalInfo): string {
-  if (!arg.valueName) return arg.name;
-  return arg.name.startsWith('...') ? `...${arg.valueName}` : arg.valueName;
+  const variadic = arg.name.startsWith('...');
+  const name = arg.valueName ?? (variadic ? arg.name.slice(3) : arg.name);
+  return variadic ? `${name}...` : name;
 }
 
 /** Whether a default is worth showing: not unset, `''` or `[]`. */
@@ -270,10 +271,10 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
           : (isDefaultEntry ? styler.meta(subCmd.name) : styler.command(subCmd.name)) +
             (suffix ? styler.meta(suffix) : '') +
             aliasParts.styled;
-        const lineParts: string[] = [commandName, padding];
-
         // Use title if available, otherwise use description
         const displayText = subCmd.title ?? subCmd.description;
+        // No padding after a name with nothing next to it
+        const lineParts: string[] = displayText || isDeprecated ? [commandName, padding] : [commandName];
         if (displayText) {
           lineParts.push(isDeprecated ? styler.deprecated(displayText) : styler.description(displayText));
         }
@@ -447,6 +448,16 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
           inlineMeta.push(`(${note})`);
           styledInlineMeta.push(styler.meta(`(${note})`));
         }
+        if (arg.env) {
+          const text = `(env: ${(typeof arg.env === 'string' ? [arg.env] : arg.env).join(', ')})`;
+          inlineMeta.push(text);
+          styledInlineMeta.push(styler.meta(text));
+        }
+        if (arg.configKey) {
+          const text = `(config: ${arg.configKey})`;
+          inlineMeta.push(text);
+          styledInlineMeta.push(styler.meta(text));
+        }
 
         const descPlain = arg.description ?? '';
         const styledDesc = descPlain ? (isDeprecated ? styler.deprecated(descPlain) : styler.description(descPlain)) : '';
@@ -485,17 +496,7 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
         }
         if (line3Parts.length > 0) lines.push(contPad + join(line3Parts));
 
-        // stdin, env, config — always on separate line
-        const line4Parts: string[] = [];
-        if (info.usage.stdinField === arg.name) line4Parts.push(styler.meta('(stdin)'));
-        if (arg.env) {
-          const envVars = typeof arg.env === 'string' ? [arg.env] : arg.env;
-          line4Parts.push(styler.example('Env:'), styler.exampleValue(envVars.join(', ')));
-        }
-        if (arg.configKey) {
-          line4Parts.push(styler.example('Config:'), styler.exampleValue(arg.configKey));
-        }
-        if (line4Parts.length > 0) lines.push(contPad + join(line4Parts));
+        if (info.usage.stdinField === arg.name) lines.push(contPad + styler.meta('(stdin)'));
       }
     };
 

@@ -25,6 +25,7 @@ z.object({
 
 | Property | Type | Description |
 |----------|------|-------------|
+| `description` | `string` | Help text for the option (the same as Zod's `.describe()`, so `.meta({ flags: 'o', description: 'Output file' })` takes one call) |
 | `flags` | `string \| string[]` | Single-character short flags (e.g., `'p'` for `-p`). Stackable: `-abc` = `-a -b -c` |
 | `alias` | `string \| string[]` | Multi-character long aliases (e.g., `'dry-run'` for `--dry-run`) |
 | `negative` | `string \| string[]` | Custom negative keyword(s) for booleans. Disables `--no-` prefix |

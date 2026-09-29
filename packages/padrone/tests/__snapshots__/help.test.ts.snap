@@ -4,17 +4,17 @@ exports[`help should generate help for the program 1`] = `
 "Usage: padrone-test [command]
 
 Commands:
-  list               
-  list <subcommand>  
-  show               
-  filter             
-  batch              
-  search             
-  noop               
-  tags               
-  deprecated-test    
-  hidden-test        
-  examples-test      
+  list
+  list <subcommand>
+  show
+  filter
+  batch
+  search
+  noop
+  tags
+  deprecated-test
+  hidden-test
+  examples-test
 
 Global: help [command], version, [command] --repl
 Run "padrone-test [command] --help" for more information. Use "--all" for all global commands.
@@ -25,17 +25,17 @@ exports[`help should generate help for the top level command 1`] = `
 "Usage: padrone-test [command]
 
 Commands:
-  list               
-  list <subcommand>  
-  show               
-  filter             
-  batch              
-  search             
-  noop               
-  tags               
-  deprecated-test    
-  hidden-test        
-  examples-test      
+  list
+  list <subcommand>
+  show
+  filter
+  batch
+  search
+  noop
+  tags
+  deprecated-test
+  hidden-test
+  examples-test
 
 Global: help [command], version, [command] --repl
 Run "padrone-test [command] --help" for more information. Use "--all" for all global commands.
@@ -70,8 +70,8 @@ exports[`help should generate help for a command with nested commands 1`] = `
 "Usage: padrone-test list extended [command] [options]
 
 Commands:
-  [default]  
-  extended   
+  [default]
+  extended
 
 Run "padrone-test list extended [command] --help" for more information on a command.
 
@@ -258,17 +258,17 @@ Commands:
   help (h)           Display help for a command
   version            Display the version number
   repl               Start an interactive REPL
-  list               
-  list <subcommand>  
-  show               
-  filter             
-  batch              
-  search             
-  noop               
-  tags               
-  deprecated-test    
-  hidden-test        
-  examples-test      
+  list
+  list <subcommand>
+  show
+  filter
+  batch
+  search
+  noop
+  tags
+  deprecated-test
+  hidden-test
+  examples-test
 
 Global: help [command], version, [command] --repl
 Run "padrone-test [command] --help" for more information. Use "--all" for all global commands.
@@ -276,14 +276,14 @@ Run "padrone-test [command] --help" for more information. Use "--all" for all gl
 Subcommand Details:
 
 ────────────────────────────────────────────────────────────
-Usage: padrone-test help [...command] [options]
+Usage: padrone-test help [command...] [options]
 
 Aliases: h
 
 Display help for a command
 
 Arguments:
-  ...command  The command to show help for
+  command...  The command to show help for
 
 Options:
   -d, --detail  [string]  How much detail to show (choices: minimal, standard, full)
@@ -312,9 +312,9 @@ Arguments:
 Usage: padrone-test list [command] [options]
 
 Commands:
-  [default]              
-  extended               
-  extended <subcommand>  
+  [default]
+  extended
+  extended <subcommand>
 
 Run "padrone-test list [command] --help" for more information on a command.
 
@@ -329,8 +329,8 @@ Subcommand Details:
 Usage: padrone-test list extended [command] [options]
 
 Commands:
-  [default]  
-  extended   
+  [default]
+  extended
 
 Run "padrone-test list extended [command] --help" for more information on a command.
 
@@ -365,10 +365,10 @@ Options:
   --ascending            Sort in ascending order
 
 ────────────────────────────────────────────────────────────
-Usage: padrone-test batch <...ids>
+Usage: padrone-test batch <ids...>
 
 Arguments:
-  ...ids  Task IDs to process
+  ids...  Task IDs to process
 
 ────────────────────────────────────────────────────────────
 Usage: padrone-test search <query> [options]
@@ -1134,27 +1134,27 @@ exports[`help with full detail mode should generate full help with all nested co
 
   **repl**               Start an interactive REPL
 
-  **list**               
+  **list**
 
-  **list*** <subcommand>*  
+  **list*** <subcommand>*
 
-  **show**               
+  **show**
 
-  **filter**             
+  **filter**
 
-  **batch**              
+  **batch**
 
-  **search**             
+  **search**
 
-  **noop**               
+  **noop**
 
-  **tags**               
+  **tags**
 
-  **deprecated-test**    
+  **deprecated-test**
 
-  **hidden-test**        
+  **hidden-test**
 
-  **examples-test**      
+  **examples-test**
 
 
 
@@ -1170,7 +1170,7 @@ exports[`help with full detail mode should generate full help with all nested co
 
 *────────────────────────────────────────────────────────────*
 
-**Usage:** **padrone-test help** *[...command]* *[options]*
+**Usage:** **padrone-test help** *[command...]* *[options]*
 
 
 
@@ -1184,7 +1184,7 @@ Display help for a command
 
 ### Arguments:
 
-  \`...command\`  The command to show help for
+  \`command...\`  The command to show help for
 
 
 
@@ -1246,11 +1246,11 @@ Start an interactive REPL
 
 ### Commands:
 
-  *[default]*              
+  *[default]*
 
-  **extended**               
+  **extended**
 
-  **extended*** <subcommand>*  
+  **extended*** <subcommand>*
 
 
 
@@ -1286,9 +1286,9 @@ Start an interactive REPL
 
 ### Commands:
 
-  *[default]*  
+  *[default]*
 
-  **extended**   
+  **extended**
 
 
 
@@ -1370,13 +1370,13 @@ Start an interactive REPL
 
 *────────────────────────────────────────────────────────────*
 
-**Usage:** **padrone-test batch** *<...ids>*
+**Usage:** **padrone-test batch** *<ids...>*
 
 
 
 ### Arguments:
 
-  \`...ids\`  Task IDs to process
+  \`ids...\`  Task IDs to process
 
 
 
@@ -1485,9 +1485,9 @@ exports[`help with full detail mode should generate full help for a specific com
 "Usage: padrone-test list [command] [options]
 
 Commands:
-  [default]              
-  extended               
-  extended <subcommand>  
+  [default]
+  extended
+  extended <subcommand>
 
 Run "padrone-test list [command] --help" for more information on a command.
 
@@ -1502,8 +1502,8 @@ Subcommand Details:
 Usage: padrone-test list extended [command] [options]
 
 Commands:
-  [default]  
-  extended   
+  [default]
+  extended
 
 Run "padrone-test list extended [command] --help" for more information on a command.
 
@@ -1525,8 +1525,8 @@ exports[`help with full detail mode should generate full help for deeply nested 
 "Usage: padrone-test list extended [command] [options]
 
 Commands:
-  [default]  
-  extended   
+  [default]
+  extended
 
 Run "padrone-test list extended [command] --help" for more information on a command.
 
@@ -1548,9 +1548,9 @@ exports[`help with full detail mode should work with ansi format in full detail 
 "\x1B[1mUsage:\x1B[0m \x1B[36m\x1B[1mpadrone-test list\x1B[0m \x1B[90m[command]\x1B[0m \x1B[90m[options]\x1B[0m
 
 \x1B[1mCommands:\x1B[0m
-  \x1B[90m[default]\x1B[0m              
-  \x1B[36m\x1B[1mextended\x1B[0m               
-  \x1B[36m\x1B[1mextended\x1B[0m\x1B[90m <subcommand>\x1B[0m  
+  \x1B[90m[default]\x1B[0m
+  \x1B[36m\x1B[1mextended\x1B[0m
+  \x1B[36m\x1B[1mextended\x1B[0m\x1B[90m <subcommand>\x1B[0m
 
 \x1B[90mRun "padrone-test list [command] --help" for more information on a command.\x1B[0m
 
@@ -1565,8 +1565,8 @@ exports[`help with full detail mode should work with ansi format in full detail 
 \x1B[1mUsage:\x1B[0m \x1B[36m\x1B[1mpadrone-test list extended\x1B[0m \x1B[90m[command]\x1B[0m \x1B[90m[options]\x1B[0m
 
 \x1B[1mCommands:\x1B[0m
-  \x1B[90m[default]\x1B[0m  
-  \x1B[36m\x1B[1mextended\x1B[0m   
+  \x1B[90m[default]\x1B[0m
+  \x1B[36m\x1B[1mextended\x1B[0m
 
 \x1B[90mRun "padrone-test list extended [command] --help" for more information on a command.\x1B[0m
 

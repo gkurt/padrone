@@ -141,13 +141,13 @@ Now users can use `-v` instead of `--verbose` and `-o` instead of `--output`. Sh
 You can also run commands programmatically with full type safety:
 
 ```typescript
-// Run a command directly
+// Run a command directly (args checked against the schema, defaults applied)
 program.run('add', { task: 'Buy milk', priority: 'high' });
 
 // Evaluate a command string (soft error handling)
 const result = program.eval('add "Buy eggs" --priority low');
 
-// Generate a typed API
+// Generate a typed API (each command returns its result, or throws)
 const api = program.api();
 api.add({ task: 'Buy eggs', priority: 'low' });
 

@@ -1,7 +1,9 @@
 import { type PadronePageOptions, pageWithRuntime } from '../feature/pager.ts';
 import { openInEditor, openWithSystem, type PadroneEditorOptions } from '../feature/system.ts';
+import { safeJsonStringify } from '../util/json.ts';
 import { readStreamAsText } from '../util/stream.ts';
 import { isCI } from '../util/utils.ts';
+import { isPlainObject } from './args.ts';
 import { PromptCancelledError } from './errors.ts';
 import type {
   InteractiveMode,
@@ -196,9 +198,18 @@ function getTerminalInfo(): PadroneRuntime['terminal'] {
   };
 }
 
+/**
+ * Prints values like `console.log`, except that plain objects and arrays print as JSON when stdout isn't a terminal,
+ * so piping a command's result into `jq` or a file gets data rather than an inspected view.
+ */
+function defaultOutput(...args: unknown[]): void {
+  const piped = typeof process !== 'undefined' && process.stdout?.isTTY !== true;
+  console.log(...(piped ? args.map((arg) => (Array.isArray(arg) || isPlainObject(arg) ? (safeJsonStringify(arg, 2) ?? arg) : arg)) : args));
+}
+
 export function createDefaultRuntime(): ResolvedPadroneRuntime {
   return {
-    output: (...args) => console.log(...args),
+    output: defaultOutput,
     error: (text) => console.error(text),
     argv: () => (typeof process !== 'undefined' ? process.argv.slice(2) : []),
     env: () => (typeof process !== 'undefined' ? (process.env as Record<string, string | undefined>) : {}),

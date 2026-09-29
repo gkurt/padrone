@@ -40,9 +40,11 @@ describe('suggestions', () => {
       .extend(padroneJson())
       .extend(padroneConfirm())
       .command('build', (c) => c.arguments(z.object({ out: z.string().optional() }), { interactive: true }).action(() => 'built'));
-    expect(issueMessages(await program.eval('build --jsno'))).toEqual(['Unknown option: "jsno" Did you mean "--json"?']);
-    expect(issueMessages(await program.eval('build --yse'))).toEqual(['Unknown option: "yse" Did you mean "--yes"?']);
-    expect(issueMessages(await program.eval('build --interactiv'))).toEqual(['Unknown option: "interactiv" Did you mean "--interactive"?']);
+    expect(issueMessages(await program.eval('build --jsno'))).toEqual(['Unknown option: "jsno". Did you mean "--json"?']);
+    expect(issueMessages(await program.eval('build --yse'))).toEqual(['Unknown option: "yse". Did you mean "--yes"?']);
+    expect(issueMessages(await program.eval('build --interactiv'))).toEqual([
+      'Unknown option: "interactiv". Did you mean "--interactive"?',
+    ]);
     expect(issueMessages(await program.eval('build --detial'))).toEqual(['Unknown option: "detial"']);
   });
 

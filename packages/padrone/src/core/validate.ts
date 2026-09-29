@@ -472,6 +472,32 @@ export function checkUnknownArgs(command: AnyPadroneCommand, args: Record<string
 }
 
 /**
+ * Rewords schema issues about a missing or mistyped value for the command line: `Missing required argument` / `option`
+ * instead of `expected string, received undefined`, and `Expected number, got "abc"` naming the value that was given.
+ * Only issues with Zod's `invalid_type` code are reworded; others keep their message.
+ */
+function describeIssues(
+  issues: readonly StandardSchemaV1.Issue[],
+  input: Record<string, unknown>,
+  command: AnyPadroneCommand,
+): StandardSchemaV1.Issue[] {
+  const positionals = new Set(parsePositionalConfig(command.meta?.positional ?? []).map((p) => p.name));
+  return issues.map((issue) => {
+    const { code, expected } = issue as { code?: unknown; expected?: unknown };
+    const path = (issue.path ?? []).map((segment) => String(typeof segment === 'object' ? segment.key : segment));
+    if (code !== 'invalid_type' || path.length === 0) return issue;
+    const value = getNestedValue(input, path);
+    if (value === undefined) {
+      const positional = path.length === 1 && positionals.has(path[0]!);
+      return { ...issue, message: positional ? 'Missing required argument' : 'Missing required option' };
+    }
+    if (typeof value === 'string' && typeof expected === 'string')
+      return { ...issue, message: `Expected ${expected}, got ${JSON.stringify(value)}` };
+    return issue;
+  });
+}
+
+/**
  * Validates preprocessed arguments against the command's schema.
  * First checks for unknown args (strict by default), then runs schema validation.
  * Returns sync or async result depending on the schema's validate method.
@@ -491,7 +517,7 @@ export function validateCommandArgs(command: AnyPadroneCommand, preprocessedArgs
 
   const buildResult = (parsed: StandardSchemaV1.Result<unknown>) => ({
     args: parsed.issues ? undefined : (parsed.value as any),
-    argsResult: parsed as any,
+    argsResult: (parsed.issues ? { ...parsed, issues: describeIssues(parsed.issues, preprocessedArgs, command) } : parsed) as any,
   });
 
   if (!globals || !globalSchema) return thenMaybe(argsParsed, buildResult);

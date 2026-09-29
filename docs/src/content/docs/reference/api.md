@@ -52,6 +52,12 @@ program.configure({
 | `help` | `PadroneHelpConfig \| PadroneHelpTransform` | `{ usage?, before?, after? }` for this command, or `(info, ctx) => HelpInfo \| string` for this command and its subcommands. See [Customizing Help](/padrone/guides/commands-arguments/#customizing-help) |
 | `complete` | `(ctx) => values \| { values, directive? }` (or a Promise) | Shell completion for the command's positionals (needs `padroneCompletion()`): called with `position`, `field`, `positionals`, `prefix`, `args`, `runtime` and `context`. A positional field's own `complete` wins. See [Command-level completion](/padrone/reference/args-meta/#command-level-completion) |
 
+For just a description, `.describe(text)` is shorthand for `.configure({ description: text })`:
+
+```typescript
+program.command('add', (c) => c.describe('Add a bookmark').arguments(schema).action(handler));
+```
+
 ---
 
 ### .runtime(config)
@@ -188,6 +194,8 @@ program
 
 When called without arguments, `.context<T>()` only changes the TypeScript type. When called with a transform function, the function is applied at runtime to the inherited context as it resolves from root to the target command.
 
+A context declared with `.context<T>()` on the program is one callers pass: `cli()`, `eval()`, `run()`, `repl()` and `api()` require `{ context }` (a type error without it). A transform of no context, like `.context(() => ({ db: createDb() }))` on the program, creates the context itself, so callers don't pass one.
+
 **Returns:** The program builder (chainable)
 
 ---
@@ -316,7 +324,7 @@ program.extend(
 
 **Parameters:**
 - `schema`: A Standard Schema that validates env vars and transforms them to argument names
-- `options.vars`: Map arguments to variables directly, without a schema: `padroneEnv({ vars: { port: 'APP_PORT', token: ['API_TOKEN', 'TOKEN'] } })`. The first variable that is set wins, and values are coerced by the command's schema like CLI input; a dotted key sets a nested value (`{ 'db.host': 'DB_HOST' }`). These variables are shown in help (`Env: APP_PORT`). Can be combined with a schema.
+- `options.vars`: Map arguments to variables directly, without a schema: `padroneEnv({ vars: { port: 'APP_PORT', token: ['API_TOKEN', 'TOKEN'] } })`. The first variable that is set wins, and values are coerced by the command's schema like CLI input; a dotted key sets a nested value (`{ 'db.host': 'DB_HOST' }`). These variables are shown in help (`(env: APP_PORT)`). Can be combined with a schema.
 - `options.prefix`: Read every option from a prefixed variable, like yargs' `.env('MY_APP')`: `padroneEnv({ prefix: 'MY_APP' })` reads `--dry-run` / `dryRun` from `MY_APP_DRY_RUN`, and a double underscore reaches into objects like viper and .NET (`MY_APP_DB__HOST` → `db.host`, `MY_APP_DB__MAX_CONNS` → `db.maxConns`). Variables named in `vars` take precedence. Shown in help.
 - `options.nestedSeparator`: What separates the keys of a nested value in a prefixed variable name, in place of `__` (`nestedSeparator: '.'` reads `MY_APP_DB.HOST`) (default: `'__'`)
 - `options.arraySeparator`: What splits a variable for an array option into items, like viper's string slices: `MY_APP_TAGS=a,b` gives `['a', 'b']`, `MY_APP_PORTS=80,443` gives `[80, 443]` for a number array. Items are trimmed and empty ones dropped; a value in brackets is read as a JSON array (`MY_APP_TAGS='["a,b", "c"]'`), and arrays of objects always take JSON. `false` keeps the value as one item. Applies to `vars`, `prefix` and `.env` variables named like options, not to what an env schema returns (default: `','`)
@@ -685,9 +693,9 @@ Available on both programs and subcommand builders. Program-level interceptors a
 
 ---
 
-### .extend(extension)
+### .extend(...extensions)
 
-Apply a build-time extension. An extension is a function that receives the builder and returns a modified builder. Extensions can add commands, arguments, interceptors, and configuration.
+Apply build-time extensions, in order. An extension is a function that receives the builder and returns a modified builder. Extensions can add commands, arguments, interceptors, and configuration.
 
 ```typescript
 import { createPadrone, padroneEnv, padroneConfig, padroneProgress } from 'padrone';
@@ -703,11 +711,11 @@ const program = createPadrone('myapp')
 ```
 
 **Parameters:**
-- `extension`: A function `(builder) => builder` — receives the current builder and returns a modified builder
+- `extensions`: One or more functions `(builder) => builder` — each receives the builder the previous one returned and returns a modified builder
 
-**Returns:** The modified builder returned by the extension
+**Returns:** The modified builder returned by the last extension
 
-Extensions compose naturally — chain multiple `.extend()` calls to layer functionality. Most of Padrone's built-in features are implemented as extensions applied automatically by `createPadrone()`. See the [Interceptors & Extensions guide](/padrone/guides/plugins/) for the full list.
+Extensions compose naturally — pass several to one call (`.extend(padroneJson(), padroneFormat(), padroneConfirm())`, up to five) or chain `.extend()` calls to layer functionality. Most of Padrone's built-in features are implemented as extensions applied automatically by `createPadrone()`. See the [Interceptors & Extensions guide](/padrone/guides/plugins/) for the full list.
 
 ---
 
@@ -1004,6 +1012,26 @@ program.command(['serve', 's'], (c) =>
 - `name`: Command name string, or `[name, ...aliases]` array for aliases
 - `builder`: Function receiving a command builder, returns configured command
 
+To define a command in its own file, wrap the builder function in `defineCommand()`, which types the builder and keeps the command's full type (args, result, subcommands) for the program it's added to. The command takes the name it's registered under, so `run()`, `api()` and `find()` know it:
+
+```typescript
+// commands/remove.ts
+export const remove = defineCommand((c) =>
+  c.arguments(z.object({ ids: z.array(z.number()) }), { positional: ['...ids'] }).action((args) => deleteAll(args.ids)),
+);
+
+// With the context the program passes: give the type to defineCommand() and call the result
+export const list = defineCommand<{ db: Database }>()((c) => c.action((_args, ctx) => ctx.context.db.list()));
+
+// Context an interceptor must provide: without it, `.command()` returns a `DefineCommandRequiresError` type
+export const audit = defineCommand().requires<{ logger: PadroneLogger }>().define((c) => c.action((_args, ctx) => ctx.context.logger.info('audit')));
+
+// cli.ts
+createPadrone('app').context<{ db: Database }>().command(['remove', 'rm'], remove).command('list', list);
+```
+
+`defineCommand<Context>(fn)` (a type argument together with the callback) is a type error: TypeScript can't infer the command's type once a type argument is given, so pass the context type to `defineCommand<Context>()` and call the result with the callback.
+
 ---
 
 ### .cli(prefs?)
@@ -1070,7 +1098,7 @@ if (result.argsResult?.issues) {
 
 ### .run(command, args, prefs?)
 
-Run a command programmatically with typed arguments.
+Run a command programmatically with typed arguments. The args are checked against the command's schema, which applies its defaults and transforms (the parse and validate phases don't run, so env and config values aren't read). The result isn't printed.
 
 ```typescript
 const result = program.run('serve', {
@@ -1084,10 +1112,10 @@ const result = program.run('serve', { port: 8080 }, { context: { db } });
 
 **Parameters:**
 - `command`: Command path (e.g., `'serve'` or `'db migrate up'`)
-- `args`: Arguments object matching the command's schema
-- `prefs` (optional): `{ context?: TContext, signal?: AbortSignal }` — provide context and a cancellation signal
+- `args`: Arguments object matching the command's schema (the schema's input: fields with defaults can be left out)
+- `prefs`: `{ context?: TContext, signal?: AbortSignal }` — provide context (required when the program declares one) and a cancellation signal
 
-**Returns:** The action handler's return value
+**Returns:** `PadroneCommandResult` with the action's return value in `result`. Invalid args come back in `argsResult.issues` without running the action; an error the action throws in `error`.
 
 `program.emit(event, payload)` emits a custom event (see `defineEvent()`) outside any execution, to the root's interceptors.
 
@@ -1129,9 +1157,9 @@ const cliString = program.stringify('serve', { port: 8080 });
 
 ---
 
-### .api()
+### .api(prefs?)
 
-Generate a typed API object for programmatic use.
+Generate a typed API object for programmatic use: each command is a function that runs it like `run()` (args checked against the schema, defaults applied, nothing printed) and returns the action's result.
 
 ```typescript
 const api = program.api();
@@ -1139,9 +1167,15 @@ const api = program.api();
 // Call commands as methods
 api.serve({ port: 8080 });
 api.db.migrate.up({ steps: 1 });
+
+// With context
+program.api({ context: { db } }).users.list({});
 ```
 
-**Returns:** Typed API object with methods for each command
+**Parameters:**
+- `prefs`: `{ context?: TContext, signal?: AbortSignal }` — passed to every command (context is required when the program declares one)
+
+**Returns:** Typed API object with methods for each command. A method throws a `ValidationError` for invalid args and rethrows what the action throws.
 
 ---
 
@@ -1654,7 +1688,7 @@ const withDb = defineInterceptor({ name: 'with-db' })
   .provides<{ db: Database }>()
   .factory(() => ({
     execute: (ctx, next) => {
-      return next({ context: { ...ctx.context, db: createDb() } });
+      return next({ context: { db: createDb() } }); // checked against { db: Database }
     },
   }));
 ```
@@ -1673,7 +1707,7 @@ const withDb = defineInterceptor({ name: 'with-db' })
 | `extraCommands` | `(command) => { name, description?, group? }[]` | Commands the interceptor runs that aren't in the command tree (e.g. external commands on `PATH`), under `command`: listed in help on the command line and offered by shell completion; a real command of the same name hides one |
 
 **Chaining methods (single-arg form):**
-- `.provides<T>()` — Declare what this interceptor adds to the context (type-level only)
+- `.provides<T>()` — Declare what this interceptor adds to the context: commands it's registered on see it in `ctx.context`, and the `context` its handlers pass to `next()` is type-checked against it. (`.provides<T>()` on an interceptor from the two-arg form only declares the type.)
 - `.requires<T>(...ids)` — Declare what this interceptor expects on the context; interceptor ids passed (`.requires<{ logger: PadroneLogger }>('padrone:logger')`) are also checked at runtime
 - `.factory(fn)` — Set the factory function
 
@@ -1791,6 +1825,9 @@ import type {
   PadroneExtension,
   PadroneParseResult,
   PadroneCommandResult,
+  MaybePromiseCommandResult, // what eval() and cli() return (a Promise for async commands)
+  MaybePromise,
+  Thenable,
   PadroneAPI,
   PadroneSchema,
   AsyncPadroneSchema,

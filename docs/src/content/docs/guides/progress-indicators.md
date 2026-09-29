@@ -26,7 +26,7 @@ Running `app deploy` shows a spinner with "Deploying..." that auto-succeeds when
 
 ## Auto-Managed Progress
 
-Use `padroneProgress()` to configure automatic progress indicators. Register it with `.extend()` on a command. The indicator starts before validation and is automatically stopped on success or failure. With `run()`, which skips validation, it starts right before the action.
+Use `padroneProgress()` to configure automatic progress indicators. Register it with `.extend()` on a command. The indicator starts before validation and is automatically stopped on success or failure. With `run()`, which skips the validate phase, it starts right before the action.
 
 When stderr is not a TTY (piped output), in CI, or with `TERM=dumb`, the built-in renderer doesn't animate and only prints the final success or error line, using the latest message.
 

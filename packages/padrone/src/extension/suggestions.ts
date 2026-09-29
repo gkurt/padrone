@@ -90,7 +90,7 @@ function enrichIssuesWithSuggestions(
       const similar = suggestSimilar(unknownMatch[1], knownOptions());
       if (similar.length) {
         const hint = formatSuggestions(similar, '--');
-        return { ...i, message: `${i.message} ${hint}` };
+        return { ...i, message: `${i.message}. ${hint}` };
       }
       return i;
     }
@@ -103,7 +103,7 @@ function enrichIssuesWithSuggestions(
       return similar.length ? [formatSuggestions(similar, '--')] : [];
     });
     if (!hints.length) return i;
-    return { ...i, message: `${i.message} ${hints.join(' ')}` };
+    return { ...i, message: `${i.message.replace(/\.?$/, '.')} ${hints.join(' ')}` };
   });
 }
 

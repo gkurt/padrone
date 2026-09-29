@@ -162,8 +162,13 @@ export type InterceptorShutdownContext<TResult = unknown, TContext = object> = I
   args?: unknown;
 };
 
-/** Overrides passable to `next()`. Provides autocomplete for common fields; accepts any phase-specific fields. */
-export type InterceptorNextOverrides = Partial<InterceptorBaseContext> & Record<string, unknown>;
+/**
+ * Overrides passable to `next()`. Provides autocomplete for common fields; accepts any phase-specific fields.
+ * With `TProvides` (from `defineInterceptor(meta).provides<T>()`), the `context` passed is checked against it.
+ */
+export type InterceptorNextOverrides<TProvides = unknown> = Partial<Omit<InterceptorBaseContext, 'context'>> & {
+  context?: unknown extends TProvides ? object : Partial<TProvides> & object;
+} & Record<string, unknown>;
 
 /**
  * A phase handler function for the interceptor middleware chain.
@@ -173,9 +178,9 @@ export type InterceptorNextOverrides = Partial<InterceptorBaseContext> & Record<
  * - `TReturn` — the type the handler itself returns. Defaults to `TNextResult` but can be wider,
  *   allowing interceptors to transform or replace the result (e.g., error-recovery interceptors returning a different type).
  */
-type InterceptorPhaseHandler<TCtx, TNextResult, TReturn = TNextResult> = (
+type InterceptorPhaseHandler<TCtx, TNextResult, TReturn = TNextResult, TProvides = unknown> = (
   ctx: TCtx,
-  next: (overrides?: InterceptorNextOverrides) => TNextResult | Promise<TNextResult>,
+  next: (overrides?: InterceptorNextOverrides<TProvides>) => TNextResult | Promise<TNextResult>,
 ) => TReturn | Promise<TReturn>;
 
 // ---------------------------------------------------------------------------
@@ -265,45 +270,56 @@ export type PadroneExtraCommand = {
  * - `TArgs` — the validated arguments type (output of the args schema).
  * - `TResult` — the command's return type.
  */
-export type InterceptorPhases<TArgs = unknown, TResult = unknown, TContext = object> = {
+export type InterceptorPhases<TArgs = unknown, TResult = unknown, TContext = object, TProvides = unknown> = {
   /**
    * Runs before the pipeline (parse → validate → execute). `next()` proceeds to the pipeline.
    * Root interceptors only. Use for startup tasks like telemetry, update checks, or global config loading.
    */
-  start?: InterceptorPhaseHandler<InterceptorStartContext<TContext>, unknown>;
+  start?: InterceptorPhaseHandler<InterceptorStartContext<TContext>, unknown, unknown, TProvides>;
   /** Intercepts command routing and raw argument extraction. */
-  parse?: InterceptorPhaseHandler<InterceptorParseContext<TContext>, InterceptorParseResult>;
+  parse?: InterceptorPhaseHandler<InterceptorParseContext<TContext>, InterceptorParseResult, InterceptorParseResult, TProvides>;
   /**
    * Runs after the target command is resolved (post-parse), before validation.
    * Use for per-command setup: authorization, resource loading, logging, etc.
    * Root and command-level interceptors both participate.
    */
-  route?: InterceptorPhaseHandler<InterceptorRouteContext<TContext>, void>;
+  route?: InterceptorPhaseHandler<InterceptorRouteContext<TContext>, void, void, TProvides>;
   /** Intercepts argument preprocessing and schema validation. Interactive prompting is handled by the interactive extension. */
-  validate?: InterceptorPhaseHandler<InterceptorValidateContext<TContext>, InterceptorValidateResult<TArgs>, InterceptorValidateResult>;
+  validate?: InterceptorPhaseHandler<
+    InterceptorValidateContext<TContext>,
+    InterceptorValidateResult<TArgs>,
+    InterceptorValidateResult,
+    TProvides
+  >;
   /** Intercepts handler execution. */
   execute?: InterceptorPhaseHandler<
     InterceptorExecuteContext<TArgs, TContext>,
     InterceptorExecuteResult<TResult>,
-    InterceptorExecuteResult
+    InterceptorExecuteResult,
+    TProvides
   >;
   /**
    * Called when the pipeline throws an error. `next()` passes to the next error handler
    * (innermost returns `{ error }` unchanged). Return `{ result }` without `error` to suppress.
    */
-  error?: InterceptorPhaseHandler<InterceptorErrorContext<TContext>, InterceptorErrorResult<TResult>, InterceptorErrorResult>;
+  error?: InterceptorPhaseHandler<InterceptorErrorContext<TContext>, InterceptorErrorResult<TResult>, InterceptorErrorResult, TProvides>;
   /**
    * Always runs after the pipeline completes (success or failure). `next()` calls the next shutdown handler.
    * Use for cleanup: closing connections, flushing logs, etc.
    */
-  shutdown?: InterceptorPhaseHandler<InterceptorShutdownContext<TResult, TContext>, void>;
+  shutdown?: InterceptorPhaseHandler<InterceptorShutdownContext<TResult, TContext>, void, void, TProvides>;
 };
 
 /**
  * Factory function that creates phase handlers for an interceptor.
  * Called once per command execution — the closure provides typed, scoped cross-phase state across phases.
  */
-export type InterceptorFactory<TArgs = unknown, TResult = unknown, TContext = object> = () => InterceptorPhases<TArgs, TResult, TContext>;
+export type InterceptorFactory<TArgs = unknown, TResult = unknown, TContext = object, TProvides = unknown> = () => InterceptorPhases<
+  TArgs,
+  TResult,
+  TContext,
+  TProvides
+>;
 
 /**
  * A self-contained interceptor value: a factory function with static metadata as own properties.
@@ -390,18 +406,27 @@ export type InterceptorRequiresError = {
 
 /**
  * Builder returned by `defineInterceptor(meta)` (single-arg form).
- * Call `.requires<T>()` to declare (and type) the context dependency, then `.factory()` to provide the phase handlers.
+ * Call `.requires<T>()` to declare (and type) the context dependency, `.provides<T>()` to declare the context it adds
+ * (checked against what its handlers pass to `next({ context })`), then `.factory()` to provide the phase handlers.
  */
-export type InterceptorDefBuilder<TContext = unknown, TBrand = unknown> = {
+export type InterceptorDefBuilder<TContext = unknown, TBrand = unknown, TProvides = unknown> = {
   /**
    * Declare the context type this interceptor requires. Sets `TContext` for phase handler typing.
    * Interceptor ids passed here are checked at runtime: `.requires<{ logger: PadroneLogger }>('padrone:logger')`.
    */
-  requires: <TRequires>(...ids: string[]) => InterceptorDefBuilder<TRequires, InterceptorRequiresBrand<TRequires>>;
+  requires: <TRequires>(...ids: string[]) => InterceptorDefBuilder<TRequires, InterceptorRequiresBrand<TRequires>, TProvides>;
+  /**
+   * Declare the context type this interceptor provides: commands it's registered on see it in `ctx.context`,
+   * and the `context` its handlers pass to `next()` must match it.
+   */
+  provides: <TNewProvides>() => InterceptorDefBuilder<TContext, TBrand, TNewProvides>;
   /** Provide the interceptor factory. Phase handlers receive the typed `TContext` from `.requires()`. */
   factory: <TArgs = unknown, TResult = unknown>(
-    factory: InterceptorFactory<TArgs, TResult, TContext>,
-  ) => PadroneInterceptorFn<TArgs, TResult, TContext> & TBrand;
+    factory: InterceptorFactory<TArgs, TResult, TContext, TProvides>,
+  ) => (unknown extends TProvides
+    ? PadroneInterceptorFn<TArgs, TResult, TContext>
+    : PadroneContextInterceptor<TProvides, TArgs, TResult, TContext>) &
+    TBrand;
 };
 
 /**

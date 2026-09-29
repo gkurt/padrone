@@ -73,11 +73,15 @@ export type TableOptions = {
   sanitize?: boolean;
 };
 
-/** A cell's text: nothing for `null`/`undefined`, dates as ISO strings, objects as JSON. */
+const isPlainCellValue = (value: unknown): boolean =>
+  value === null || value instanceof Date || (typeof value !== 'object' && typeof value !== 'function');
+
+/** A cell's text: nothing for `null`/`undefined`, dates as ISO strings, lists of plain values joined by `, `, other objects as JSON. */
 export function stringifyCell(value: unknown): string {
   if (value === undefined || value === null) return '';
   if (typeof value === 'string') return value;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? String(value) : value.toISOString();
+  if (Array.isArray(value) && value.every(isPlainCellValue)) return value.map(stringifyCell).join(', ');
   if (typeof value === 'object') return safeJsonStringify(value) ?? String(value);
   return String(value);
 }

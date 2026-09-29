@@ -7,6 +7,7 @@ import {
   suggestSimilar,
 } from '../core/commands.ts';
 import { createTerminalReplSession } from '../core/default-runtime.ts';
+import { formatErrorText } from '../core/errors.ts';
 import { REPL_SIGINT, type ReplSessionConfig } from '../core/runtime.ts';
 import { formatIssueMessages } from '../core/validate.ts';
 import { shouldUseAnsi } from '../output/styling.ts';
@@ -309,7 +310,7 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
           };
           const result = await evalCommand(scopedInput, replEvalPrefs);
           if (result.error) {
-            const msg = result.error instanceof Error ? result.error.message : String(result.error);
+            const msg = formatErrorText(result.error);
             runtime.error(prefixLines ? prefixLines(msg) : msg);
           } else if (result.argsResult?.issues) {
             const msg = `Validation error:\n${formatIssueMessages(result.argsResult.issues)}`;
@@ -317,7 +318,7 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
           }
           yield result as any;
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+          const msg = formatErrorText(err);
           runtime.error(prefixLines ? prefixLines(msg) : msg);
         } finally {
           emitSpacing(spacingAfter);

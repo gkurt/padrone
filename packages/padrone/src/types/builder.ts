@@ -81,11 +81,47 @@ type ResolvedAliases<
     : []
   : TAliases;
 
+/** The commands after `.command()` adds (or replaces) `TNameNested`, keeping an overridden command's aliases unless new ones are given. */
+type AddCommand<
+  TCommands extends [...AnyPadroneCommand[]],
+  TNameNested extends string,
+  TAliases extends string[],
+  TCommand extends AnyPadroneCommand,
+> = TCommands extends []
+  ? [WithAliases<TCommand, TAliases>]
+  : AnyPadroneCommand[] extends TCommands
+    ? [WithAliases<TCommand, TAliases>]
+    : ReplaceOrAppendCommand<TCommands, TNameNested, WithAliases<TCommand, ResolvedAliases<TCommands, TNameNested, TAliases>>>;
+
 /**
- * When TContext is `unknown` (no `.context()` called), context param is optional.
- * Otherwise it is required.
+ * A command built without a known name (by `defineCommand()`, whose builder is typed with `string` names)
+ * takes the name and parent path it's registered under, so `run()`, `api()` and `find()` can look it up.
  */
-type ContextParam<TContext> = unknown extends TContext ? { context?: TContext } : { context: TContext };
+type NamedSubcommand<
+  TCommand extends AnyPadroneCommand,
+  TNameNested extends string,
+  TParentPath extends string,
+> = string extends TCommand['~types']['name']
+  ? PadroneCommand<
+      TNameNested,
+      TParentPath,
+      TCommand['~types']['argsSchema'],
+      TCommand['~types']['result'],
+      RepathCommands<TCommand['~types']['commands'], FullCommandName<TNameNested, TParentPath>>,
+      TCommand['~types']['aliases'],
+      TCommand['~types']['async'],
+      TCommand['~types']['context'],
+      TCommand['~types']['contextProvided']
+    >
+  : TCommand;
+
+/**
+ * The trailing preferences parameter of `cli()`, `eval()`, `run()`, `repl()` and `api()`: optional, unless the program
+ * declares a context (`.context<T>()`) that the caller has to pass.
+ */
+type PrefsParam<TContext, TPrefs> = unknown extends TContext
+  ? [prefs?: TPrefs & { context?: TContext }]
+  : [prefs: TPrefs & { context: TContext }];
 
 /** Options for the `mount()` method. */
 type MountOptions<TContext, TNewContext> = { context: (ctx: TContext) => TNewContext };
@@ -246,26 +282,141 @@ export type PadroneBuilderMethods<
   /** The return type for builder methods - either PadroneBuilder or PadroneProgram */
   TReturn extends 'builder' | 'program',
 > = {
-  /** Apply a build-time extension that transforms this builder/program. @category Builder */
-  extend: <TResult extends CommandTypesBase>(
-    extension: PadroneExtension<
-      BuilderOrProgram<
-        TReturn,
-        TProgramName,
-        TName,
-        TParentName,
-        TArgs,
-        TRes,
-        TCommands,
-        TParentArgs,
-        TAsync,
-        TContext,
-        TContextProvided,
-        TGlobals
+  /**
+   * Apply build-time extensions that transform this builder/program, in order: `.extend(padroneJson(), padroneFormat())`.
+   * @category Builder
+   */
+  extend: {
+    <R1 extends CommandTypesBase>(
+      e1: PadroneExtension<
+        BuilderOrProgram<
+          TReturn,
+          TProgramName,
+          TName,
+          TParentName,
+          TArgs,
+          TRes,
+          TCommands,
+          TParentArgs,
+          TAsync,
+          TContext,
+          TContextProvided,
+          TGlobals
+        >,
+        R1
       >,
-      TResult
-    >,
-  ) => TResult;
+    ): R1;
+    <R1 extends CommandTypesBase, R2 extends CommandTypesBase>(
+      e1: PadroneExtension<
+        BuilderOrProgram<
+          TReturn,
+          TProgramName,
+          TName,
+          TParentName,
+          TArgs,
+          TRes,
+          TCommands,
+          TParentArgs,
+          TAsync,
+          TContext,
+          TContextProvided,
+          TGlobals
+        >,
+        R1
+      >,
+      e2: PadroneExtension<R1, R2>,
+    ): R2;
+    <R1 extends CommandTypesBase, R2 extends CommandTypesBase, R3 extends CommandTypesBase>(
+      e1: PadroneExtension<
+        BuilderOrProgram<
+          TReturn,
+          TProgramName,
+          TName,
+          TParentName,
+          TArgs,
+          TRes,
+          TCommands,
+          TParentArgs,
+          TAsync,
+          TContext,
+          TContextProvided,
+          TGlobals
+        >,
+        R1
+      >,
+      e2: PadroneExtension<R1, R2>,
+      e3: PadroneExtension<R2, R3>,
+    ): R3;
+    <R1 extends CommandTypesBase, R2 extends CommandTypesBase, R3 extends CommandTypesBase, R4 extends CommandTypesBase>(
+      e1: PadroneExtension<
+        BuilderOrProgram<
+          TReturn,
+          TProgramName,
+          TName,
+          TParentName,
+          TArgs,
+          TRes,
+          TCommands,
+          TParentArgs,
+          TAsync,
+          TContext,
+          TContextProvided,
+          TGlobals
+        >,
+        R1
+      >,
+      e2: PadroneExtension<R1, R2>,
+      e3: PadroneExtension<R2, R3>,
+      e4: PadroneExtension<R3, R4>,
+    ): R4;
+    <
+      R1 extends CommandTypesBase,
+      R2 extends CommandTypesBase,
+      R3 extends CommandTypesBase,
+      R4 extends CommandTypesBase,
+      R5 extends CommandTypesBase,
+    >(
+      e1: PadroneExtension<
+        BuilderOrProgram<
+          TReturn,
+          TProgramName,
+          TName,
+          TParentName,
+          TArgs,
+          TRes,
+          TCommands,
+          TParentArgs,
+          TAsync,
+          TContext,
+          TContextProvided,
+          TGlobals
+        >,
+        R1
+      >,
+      e2: PadroneExtension<R1, R2>,
+      e3: PadroneExtension<R2, R3>,
+      e4: PadroneExtension<R3, R4>,
+      e5: PadroneExtension<R4, R5>,
+    ): R5;
+  };
+
+  /** Set the description shown in help (shorthand for `.configure({ description })`). @category Builder */
+  describe: (
+    description: string,
+  ) => BuilderOrProgram<
+    TReturn,
+    TProgramName,
+    TName,
+    TParentName,
+    TArgs,
+    TRes,
+    TCommands,
+    TParentArgs,
+    TAsync,
+    TContext,
+    TContextProvided,
+    TGlobals
+  >;
 
   /** Register a runtime interceptor for lifecycle phases (parse, validate, execute, etc.). @category Builder */
   intercept: {
@@ -403,6 +554,8 @@ export type PadroneBuilderMethods<
       TContextProvided,
       TGlobals
     >;
+    // A transform of no context (e.g. `.context(() => ({ db }))` on the program) provides the context itself:
+    // callers don't pass one, so it's typed as provided context rather than the context callers must give.
     <TNewContext>(
       transform: (ctx: TContext) => TNewContext,
     ): BuilderOrProgram<
@@ -415,8 +568,8 @@ export type PadroneBuilderMethods<
       TCommands,
       TParentArgs,
       TAsync,
-      TNewContext,
-      TContextProvided,
+      unknown extends TContext ? unknown : TNewContext,
+      unknown extends TContext ? TContextProvided & TNewContext : TContextProvided,
       TGlobals
     >;
   };
@@ -669,15 +822,12 @@ export type PadroneBuilderMethods<
       TParentName,
       TArgs,
       TRes,
-      TCommands extends []
-        ? [WithAliases<TBuilder['~types']['command'], TAliases>]
-        : AnyPadroneCommand[] extends TCommands
-          ? [WithAliases<TBuilder['~types']['command'], TAliases>]
-          : ReplaceOrAppendCommand<
-              TCommands,
-              TNameNested,
-              WithAliases<TBuilder['~types']['command'], ResolvedAliases<TCommands, TNameNested, TAliases>>
-            >,
+      AddCommand<
+        TCommands,
+        TNameNested,
+        TAliases,
+        NamedSubcommand<TBuilder['~types']['command'], TNameNested, FullCommandName<TName, TParentName>>
+      >,
       TParentArgs,
       TAsync,
       TContext,
@@ -696,15 +846,12 @@ export type PadroneBuilderMethods<
           TParentName,
           TArgs,
           TRes,
-          TCommands extends []
-            ? [WithAliases<TBuilder['~types']['command'], TAliases>]
-            : AnyPadroneCommand[] extends TCommands
-              ? [WithAliases<TBuilder['~types']['command'], TAliases>]
-              : ReplaceOrAppendCommand<
-                  TCommands,
-                  TNameNested,
-                  WithAliases<TBuilder['~types']['command'], ResolvedAliases<TCommands, TNameNested, TAliases>>
-                >,
+          AddCommand<
+            TCommands,
+            TNameNested,
+            TAliases,
+            NamedSubcommand<TBuilder['~types']['command'], TNameNested, FullCommandName<TName, TParentName>>
+          >,
           TParentArgs,
           TAsync,
           TContext,
@@ -725,15 +872,12 @@ export type PadroneBuilderMethods<
       TParentName,
       TArgs,
       TRes,
-      TCommands extends []
-        ? [WithAliases<TBuilder['~types']['command'], TAliases>]
-        : AnyPadroneCommand[] extends TCommands
-          ? [WithAliases<TBuilder['~types']['command'], TAliases>]
-          : ReplaceOrAppendCommand<
-              TCommands,
-              TNameNested,
-              WithAliases<TBuilder['~types']['command'], ResolvedAliases<TCommands, TNameNested, TAliases>>
-            >,
+      AddCommand<
+        TCommands,
+        TNameNested,
+        TAliases,
+        NamedSubcommand<TBuilder['~types']['command'], TNameNested, FullCommandName<TName, TParentName>>
+      >,
       TParentArgs,
       TAsync,
       TContext,
@@ -978,7 +1122,7 @@ export type PadroneProgram<
     args: NoInfer<
       GetArguments<'in', PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>
     >,
-    prefs?: ContextParam<TContext> & { signal?: AbortSignal },
+    ...prefs: PrefsParam<TContext, { signal?: AbortSignal }>
   ) => PadroneCommandResult<PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>;
 
   /**
@@ -993,7 +1137,7 @@ export type PadroneProgram<
    */
   eval: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], true, true>>(
     input: TCommand | SafeString | readonly string[],
-    prefs?: PadroneEvalPreferences & ContextParam<TContext>,
+    ...prefs: PrefsParam<TContext, PadroneEvalPreferences>
   ) => MaybePromiseCommandResult<
     PickCommandByPossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>,
     PickCommandByPossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>['~types']['async']
@@ -1001,7 +1145,7 @@ export type PadroneProgram<
 
   /** Parse and execute from `process.argv` through the full interceptor pipeline. @category Execution */
   cli: (
-    prefs?: PadroneCliPreferences & ContextParam<TContext>,
+    ...prefs: PrefsParam<TContext, PadroneCliPreferences>
   ) => MaybePromiseCommandResult<FlattenCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>, TAsync>;
 
   /** Parse and validate input (a string, or argv as an array) without executing the action. @category Execution */
@@ -1018,7 +1162,7 @@ export type PadroneProgram<
   >(
     command?: TCommand | SafeString,
     args?: GetArguments<
-      'out',
+      'in',
       PickCommandByPossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>
     >,
   ) => string;
@@ -1028,14 +1172,21 @@ export type PadroneProgram<
     command: TFind | SafeString,
   ) => PickCommandByPossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TFind> | undefined;
 
-  /** Get a structured API representation of all commands. @category Utility */
-  api: () => PadroneAPI<PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>>;
+  /**
+   * Commands as typed functions (`api().db.migrate({ ... })`): each validates its args (applying defaults), runs the
+   * action and returns its result, and throws on invalid args or a failing action. Pass `context` when the program declares one.
+   * @category Utility
+   */
+  api: (
+    ...prefs: PrefsParam<TContext, { signal?: AbortSignal }>
+  ) => PadroneAPI<PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>>;
 
   /** Start an interactive REPL session. @category Execution */
   repl: (
-    options?: PadroneReplPreferences<PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>> & {
-      context?: TContext;
-    },
+    ...options: PrefsParam<
+      TContext,
+      PadroneReplPreferences<PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>>
+    >
   ) => AsyncIterable<PadroneCommandResult<FlattenCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>>> & {
     drain: () => Promise<
       PadroneDrainResult<
@@ -1132,24 +1283,35 @@ export type DefineCommand<TContext = unknown, TParentArgs extends PadroneSchema 
   builder: PadroneBuilder<string, string, string, PadroneSchema<void>, void, [], TParentArgs, false, TContext, DefineCommandContext>,
 ) => CommandTypesBase;
 
+/** A command builder callback typed for `defineCommand()`. */
+type DefineCommandFn<TContext, TContextProvided, TOut extends CommandTypesBase> = (
+  builder: PadroneBuilder<string, string, string, PadroneSchema<void>, void, [], any, false, TContext, TContextProvided>,
+) => TOut;
+
 /**
- * Builder returned by `defineCommand()` (no-arg form).
- * Call `.requires<T>()` to declare context dependencies, then `.command()` to provide the builder callback.
+ * Builder returned by `defineCommand()` (no-arg form). Call it with the command builder callback, after
+ * `.requires<T>()` to declare context that interceptors must provide.
  *
  * @example
  * ```ts
+ * const listCommand = defineCommand<{ db: Database }>()((c) => c.action((_args, ctx) => ctx.context.db.list()));
+ *
  * const adminCommand = defineCommand()
  *   .requires<{ adminDb: AdminDB }>()
  *   .define((c) => c.action((_args, ctx) => ctx.context.adminDb.query(...)));
  * ```
  */
-export type DefineCommandBuilder<TContextProvided = DefineCommandContext, TBrand = unknown> = {
-  /** Declare context types this command requires. Purely type-level — no runtime effect. */
-  requires: <TRequires>() => DefineCommandBuilder<DefineCommandContext & TRequires, { '~contextRequires': (ctx: TRequires) => void }>;
+export type DefineCommandBuilder<TContextProvided = DefineCommandContext, TBrand = unknown, TContext = unknown> = {
   /** Provide the command builder callback. */
-  define: <TContext = unknown, TOut extends CommandTypesBase = CommandTypesBase>(
-    fn: (builder: PadroneBuilder<string, string, string, PadroneSchema<void>, void, [], any, false, TContext, TContextProvided>) => TOut,
-  ) => typeof fn & TBrand;
+  <TOut extends CommandTypesBase>(
+    fn: DefineCommandFn<TContext, TContextProvided, TOut>,
+  ): DefineCommandFn<TContext, TContextProvided, TOut> & TBrand;
+  /** Declare context types this command requires. Purely type-level — no runtime effect. */
+  requires: <TRequires>() => DefineCommandBuilder<TContextProvided & TRequires, { '~contextRequires': (ctx: TRequires) => void }, TContext>;
+  /** Provide the command builder callback (same as calling the builder). */
+  define: <TOut extends CommandTypesBase>(
+    fn: DefineCommandFn<TContext, TContextProvided, TOut>,
+  ) => DefineCommandFn<TContext, TContextProvided, TOut> & TBrand;
 };
 
 type DefaultArgs = Record<string, unknown> | void;

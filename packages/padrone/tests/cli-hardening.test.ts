@@ -481,8 +481,8 @@ describe('padroneEnv vars', () => {
 
   it('shows the variables in help', () => {
     const help = varsProgram({}).help('serve', { format: 'text' });
-    expect(help).toContain('Env: APP_PORT');
-    expect(help).toContain('Env: API_TOKEN, TOKEN');
+    expect(help).toContain('(env: APP_PORT)');
+    expect(help).toContain('(env: API_TOKEN, TOKEN)');
     const info = JSON.parse(varsProgram({}).help('serve', { format: 'json' })) as { arguments: { name: string; env?: unknown }[] };
     expect(info.arguments.find((a) => a.name === 'port')?.env).toBe('APP_PORT');
   });

@@ -1,6 +1,6 @@
 import type {
   AnyPadroneCommand,
-  AnyPadroneProgram,
+  CommandTypesBase,
   PadroneCommand,
   PadroneContextInterceptor,
   PadroneInterceptorFn,
@@ -81,10 +81,13 @@ export type InferInterceptorRequires<T extends PadroneInterceptorFn & { '~contex
  * ```
  */
 export type InferCommand<
-  T extends AnyPadroneCommand | AnyPadroneProgram,
-  TPath extends PossibleCommands<T extends AnyPadroneCommand ? [T] : T['~types']['commands'], true, true>,
-> = T extends AnyPadroneProgram
-  ? PickCommandByName<[PadroneCommand<'', '', any, any, T['~types']['commands']>], TPath>
+  T extends AnyPadroneCommand | CommandTypesBase,
+  TPath extends PossibleCommands<InferCommandTree<T>, true, true>,
+> = PickCommandByName<InferCommandTree<T>, Extract<TPath, string | AnyPadroneCommand>>;
+
+/** The command tree `InferCommand` looks paths up in: a program's (or builder's) commands under an unnamed root, or the command itself. */
+type InferCommandTree<T> = T extends { '~types': { programName: string; commands: infer C extends AnyPadroneCommand[] } }
+  ? [PadroneCommand<'', '', any, any, C>]
   : T extends AnyPadroneCommand
-    ? PickCommandByName<[T], TPath>
+    ? [T]
     : never;

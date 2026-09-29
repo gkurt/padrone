@@ -103,7 +103,7 @@ describe('sources of nested values in validation errors', () => {
       .runtime({ ...quiet, env: () => ({ APP_DB__PORT: 'x', APP_DB__HOST: 'h' }) })
       .extend(padroneEnv({ prefix: 'APP' }))
       .command('serve', (c) => c.arguments(schema).action((args) => args));
-    expect(issueMessages(await program.eval('serve'))).toEqual(['Invalid input: expected number, received string (from APP_DB__PORT)']);
+    expect(issueMessages(await program.eval('serve'))).toEqual(['Expected number, got "x" (from APP_DB__PORT)']);
   });
 
   it('name the merged config file that sets the value', async () => {
@@ -113,9 +113,7 @@ describe('sources of nested values in validation errors', () => {
       .runtime({ ...quiet, env: () => ({}) })
       .extend(padroneConfig({ files: ['app.json'], searchParents: true, merge: true }))
       .command('serve', (c) => c.arguments(schema).action((args) => args));
-    expect(issueMessages(await program.eval('serve'))).toEqual([
-      `Invalid input: expected number, received string (from ${path.join(tempDir, 'app.json')})`,
-    ]);
+    expect(issueMessages(await program.eval('serve'))).toEqual([`Expected number, got "x" (from ${path.join(tempDir, 'app.json')})`]);
   });
 });
 

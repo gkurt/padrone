@@ -1,4 +1,4 @@
-import { ValidationError } from '../core/errors.ts';
+import { formatErrorText, ValidationError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { isAsyncIterator, isIterator } from '../core/results.ts';
 import type { OutputConfig } from '../output/output-indicator.ts';
@@ -116,7 +116,7 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
         const showStack = errorStack ?? isDebugEnv(ctx.runtime.env());
         // Under JSON output (e.g. `--json`), errors go to stdout as JSON, like results
         if (ctx.runtime.format === 'json') ctx.runtime.output(safeJsonStringify(toErrorJson(er.error, showStack), 2));
-        else ctx.runtime.error(showStack ? formatErrorStack(er.error) : er.error instanceof Error ? er.error.message : String(er.error));
+        else ctx.runtime.error(showStack ? formatErrorStack(er.error) : formatErrorText(er.error));
         markErrorReported(er.error);
         return er;
       };
@@ -144,8 +144,9 @@ function createAutoOutputInterceptor(outputConfig?: OutputConfig, errorOutput?: 
         const autoOutput = (value: unknown): unknown => {
           if (value == null || indicator.called) return value;
 
-          // Serve, MCP and tool calls return the result through their transport: collect streams without printing
-          if (isRemoteCaller(ctx.caller)) return outputAndCollect(value, () => {});
+          // Serve, MCP and tool calls return the result through their transport, and `run()` / `api()` to their caller:
+          // collect streams without printing
+          if (isRemoteCaller(ctx.caller) || ctx.caller === 'run') return outputAndCollect(value, () => {});
 
           const json = ctx.runtime.format === 'json' && TERMINAL_CALLERS.has(ctx.caller);
 

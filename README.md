@@ -71,8 +71,8 @@ myapp greet John Jane -p Mr.
 // Multiple ways to run commands
 program.cli();                                              // from process.argv
 program.eval('greet John --prefix Mr.');                    // from a string
-program.run('greet', { names: ['John'], prefix: 'Mr.' });  // typed args
-program.api().greet({ names: ['John'], prefix: 'Mr.' });   // as a function
+program.run('greet', { names: ['John'], prefix: 'Mr.' });  // typed args, schema defaults applied
+program.api().greet({ names: ['John'], prefix: 'Mr.' });   // as a function (returns the result, throws on errors)
 
 // Parse without executing
 const { args } = program.parse('greet John --prefix Mr.');
@@ -126,7 +126,8 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.action(handler)` | Set handler `(args, ctx, base?) => result` |
 | `.dryRun(handler)` | Add `--dry-run` / `-n`: runs `handler` instead of the action and prints what would change |
 | `.hook('preAction' \| 'postAction', handler)` | Run code before / after the action of the command and all its subcommands (ancestors' pre-hooks first, post-hooks last) |
-| `.command(name, builder)` | Add subcommand (name or `[name, ...aliases]`) |
+| `.command(name, builder)` | Add subcommand (name or `[name, ...aliases]`); `defineCommand((c) => ...)` types a builder kept in its own file (`defineCommand<Context>()((c) => ...)` with the program's context) |
+| `.describe(text)` | Set the description shown in help (shorthand for `.configure({ description })`) |
 | `.context(transform?)` | Define typed context or transform inherited context |
 | `.mount(name, program, options?)` | Mount another program as subcommand tree |
 | `.configure(config)` | Set title, description, version, help customization (`help: { usage, before, after }` or `(info, ctx) => …`), etc. |
@@ -139,7 +140,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.extend(padroneConfirm())` | Confirm `mutation: true` commands (or `.configure({ confirm })`), skipped with `--yes` or `<PROGRAM>_YES=1`; `nonInteractive` decides without a terminal (extension) |
 | `.extend(padroneCredentials())` | Store secrets in the OS keychain (macOS `security`, Linux `secret-tool`) or a `0600` file: `ctx.context.credentials.get/set/delete` (extension) |
 | `.intercept(interceptor)` | Register middleware interceptor (use `defineInterceptor()`) |
-| `.extend(extension)` | Apply a build-time extension (bundle of config, commands, interceptors) |
+| `.extend(...extensions)` | Apply build-time extensions in order (bundles of config, commands, interceptors): `.extend(padroneJson(), padroneFormat())` |
 | `.runtime(runtime)` | Custom I/O (for non-terminal use) |
 | `.extend(padroneUpdateCheck(config?))` | Background version check (extension) |
 | `.extend(padroneUpgrade(options?))` | `upgrade` self-update command (extension) |
@@ -155,9 +156,9 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 |--------|-------------|
 | `.cli(prefs?)` | Entry point — parses `process.argv`, throws on errors. Pass `context` in prefs. |
 | `.eval(input, prefs?)` | Parse + validate + execute string, returns errors softly. Pass `context` in prefs. |
-| `.run(command, args, prefs?)` | Run by name with typed args (no validation). Pass `context` in prefs. |
+| `.run(command, args, prefs?)` | Run by name with typed args: checked against the schema (defaults applied), without the parse/validate phases or printing. Pass `context` in prefs (required when the program declares one). |
 | `.parse(input?)` | Parse without executing |
-| `.api()` | Generate typed function API |
+| `.api(prefs?)` | Commands as typed functions that return the result and throw on invalid args or a failing action |
 | `.repl(options?)` | Interactive REPL session |
 | `.help(command?, prefs?)` | Generate help (text, ansi, markdown, html, json) |
 | `.tool()` | Vercel AI SDK tool definition |
@@ -171,6 +172,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 
 | Field | Example | Purpose |
 |-------|---------|---------|
+| `description` | `'Output file'` | Help text (same as `.describe()`) |
 | `flags` | `'v'` | Single-char short flag (`-v`) |
 | `alias` | `'dry-run'` | Multi-char long alias (`--dry-run`) |
 | `negative` | `'remote'` | Custom negation keyword for booleans (disables `--no-`) |

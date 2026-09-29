@@ -67,7 +67,7 @@ describe('help', () => {
       c.arguments(z.object({ files: z.array(z.string()).default([]) }), { positional: ['...files'] }).action(() => {}),
     );
     const help = program.help('build', { format: 'text' });
-    expect(help).toContain('...files');
+    expect(help).toContain('files...');
     expect(help).not.toContain('(default: )');
   });
 });

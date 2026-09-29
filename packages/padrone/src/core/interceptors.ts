@@ -84,6 +84,13 @@ function buildInterceptorFn(meta: InterceptorMeta, factory: InterceptorFactory<a
  *       return next();
  *     },
  *   }));
+ * ``` *
+ * Chain `.provides<T>()` to add context: `next({ context })` is checked against it (`.provides<T>()` on a
+ * two-arg interceptor only declares the type):
+ * ```ts
+ * export const withClock = defineInterceptor({ name: 'clock' })
+ *   .provides<{ now: () => Date }>()
+ *   .factory(() => ({ start: (_ctx, next) => next({ context: { now: () => new Date() } }) }));
  * ```
  */
 export function defineInterceptor<TArgs = unknown, TResult = unknown>(
@@ -102,7 +109,8 @@ export function defineInterceptor(
       if (ids.length > 0) requires = [...(requires ?? []), ...ids];
       return builder as any;
     },
-    factory: (f) => buildInterceptorFn({ ...meta, requires }, f) as any,
+    provides: () => builder as any,
+    factory: (f) => buildInterceptorFn({ ...meta, requires }, f as InterceptorFactory<any, any, any>) as any,
   };
   return builder;
 }

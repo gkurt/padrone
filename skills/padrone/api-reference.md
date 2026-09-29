@@ -124,7 +124,7 @@ Defines the arguments schema for a command. Accepts any Standard Schema-compatib
 // Direct schema
 .arguments(z.object({
   name: z.string(),
-  count: z.coerce.number().default(1),
+  count: z.number().default(1), // command-line values are coerced to the schema type: no z.coerce needed
 }))
 
 // Function-based: extends the parent command's schema (define the parent's schema first for types)
@@ -197,6 +197,8 @@ Sets or transforms the typed context for this command. Context flows through the
 ```
 
 When used without arguments, `.context<T>()` only changes the TypeScript type. When called with a transform function, the function is applied at runtime when resolving context from root to the target command.
+
+A program's `.context<T>()` is context callers pass: `cli()`, `eval()`, `run()`, `repl()` and `api()` require `{ context }`. A transform of no context (`.context(() => ({ db }))` on the program) creates it, so callers pass none.
 
 ### `.action(handler?)`
 
@@ -279,6 +281,20 @@ Creates or extends a subcommand.
 )
 ```
 
+**Commands in their own files:** wrap the builder function in `defineCommand()`; the command keeps its full type and takes the name it's registered under (for `run()`, `api()`, `find()`):
+
+```ts
+export const remove = defineCommand((c) => c.arguments(z.object({ ids: z.array(z.number()) })).action((args) => args.ids));
+// With the program's context: type argument on defineCommand(), then call the result with the builder function
+export const list = defineCommand<{ db: Database }>()((c) => c.action((_args, ctx) => ctx.context.db.list()));
+// Context an interceptor must provide (a type error where the program doesn't provide it)
+export const audit = defineCommand().requires<{ logger: PadroneLogger }>().define((c) => c.action((_a, ctx) => ctx.context.logger.info('x')));
+
+createPadrone('app').context<{ db: Database }>().command(['remove', 'rm'], remove).command('list', list);
+```
+
+`defineCommand<Ctx>(fn)` is a type error (a type argument stops TypeScript from inferring the command): use `defineCommand<Ctx>()(fn)`.
+
 ### `.mount(name, program, options?)`
 
 Mounts an existing Padrone program as a subcommand tree.
@@ -334,9 +350,13 @@ Re-paths all nested commands. Drops the mounted program's version. Preserves int
 
 Registers an interceptor. See [Interceptor System](#interceptor-system).
 
-### `.extend(extension)`
+### `.extend(...extensions)`
 
-Applies a build-time extension. A `PadroneExtension` is a reusable bundle of configuration, commands, and interceptors.
+Applies build-time extensions, in order (`.extend(padroneJson(), padroneFormat())`, up to five per call). A `PadroneExtension` is a reusable bundle of configuration, commands, and interceptors.
+
+### `.describe(text)`
+
+Sets the command's description: shorthand for `.configure({ description: text })`.
 
 #### `padroneEnv(schema)` extension
 
@@ -353,7 +373,7 @@ import { createPadrone, padroneEnv } from 'padrone';
   host: e.MY_APP_HOST,
 }))))
 
-// Or map args to variables directly (coerced by the command schema, shown in help as `Env: …`)
+// Or map args to variables directly (coerced by the command schema, shown in help as `(env: …)`)
 .extend(padroneEnv({ vars: { port: 'MY_APP_PORT', host: ['MY_APP_HOST', 'HOST'] } }))
 
 // Or read every option from MY_APP_* variables (`dryRun` ← MY_APP_DRY_RUN, `db.host` ← MY_APP_DB__HOST), like yargs' .env('MY_APP')
@@ -547,7 +567,7 @@ if (result.argsResult?.issues) { /* validation failed */ }
 
 ### `.run(name, args, prefs?)`
 
-Execute a command by name with an args object. Always sync. No schema validation.
+Execute a command by name with an args object. The args are checked against the command's schema, which applies defaults and transforms (the parse and validate phases don't run: no env/config values). Invalid args come back in `argsResult.issues` without running the action; the result isn't printed. `prefs.context` is required when the program declares a context.
 
 ```ts
 const result = program.run('greet', { name: 'World' });
@@ -614,14 +634,15 @@ Returns the command object or `undefined`.
 const cmd = program.find('db migrate');
 ```
 
-### `.api()`
+### `.api(prefs?)`
 
-Type-safe programmatic API. Nested by command tree.
+Type-safe programmatic API. Nested by command tree. Each function runs the command like `run()` and returns the action's result; it throws a `ValidationError` for invalid args and rethrows what the action throws.
 
 ```ts
 const api = program.api();
 api.greet({ name: 'World' });
 api.db.migrate({ name: 'v1' });
+program.api({ context: { db } }).users.list({});
 ```
 
 ### `.tool(prefs?)`
@@ -696,13 +717,13 @@ const timer = defineInterceptor({ name: 'timer', order: 10 }, () => {
 const withDb = defineInterceptor({ name: 'with-db' })
   .provides<{ db: Database }>()
   .factory(() => ({
-    execute: (ctx, next) => next({ context: { ...ctx.context, db: createDb() } }),
+    execute: (ctx, next) => next({ context: { db: createDb() } }), // checked against { db: Database }
   }));
 ```
 
 **Metadata:** `name` (string), `order` (number, lower = outermost, default: 0), `id` (string, deduplication key — last wins), `disabled` (boolean), `callers` (callers it runs for, e.g. `LOCAL_CALLERS`/`REMOTE_CALLERS`; still counts for `requires`), `on` (event handlers keyed by event id), `extraCommands` (commands it runs that aren't in the tree, for help and completion).
 
-**Chaining:** `.provides<T>()` and `.requires<T>(...ids)` for typed context (ids are checked at runtime), `.factory(fn)` to set the factory, `.on(event, handler)` for a typed custom event handler. `.requires()` and `.on()` return a new interceptor (same id, meta and factory); the original is unchanged.
+**Chaining:** `.provides<T>()` (before `.factory()`, the `context` passed to `next()` is type-checked against `T`; on a two-arg interceptor it only declares the type) and `.requires<T>(...ids)` for typed context (ids are checked at runtime), `.factory(fn)` to set the factory, `.on(event, handler)` for a typed custom event handler. `.requires()` and `.on()` return a new interceptor (same id, meta and factory); the original is unchanged.
 
 ### Custom events
 

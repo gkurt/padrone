@@ -449,7 +449,7 @@ test.skip('Types - DefineCommand', () => {
   expectTypeOf(result2.result).toEqualTypeOf<string | undefined>();
 
   // defineCommand with context
-  const withHelperCtx = defineCommand<Ctx>((c) =>
+  const withHelperCtx = defineCommand<Ctx>()((c) =>
     c.arguments(z.object({ id: z.string() })).action((args, ctx) => ctx.context.db.find(args.id)),
   );
 

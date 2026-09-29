@@ -170,3 +170,12 @@ export function signalExitCode(signal: PadroneSignal): number {
   const codes: Record<string, number> = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
   return codes[signal] ?? 1;
 }
+
+/** An error as printed for the user: its message, followed by the `suggestions` the message doesn't already include. */
+export function formatErrorText(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const suggestions = (error as { suggestions?: unknown }).suggestions;
+  if (!Array.isArray(suggestions)) return error.message;
+  const missing = suggestions.filter((s): s is string => typeof s === 'string' && s !== '' && !error.message.includes(s));
+  return missing.length ? `${error.message}\n\n${missing.map((s) => `  ${s}`).join('\n')}` : error.message;
+}

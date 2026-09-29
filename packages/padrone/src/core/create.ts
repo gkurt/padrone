@@ -156,11 +156,14 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
   const programMethods = createProgramMethods(execCtx, evalCommand);
 
   const builder = {
-    extend(extension: (builder: any) => any) {
-      return extension(builder);
+    extend(...extensions: ((builder: any) => any)[]) {
+      return extensions.reduce((current, extension) => extension(current), builder);
     },
     configure(config) {
       return createPadroneBuilder({ ...existingCommand, ...config }) as any;
+    },
+    describe(description: string) {
+      return createPadroneBuilder({ ...existingCommand, description }) as any;
     },
     runtime(runtimeConfig) {
       return createPadroneBuilder({ ...existingCommand, runtime: { ...existingCommand.runtime, ...runtimeConfig } }) as any;
@@ -343,6 +346,13 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
  * );
  * ```
  *
+ * @example With the parent's context
+ * ```ts
+ * export const listCommand = defineCommand<{ db: Database }>()((c) =>
+ *   c.action((_args, ctx) => ctx.context.db.list())
+ * );
+ * ```
+ *
  * @example With required interceptor context
  * ```ts
  * export const adminCommand = defineCommand()
@@ -350,15 +360,18 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
  *   .define((c) => c.action((_args, ctx) => ctx.context.adminDb.query(...)));
  * ```
  */
-export function defineCommand<TContext = unknown, TOut extends CommandTypesBase = CommandTypesBase>(
-  fn: (builder: PadroneBuilder<string, string, string, PadroneSchema<void>, void, [], any, false, TContext, DefineCommandContext>) => TOut,
+export function defineCommand<TOut extends CommandTypesBase>(
+  fn: (builder: PadroneBuilder<string, string, string, PadroneSchema<void>, void, [], any, false, unknown, DefineCommandContext>) => TOut,
 ): typeof fn;
-export function defineCommand(): DefineCommandBuilder;
+export function defineCommand<TContext = unknown>(): DefineCommandBuilder<DefineCommandContext, unknown, TContext>;
+export function defineCommand<TContext>(
+  fn: 'Pass the context type with defineCommand<Context>()((c) => ...): an explicit type argument stops TypeScript from inferring the command',
+): never;
 export function defineCommand(fn?: any): any {
   if (fn) return fn;
-  const builder: DefineCommandBuilder = {
-    requires: () => builder as any,
+  const builder = Object.assign((f: any) => f, {
+    requires: () => builder,
     define: (f: any) => f,
-  };
+  }) as DefineCommandBuilder;
   return builder;
 }

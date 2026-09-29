@@ -1,6 +1,7 @@
 import { ActionError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { askRuntime, canPrompt, isPromptCancel } from '../feature/prompt.ts';
+import type { HelpArgumentInfo } from '../output/formatter.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase } from '../types/index.ts';
 import type { WithAsync } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
@@ -48,6 +49,20 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
   const when = options.when ?? ((command: AnyPadroneCommand) => !!command.mutation);
   const asks = (command: AnyPadroneCommand, args: unknown) =>
     command.confirm === undefined ? when(command, args) : command.confirm !== false;
+  // Help lists the flags on the commands that may ask (a `when` that needs the args counts as asking)
+  const mayAsk = (command: AnyPadroneCommand) => {
+    try {
+      return asks(command, undefined);
+    } catch {
+      return true;
+    }
+  };
+  const longFlags = confirmFlags.filter((flag) => flag.length > 1);
+  const shortFlags = confirmFlags.filter((flag) => flag.length === 1);
+  const helpOptions = (command: AnyPadroneCommand): HelpArgumentInfo[] =>
+    longFlags.length && mayAsk(command)
+      ? [{ name: longFlags[0]!, flags: shortFlags, type: 'boolean', optional: true, description: 'Run without asking for confirmation' }]
+      : [];
 
   return defineInterceptor(
     {
@@ -55,6 +70,7 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
       name: 'padrone:confirm',
       order: -998,
       options: Object.fromEntries(confirmFlags.map((flag) => [flag, 'flag' as const])),
+      helpOptions,
     },
     () => {
       let confirmed = false;
@@ -84,10 +100,7 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
             const flag = confirmFlags.find((f) => f.length > 1) ?? confirmFlags[0];
             const setEnv = envVar && `set ${envVar}=1`;
             const how = flag ? `pass ${flagDisplay(flag)}${setEnv ? ` (or ${setEnv})` : ''}` : setEnv;
-            throw new ActionError(`"${path}" needs confirmation${how ? `: ${how} to run it without a prompt` : ''}`, {
-              command: path,
-              suggestions: flag ? [`Add ${flagDisplay(flag)}`] : [],
-            });
+            throw new ActionError(`"${path}" needs confirmation${how ? `: ${how} to run it without a prompt` : ''}`, { command: path });
           }
 
           const own = command.confirm;

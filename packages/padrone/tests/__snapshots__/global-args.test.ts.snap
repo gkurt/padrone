@@ -4,8 +4,8 @@ exports[`globalArgs help snapshot 1`] = `
 "Usage: app deploy [command] <env> [options]
 
 Commands:
-  [default]  
-  status     
+  [default]
+  status
 
 Run "app deploy [command] --help" for more information on a command.
 

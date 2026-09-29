@@ -505,10 +505,7 @@ function describeIssues(
 export function validateCommandArgs(command: AnyPadroneCommand, preprocessedArgs: Record<string, unknown>) {
   const unknownArgs = checkUnknownArgs(command, preprocessedArgs);
   if (unknownArgs.length > 0) {
-    const issues: StandardSchemaV1.Issue[] = unknownArgs.map(({ key }) => ({
-      path: [key],
-      message: `Unknown option: "${key}"`,
-    }));
+    const issues: StandardSchemaV1.Issue[] = unknownArgs.map(({ key }) => ({ path: [key], message: unknownOptionMessage(key) }));
     return { args: undefined, argsResult: { issues } as any };
   }
 
@@ -548,9 +545,17 @@ export function formatIssueMessages(issues: readonly StandardSchemaV1.Issue[]): 
   return issues
     .map((i) => {
       const path = i.path?.map((segment) => (typeof segment === 'object' ? segment.key : segment)).join('.');
-      return path ? `  - ${path}: ${i.message}` : `  - ${i.message}`;
+      // A message that already names the option (`Unknown option "--limt"`) needs no `limt:` in front
+      const named =
+        path && [path, camelToKebab(path)].some((name) => name && i.message.includes(`"${name.length === 1 ? '-' : '--'}${name}"`));
+      return path && !named ? `  - ${path}: ${i.message}` : `  - ${i.message}`;
     })
     .join('\n');
+}
+
+/** The issue message for an option the command doesn't have: `Unknown option "--limt"`. */
+export function unknownOptionMessage(key: string): string {
+  return `Unknown option "${key.length === 1 ? '-' : '--'}${key}"`;
 }
 
 /**

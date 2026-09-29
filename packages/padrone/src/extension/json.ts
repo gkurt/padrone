@@ -184,7 +184,7 @@ function createJsonInterceptor(options: PadroneJsonOptions) {
   const helpOptions: HelpArgumentInfo[] = [
     {
       name: 'json',
-      ...(options.fields && { type: 'string', valueName: 'fields' }),
+      ...(options.fields && { type: 'string', valueName: 'fields', optionalValue: true }),
       optional: true,
       description: options.fields ? 'Print the result as JSON, only these comma-separated fields' : 'Print the result as JSON',
     },

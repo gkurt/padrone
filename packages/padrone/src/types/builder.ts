@@ -619,7 +619,7 @@ export type PadroneBuilderMethods<
       TContextProvided,
       TGlobals
     >;
-    <TNewArgs extends PadroneSchema = PadroneSchema<void>, TMeta extends GetArgsMeta<TNewArgs> = GetArgsMeta<TNewArgs>>(
+    <TNewArgs extends PadroneSchema = PadroneSchema<void>, TMeta extends GetArgsMeta<TNewArgs, TGlobals> = GetArgsMeta<TNewArgs, TGlobals>>(
       schema?: TNewArgs,
       meta?: TMeta,
     ): BuilderOrProgram<

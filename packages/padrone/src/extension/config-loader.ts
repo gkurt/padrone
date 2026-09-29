@@ -336,16 +336,19 @@ function sectionNames(command: AnyPadroneCommand): Set<string> {
 
 /**
  * A config's values for `command` with per-command sections: top-level values, overridden by the section of each command
- * on the way (`serve: { ... }`, `db: { migrate: { ... } }`). A key that names a subcommand is always its section, never a value.
+ * on the way (`serve: { ... }`, `db: { migrate: { ... } }`). A key that names a subcommand is its section, never a value,
+ * unless it's one of `options` (the command's option names, for `sections: 'auto'`).
  */
-export function applySections(data: ConfigData, command: AnyPadroneCommand): ConfigData {
+export function applySections(data: ConfigData, command: AnyPadroneCommand, options?: ReadonlySet<string>): ConfigData {
+  const isSection = (key: string, names: Set<string>) => names.has(key) && !options?.has(key);
   const without = (values: ConfigData, parent: AnyPadroneCommand) => {
     const names = sectionNames(parent);
-    return Object.fromEntries(Object.entries(values).filter(([key]) => !names.has(key) && !key.startsWith('$')));
+    return Object.fromEntries(Object.entries(values).filter(([key]) => !isSection(key, names) && !key.startsWith('$')));
   };
   let values = without(data, getRootCommand(command));
   let level: unknown = data;
   for (const current of commandChain(command)) {
+    if (options?.has(current.name)) break;
     level = isConfigObject(level) && Object.hasOwn(level, current.name) ? level[current.name] : undefined;
     if (!isConfigObject(level)) break;
     values = deepMerge(values, without(level, current));

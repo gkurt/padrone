@@ -838,7 +838,7 @@ describe('CLI', () => {
       const helpText = program.help('test');
 
       expect(helpText).toContain('--include');
-      expect(helpText).toContain('[string[]]');
+      expect(helpText).toContain('<string[]>');
     });
   });
 
@@ -1670,7 +1670,7 @@ describe('CLI', () => {
         );
 
       expect(program.eval('greet --version').result as unknown as string).toBe('5.0.0');
-      expect(program.eval('greet -v').argsResult?.issues?.[0]?.message).toBe('Unknown option: "v"');
+      expect(program.eval('greet -v').argsResult?.issues?.[0]?.message).toBe('Unknown option "-v"');
       // A command's own --version option wins
       expect(program.eval('build --version 2').result as unknown as string).toBe('build 2');
     });

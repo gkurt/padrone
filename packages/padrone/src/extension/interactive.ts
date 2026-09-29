@@ -9,6 +9,7 @@ import {
   checkUnknownArgs,
   getInterceptorOptionNames,
   getKnownOptionNames,
+  unknownOptionMessage,
   validateCommandArgs,
 } from '../core/validate.ts';
 import { promptInteractiveFields } from '../feature/interactive.ts';
@@ -64,10 +65,7 @@ const interactiveInterceptor = defineInterceptor(
       // Check for unknown args before prompting
       const unknowns = checkUnknownArgs(command, ownArgs);
       if (unknowns.length > 0) {
-        const issues: StandardSchemaV1.Issue[] = unknowns.map(({ key }) => ({
-          path: [key],
-          message: `Unknown option: "${key}"`,
-        }));
+        const issues: StandardSchemaV1.Issue[] = unknowns.map(({ key }) => ({ path: [key], message: unknownOptionMessage(key) }));
         return { args: undefined, argsResult: { issues } } as any;
       }
 

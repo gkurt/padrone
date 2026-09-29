@@ -73,7 +73,7 @@ describe('--config from remote callers', () => {
       for (const flag of [`--config=${script}`, '--config=other.json', '-c=other.json']) {
         const result = await program().eval(['greet', flag], { caller });
         expect(result.result).toBeUndefined();
-        expect(result.argsResult?.issues?.[0]?.message).toMatch(/^Unknown option: "c(onfig)?"$/);
+        expect(result.argsResult?.issues?.[0]?.message).toMatch(/^Unknown option "--?c(onfig)?"$/);
       }
     }
     const handler = createServeHandler((program() as any)[commandSymbol], program().eval.bind(program()) as any);

@@ -584,6 +584,8 @@ z.object({
 
 Help shows `(conflicts with --table)` and `(implies --no-color)`.
 
+In the `fields` of `.arguments(schema, meta)`, the options `conflicts`, `implies`, `requires`, `requiredIf` and `requiredUnless` name are type-checked against the schema's options and the global ones, so a typo (`conflicts: 'tabel'`) is a type error. In `.meta()` they're plain strings.
+
 ### Option groups
 
 `exactlyOne` and `atLeastOne` in the arguments meta name a group of options (by field name). Pass an array of arrays for several groups:

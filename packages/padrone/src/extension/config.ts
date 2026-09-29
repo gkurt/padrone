@@ -4,7 +4,7 @@ import { isBuiltinCommand } from '../core/commands.ts';
 import { ConfigError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { thenMaybe } from '../core/results.ts';
-import { formatIssueMessages } from '../core/validate.ts';
+import { formatIssueMessages, getKnownOptionNames } from '../core/validate.ts';
 import type { HelpArgumentInfo } from '../output/formatter.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, InterceptorValidateContext, PadroneSchema } from '../types/index.ts';
 import type { WithAsync } from '../util/type-utils.ts';
@@ -117,9 +117,11 @@ export type PadroneConfigOptions = {
   /**
    * Per-command sections, like viper and cobra: in `{ "port": 8080, "serve": { "port": 3000 }, "db": { "migrate": { ... } } }`
    * a key that names a subcommand is that command's section, and its values override the ones above it for that command
-   * (and its subcommands). With sections, such a key is never an option value. Defaults to `false`.
+   * (and its subcommands). With `true`, such a key is never an option value; with `'auto'` (the default), it's the value
+   * of the command's option of that name if it has one (`serve --db` reads `db` as a value), else a section. `false` reads
+   * no sections: every key is an option value.
    */
-  sections?: boolean;
+  sections?: boolean | 'auto';
   /** Also fill the options of built-in commands (`help`, `version`, `serve`, …). Defaults to `false`. */
   builtins?: boolean;
   /**
@@ -154,7 +156,7 @@ const disabledInterceptor = defineInterceptor(
  *   in a `package.json` key (`packageJson`) and in the user config directory (`xdg`)
  * - Layered configs: `merge: true` merges every config found, and `extends` keys pull in base configs
  * - Profiles (`profiles: true`): `--profile <name>` applies a config's `profiles.<name>` values
- * - Per-command sections (`sections: true`): `serve: { ... }` applies to `serve`
+ * - Per-command sections: `serve: { ... }` applies to `serve` (`sections: 'auto'` by default, `true` or `false`)
  * - A `config` command (`command: true`) to get, set, list and edit the user config file
  * - Optional schema validation and transformation of config data
  * - Directly accesses the file system (gracefully no-ops in non-CLI environments)
@@ -191,7 +193,7 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
   const packageJsonOption = options?.packageJson;
   const profiles = options?.profiles ? (options.profiles === true ? {} : options.profiles) : undefined;
   const profileFlag = profiles ? (profiles.flag ?? 'profile') : undefined;
-  const sections = !!options?.sections;
+  const sections = options?.sections ?? 'auto';
   const skips = (command: AnyPadroneCommand) => !options?.builtins && isBuiltinCommand(command);
   const envNameOption = options?.envName ?? ((env: Record<string, string | undefined>) => env.NODE_ENV);
 
@@ -331,7 +333,9 @@ export function padroneConfig(options?: PadroneConfigOptions): <T extends Comman
           const profiled = !!profileFlag && (!!loadedData || !!profile);
           const withProfile = profiled || loadedData ? applyOverrides(loadedData ?? {}, envName, profiled, profile) : undefined;
           if (!withProfile) return next();
-          const configData = sections ? applySections(withProfile, ctx.command) : withProfile;
+          const configData = sections
+            ? applySections(withProfile, ctx.command, sections === 'auto' ? new Set(getKnownOptionNames(ctx.command)) : undefined)
+            : withProfile;
           const selected = profile ?? (typeof loadedData?.profile === 'string' ? loadedData.profile : undefined);
           const fromFile = sourceOf(layers, ctx.command, selected, envName, explicitConfigPath);
 

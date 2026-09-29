@@ -5,6 +5,7 @@ import {
   createPadrone,
   defineCommand,
   defineInterceptor,
+  padroneConfig,
   padroneConfirm,
   padroneEnv,
   padroneFormat,
@@ -13,9 +14,11 @@ import {
   padroneTiming,
   ValidationError,
 } from 'padrone';
+import { testCli } from 'padrone/test';
 import * as z from 'zod/v4';
 import { createDefaultRuntime } from '../src/core/default-runtime.ts';
-import { stringifyCell } from '../src/output/primitives.ts';
+import { renderTable, stringifyCell } from '../src/output/primitives.ts';
+import { createTextLayout, createTextStyler } from '../src/output/styling.ts';
 
 type Store = { items: number[] };
 
@@ -218,7 +221,7 @@ describe('command-line output', () => {
     const issues = (await program.eval('add --limit abc')).argsResult?.issues?.map((i) => i.message);
     expect(issues).toEqual(['Missing required argument', 'Missing required option', 'Expected number, got "abc"']);
     expect((await program.eval('add x --port 1 --limt 2')).argsResult?.issues?.[0]?.message).toBe(
-      'Unknown option: "limt". Did you mean "--limit"?',
+      'Unknown option "--limt". Did you mean "--limit"?',
     );
   });
 
@@ -343,5 +346,101 @@ describe('suggestions', () => {
       .command('tags', (c) => c.arguments(z.object({ all: z.boolean().optional() })).command('list', (s) => s.action(() => 1)));
     const help = program.help('tags');
     expect(help.indexOf('Run "app tags [command] --help"')).toBeGreaterThan(help.indexOf('--all'));
+  });
+});
+
+describe('recommendations from the sample program', () => {
+  it('words unknown options as typed, without repeating their name', async () => {
+    const program = createPadrone('app')
+      .runtime(quiet)
+      .command('list', (c) => c.arguments(z.object({ limit: z.number().optional() })).action(() => 1));
+    const errors: string[] = [];
+    await program.cli({ runtime: { argv: () => ['list', '--limt', '2', '-x'], error: (text: string) => errors.push(text) } } as never);
+    expect(errors.join('\n')).toContain('  - Unknown option "--limt". Did you mean "--limit"?\n  - Unknown option "-x"');
+  });
+
+  it('shows <value> for options that take one, [value] where it can be left out, and marks required options', () => {
+    const program = createPadrone('app')
+      .runtime(quiet)
+      .command('x', (c) =>
+        c
+          .arguments(z.object({ env: z.string(), tag: z.string().optional(), color: z.union([z.boolean(), z.string()]).optional() }))
+          .action(() => 1),
+      );
+    const help = program.help('x');
+    expect(help).toMatch(/--env\s+<string>\s+\(required\)/);
+    expect(help).toMatch(/--tag\s+<string>\n/);
+    expect(help).toMatch(/--color\s+\[string\]/);
+  });
+
+  it("reads a command's own options from command-scoped variables with padroneEnv({ scope: 'command' })", async () => {
+    const env = { BM_LIST_LIMIT: '3', BM_LIMIT: '9', BM_VERBOSE: '1', BM_LIST_DB__HOST: 'h', BM_TAGS_RENAME_DRY_RUN: 'true' };
+    const program = createPadrone('bm')
+      .runtime({ ...quiet, env: () => env })
+      .extend(padroneEnv({ prefix: 'BM', scope: 'command' }))
+      .globalArgs(z.object({ verbose: z.coerce.number().default(0) }))
+      .command('list', (c) =>
+        c.arguments(z.object({ limit: z.number().default(20), db: z.object({ host: z.string() }).optional() })).action((args) => args),
+      )
+      .command('tags', (c) => c.command('rename', (s) => s.arguments(z.object({ dryRun: z.boolean().default(false) })).action((a) => a)));
+    expect((await program.eval('list')).result).toEqual({ limit: 3, verbose: 1, db: { host: 'h' } });
+    expect((await program.eval('tags rename')).result).toEqual({ dryRun: true, verbose: 1 });
+    expect(program.help('list')).toContain('(env: BM_LIST_LIMIT)');
+    expect(program.help('list')).toContain('(env: BM_VERBOSE)');
+  });
+
+  it('applies config sections by default', async () => {
+    const program = createPadrone('bm')
+      .runtime(quiet)
+      .extend(padroneConfig({ files: 'bm.json', loadConfig: () => ({ limit: 5, list: { limit: 1 } }) }))
+      .command('list', (c) => c.arguments(z.object({ limit: z.number().default(20) })).action((args) => args.limit))
+      .command('search', (c) => c.arguments(z.object({ limit: z.number().default(20) })).action((args) => args.limit));
+    expect((await program.eval('list')).result).toBe(1);
+    expect((await program.eval('search')).result).toBe(5);
+  });
+
+  it('types the options field rules name', () => {
+    const schema = z.object({ json: z.boolean().optional(), table: z.boolean().optional(), out: z.string().optional() });
+    createPadrone('app')
+      .globalArgs(z.object({ quiet: z.boolean().optional() }))
+      .command('ok', (c) => c.arguments(schema, { fields: { json: { conflicts: ['table', 'quiet'], implies: { out: '-' } } } }));
+    // @ts-expect-error no option "tabel"
+    createPadrone('app').command('typo', (c) => c.arguments(schema, { fields: { json: { conflicts: 'tabel' } } }));
+    // @ts-expect-error no option "ot"
+    createPadrone('app').command('typo', (c) => c.arguments(schema, { fields: { json: { implies: { ot: '-' } } } }));
+  });
+
+  it('types testCli() results by the command the input names, and its context', async () => {
+    const program = createPadrone('app')
+      .context<{ store: Store }>()
+      .command('list', (c) =>
+        c.arguments(z.object({ min: z.number().default(0) })).action((args, ctx) => ctx.context.store.items.filter((i) => i >= args.min)),
+      )
+      .command('db', (c) => c.command('migrate', (s) => s.action(async () => ({ ok: true as const }))));
+    const store = { items: [1, 2, 3] };
+    const listed = await testCli(program).context({ store }).run('list --min 2');
+    expectTypeOf(listed.result).toEqualTypeOf<number[] | undefined>();
+    expectTypeOf(listed.args).toEqualTypeOf<{ min: number } | undefined>();
+    expect(listed.result).toEqual([2, 3]);
+    const migrated = await testCli(program).context({ store }).args('db migrate').run();
+    expectTypeOf(migrated.result).toEqualTypeOf<{ ok: true } | undefined>();
+    expectTypeOf((await testCli(program).context({ store }).run('__complete l')).result).toBeUnknown();
+    // @ts-expect-error the program's context
+    testCli(program).context({ db: 1 });
+  });
+
+  it('ends no table line in blanks', () => {
+    const ctx = { format: 'text' as const, styler: createTextStyler(), layout: createTextLayout() };
+    const data = [
+      { id: 1, title: 'Bun' },
+      { id: 22, title: 'Zod validation' },
+    ];
+    for (const border of [true, false]) {
+      expect(
+        renderTable(data, { border }, ctx)
+          .split('\n')
+          .filter((line) => line.endsWith(' ')),
+      ).toEqual([]);
+    }
   });
 });

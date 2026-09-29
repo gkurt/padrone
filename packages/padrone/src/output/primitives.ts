@@ -161,19 +161,22 @@ function renderTableText(
   ctx: OutputContext,
 ): string {
   const { styler } = ctx;
-  // A row with multi-line cells takes a line per cell line, the other cells padded with blanks
+  // A row with multi-line cells takes a line per cell line, the other cells padded with blanks.
+  // A left-aligned last column isn't padded, so no line ends in blanks.
+  const last = colWidths.length - 1;
   const formatRow = (cells: string[], style: (s: string) => string, join: (padded: string[]) => string) => {
     const lines = cells.map(cellLines);
     const height = Math.max(...lines.map((l) => l.length));
+    const pad = (text: string, i: number) => (i === last && getAlign(i) === 'left' ? text : padCell(text, colWidths[i]!, getAlign(i)));
     return Array.from({ length: height }, (_, n) =>
-      join(lines.map((cell, i) => style(padCell(cell[n] ?? '', colWidths[i]!, getAlign(i))))),
+      join(lines.map((cell, i) => (cell[n] || i !== last ? style(pad(cell[n] ?? '', i)) : ''))).trimEnd(),
     ).join('\n');
   };
 
   if (border) {
     const sep = ctx.styler.meta('─');
     const divider = colWidths.map((w) => sep.repeat(w + 2)).join(styler.meta('┼'));
-    const join = (padded: string[]) => padded.map((c) => ` ${c} `).join(styler.meta('│'));
+    const join = (padded: string[]) => padded.map((c, i) => (i === last ? ` ${c}` : ` ${c} `)).join(styler.meta('│'));
     const dataRows = rows.map((r) => formatRow(r, styler.description, join));
     return (header ? [formatRow(headers, styler.label, join), divider, ...dataRows] : dataRows).join('\n');
   }

@@ -12,7 +12,7 @@ describe('pizza', () => {
   it('lists the menu, filtered and sorted', async () => {
     const { cli } = setup();
     const { result } = await cli().run('menu --veggie --sort price');
-    expect((result as { id: string }[]).map((p) => p.id)).toEqual(['margherita', 'funghi', 'ortolana', 'quattro-formaggi']);
+    expect(result?.map((p) => p.id)).toEqual(['margherita', 'funghi', 'ortolana', 'quattro-formaggi']);
   });
 
   it('rejects conflicting menu filters', async () => {
@@ -85,7 +85,7 @@ describe('pizza', () => {
   it('runs the mounted admin program with the mapped context', async () => {
     const { cli } = setup();
     const { result } = await cli().run('admin stats');
-    expect((result as { label: string }).label).toBe('Kitchen report (by you)');
+    expect(result?.label).toBe('Kitchen report (by you)');
   });
 
   it('records every command in the audit log', async () => {

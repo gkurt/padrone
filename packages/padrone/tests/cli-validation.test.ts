@@ -170,7 +170,7 @@ describe('CLI validation improvements', () => {
 
       const result = program.eval('run --foo bar');
       expect(result.argsResult?.issues).toBeDefined();
-      expect(result.argsResult?.issues?.[0]?.message).toContain('Unknown option: "foo"');
+      expect(result.argsResult?.issues?.[0]?.message).toContain('Unknown option "--foo"');
       expect(result.args).toBeUndefined();
     });
 
@@ -288,7 +288,7 @@ describe('CLI validation improvements', () => {
 
       const result = program.eval('list --xyz value');
       expect(result.argsResult?.issues).toBeDefined();
-      expect(result.argsResult?.issues?.[0]?.message).toContain('Unknown option: "xyz"');
+      expect(result.argsResult?.issues?.[0]?.message).toContain('Unknown option "--xyz"');
       expect(result.argsResult?.issues?.[0]?.message).not.toContain('Did you mean');
     });
 
@@ -439,7 +439,7 @@ describe('CLI validation improvements', () => {
 
       const result = program.cli();
       expect(result.error).toBeInstanceOf(ValidationError);
-      expect(errors[0]).toContain('Unknown option: "nope"');
+      expect(errors[0]).toContain('Unknown option "--nope"');
       expect(errors.some((e) => e.includes('Usage: app list') && e.includes('List things'))).toBe(true);
       expect(errors.some((e) => e.includes('for usage.'))).toBe(false);
     });

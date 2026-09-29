@@ -148,9 +148,9 @@ describe('valueName in help and docs', () => {
   it('replaces the type placeholder of options and the name of positionals', () => {
     const help = program.help('deploy', { format: 'text' }) as string;
     expect(help).toContain('Usage: hintcli deploy [TARGET] [options]');
-    expect(help).toMatch(/--out\s+\[DIR\]/);
-    expect(help).toMatch(/--config\s+\[FILE\]/);
-    expect(help).toMatch(/--log\s+\[string\]/);
+    expect(help).toMatch(/--out\s+<DIR>/);
+    expect(help).toMatch(/--config\s+<FILE>/);
+    expect(help).toMatch(/--log\s+<string>/);
     expect(help).toMatch(/^ {2}TARGET\s/m);
   });
 

@@ -33,19 +33,19 @@ describe('table primitive', () => {
       { name: 'x', n: 3 },
     ];
     const lines = renderTable(data, undefined, ctxFor('text')).split('\n');
-    expect(lines).toEqual([' name   │ n ', '────────┼───', ' 日本語 │ 1 ', ' ok ✅  │ 2 ', ' x      │ 3 ']);
+    expect(lines).toEqual([' name   │ n', '────────┼───', ' 日本語 │ 1', ' ok ✅  │ 2', ' x      │ 3']);
   });
 
   it('measures cells that are already colored without their escape codes', () => {
     const lines = renderTable([{ a: '\x1b[31mred\x1b[0m' }, { a: 'plain' }], { border: false }, ctxFor('text')).split('\n');
-    expect(lines.map(stripAnsi)).toEqual(['a    ', 'red  ', 'plain']);
+    expect(lines.map(stripAnsi)).toEqual(['a', 'red', 'plain']);
   });
 
   it('truncates by display width without splitting characters', () => {
     const lines = renderTable([{ a: '日本語テキスト' }, { a: '😀😀😀😀' }], { maxColumnWidth: 5, border: false }, ctxFor('text')).split(
       '\n',
     );
-    expect(lines).toEqual(['a    ', '日本…', '😀😀…']);
+    expect(lines).toEqual(['a', '日本…', '😀😀…']);
   });
 
   it('prints dates and bigints as plain values', () => {

@@ -277,7 +277,7 @@ describe('sanitizing output', () => {
     const ctx = { format: 'text' as const, styler: createTextStyler(), layout: createTextLayout() };
     const data = [{ 'k\x1b[2J': '\x1b[31mred\x1b[0m\tx' }];
     expect(renderTable(data, { border: false }, ctx)).toContain('\x1b[31m');
-    expect(renderTable(data, { border: false, sanitize: true }, ctx).split('\n')).toEqual(['k    ', 'red x']);
+    expect(renderTable(data, { border: false, sanitize: true }, ctx).split('\n')).toEqual(['k', 'red x']);
   });
 
   it('padroneFormat({ sanitize }) cleans yaml, csv, tsv and table values', () => {

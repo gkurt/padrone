@@ -13,6 +13,7 @@ import type {
 } from '../types/index.ts';
 import type { LoadEnvFilesOptions } from '../util/dotenv.ts';
 import { loadEnvFiles } from '../util/dotenv.ts';
+import { camelToKebab } from '../util/shell-utils.ts';
 import type { WithAsync } from '../util/type-utils.ts';
 import { addedPaths, schemaProperties, valuesForCommand, withIssueSources } from './utils.ts';
 
@@ -46,6 +47,13 @@ export type PadroneEnvOptions = {
    * (`MY_APP_DB__HOST` → `db.host`). Variables named in `vars` take precedence. Shown in help.
    */
   prefix?: string;
+  /**
+   * Which name a prefixed variable of a subcommand's own option has. `'program'`: the prefix and the option
+   * (`MY_APP_LIMIT` for `--limit` of every command). `'command'`: the prefix, the command's path and the option
+   * (`MY_APP_LIST_LIMIT` for `my-app list --limit`), so each command's options have their own variables; global
+   * options and the program's own keep `MY_APP_<OPTION>`. @default 'program'
+   */
+  scope?: 'program' | 'command';
   /** What separates the keys of a nested value in a prefixed variable name (`MY_APP_DB__HOST` → `db.host`). @default '__' */
   nestedSeparator?: string;
   /**
@@ -111,6 +119,14 @@ function readEnvVars(env: Record<string, string | undefined>, args: readonly str
   }
 }
 
+/** Whether `arg` names (or aliases) an option of the command's own schema, rather than a global one. */
+function isOwnOption(command: AnyPadroneCommand, arg: string): boolean {
+  const own = schemaProperties(command.argsSchema);
+  if (Object.hasOwn(own, arg)) return true;
+  const fields = command.meta?.fields;
+  return Object.keys(own).some((name) => camelToKebab(name) === arg || [fields?.[name]?.alias ?? []].flat().includes(arg));
+}
+
 /** The properties of a command's options, its global ones included. */
 function commandProperties(command: AnyPadroneCommand): Record<string, any> {
   return { ...schemaProperties(getGlobalArgs(command)?.schema), ...schemaProperties(command.argsSchema) };
@@ -119,19 +135,19 @@ function commandProperties(command: AnyPadroneCommand): Record<string, any> {
 /** Nested values from prefixed variables with `separator` between the keys: `MY_APP_DB__MAX_CONNS` → `db.maxConns`. */
 function readNestedEnvVars(
   env: Record<string, string | undefined>,
-  prefix: string,
+  prefixOf: (option: string) => string,
   separator: string,
   command: AnyPadroneCommand,
   into: EnvValues,
 ): void {
-  const head = prefixedEnvName(prefix, '');
   const properties = commandProperties(command);
-  const options = getKnownOptionNames(command);
+  const heads = getKnownOptionNames(command).map((option) => [option, prefixedEnvName(prefixOf(option), option) + separator] as const);
   for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || !name.startsWith(head) || !name.includes(separator)) continue;
-    const [first, ...rest] = name.slice(head.length).split(separator);
-    const option = options.find((o) => prefixedEnvName('', o) === first);
-    if (!option || rest.some((segment) => !segment)) continue;
+    if (value === undefined || !name.includes(separator)) continue;
+    const [option, head] = heads.find(([, head]) => name.startsWith(head)) ?? [];
+    if (!option || !head) continue;
+    const rest = name.slice(head.length).split(separator);
+    if (rest.some((segment) => !segment)) continue;
     let prop = properties[option];
     const path = [option];
     for (const segment of rest) {
@@ -228,8 +244,20 @@ export function padroneEnv(
   const nestedSeparator = options?.nestedSeparator || '__';
   const arraySeparator = options?.arraySeparator === undefined ? ',' : options.arraySeparator || false;
   const mapsArgs = !!vars || prefix !== undefined;
-  const envVarNames: EnvVarNames = (arg) =>
-    (vars && Object.hasOwn(vars, arg) ? vars[arg] : undefined) ?? (prefix !== undefined ? prefixedEnvName(prefix, arg) : undefined);
+  /** The prefix of an option's variable: with `scope: 'command'`, a subcommand's own options add the command's path. */
+  const prefixFor = (command: AnyPadroneCommand) => (arg: string) => {
+    const path = command.path ? command.path.split(' ') : [];
+    const own = options?.scope === 'command' && path.length > 0 && isOwnOption(command, arg);
+    return own
+      ? [prefix, ...path]
+          .filter(Boolean)
+          .map((part) => prefixedEnvName('', part!))
+          .join('_')
+      : prefix!;
+  };
+  const envVarNames = (arg: string, command: AnyPadroneCommand) =>
+    (vars && Object.hasOwn(vars, arg) ? vars[arg] : undefined) ??
+    (prefix !== undefined ? prefixedEnvName(prefixFor(command)(arg), arg) : undefined);
   const fills = (command: AnyPadroneCommand) => options?.builtins || !isBuiltinCommand(command);
   const argsToRead = (command: AnyPadroneCommand) =>
     prefix !== undefined ? [...new Set([...Object.keys(vars ?? {}), ...getKnownOptionNames(command)])] : Object.keys(vars ?? {});
@@ -240,7 +268,7 @@ export function padroneEnv(
       name: 'padrone:env',
       order: -1000,
       async: hasFiles,
-      ...(mapsArgs && { env: (arg: string, command: AnyPadroneCommand) => (fills(command) ? envVarNames(arg) : undefined) }),
+      ...(mapsArgs && { env: (arg: string, command: AnyPadroneCommand) => (fills(command) ? envVarNames(arg, command) : undefined) }),
     },
     () => ({
       validate(ctx: InterceptorValidateContext, next) {
@@ -253,8 +281,8 @@ export function padroneEnv(
 
           const env = options?.allowEmpty ? rawEnv : Object.fromEntries(Object.entries(rawEnv).filter(([, value]) => value !== ''));
           const read: EnvValues = { values: {}, sources: {} };
-          if (mapsArgs) readEnvVars(env, argsToRead(ctx.command), envVarNames, read);
-          if (prefix !== undefined) readNestedEnvVars(env, prefix, nestedSeparator, ctx.command, read);
+          if (mapsArgs) readEnvVars(env, argsToRead(ctx.command), (arg) => envVarNames(arg, ctx.command), read);
+          if (prefix !== undefined) readNestedEnvVars(env, prefixFor(ctx.command), nestedSeparator, ctx.command, read);
           // Without `vars`, `prefix` or a schema: file variables named like the command's options fill them, with process env values
           // winning unless `override`
           if (!mapsArgs && !schema)

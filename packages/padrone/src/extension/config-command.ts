@@ -2,7 +2,7 @@ import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { coerceArgs, extractSchemaMetadata, getJsonSchema, isSensitiveField, REDACTED } from '../core/args.ts';
 import { getGlobalArgs, resolveCommand } from '../core/commands.ts';
 import { ActionError, ConfigError } from '../core/errors.ts';
-import { formatIssueMessages } from '../core/validate.ts';
+import { formatIssueMessages, getKnownOptionNames } from '../core/validate.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, PadroneInterceptorFn, PadroneSchema } from '../types/index.ts';
 import { removeJsoncValue, setJsoncValue } from '../util/jsonc.ts';
 import { getRootCommand } from '../util/utils.ts';
@@ -32,8 +32,8 @@ export type ConfigSource = {
   /** A custom loader that replaces the built-in one. */
   loadConfig?: ConfigLoader;
   profileFlag?: string;
-  /** Whether keys naming subcommands are per-command sections (`sections`). */
-  sections: boolean;
+  /** Whether keys naming subcommands are per-command sections (`sections`; `'auto'` unless they're an option of the command). */
+  sections: boolean | 'auto';
   profileEnv: (command: AnyPadroneCommand) => string;
   /** The environment name that selects `$<name>` overrides (`envName`). */
   envName: (env: Env) => string | undefined;
@@ -189,6 +189,8 @@ async function resolveSetValue(
   let command = target;
   let section: string[] = [];
   while (source.sections && section.length < path.length - 1) {
+    // `'auto'`: a key the command has an option for is that option's value
+    if (source.sections === 'auto' && getKnownOptionNames(command).includes(path[section.length]!)) break;
     const found = command.commands?.map(resolveCommand).find((c) => c.name === path[section.length] && c.name !== groupName);
     if (!found) break;
     command = found;

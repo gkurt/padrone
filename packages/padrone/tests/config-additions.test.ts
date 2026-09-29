@@ -101,9 +101,14 @@ describe('per-command sections', () => {
     expect(await argsOf(program, 'db migrate --host cli')).toEqual({ host: 'cli', dryRun: true });
   });
 
-  it('are off by default, so a key named like a command is an option value', async () => {
-    const program = withConfig({ port: 1, db: { host: 'h' } });
+  it("are 'auto' by default: a key named like a command is the value of the command's option of that name, else a section", async () => {
+    const program = withConfig({ port: 1, db: { host: 'h', migrate: { dryRun: true } } });
     expect(await argsOf(program, 'serve')).toEqual({ port: 1, db: { host: 'h' } });
+    expect(await argsOf(program, 'db migrate')).toEqual({ host: 'h', dryRun: true });
+  });
+
+  it('are off with `sections: false`', async () => {
+    const program = withConfig({ port: 1, db: { host: 'h' } }, { sections: false });
     expect(await argsOf(program, 'db migrate')).toEqual({});
   });
 
@@ -273,7 +278,7 @@ describe('--profile from remote callers', () => {
     const program = withConfig(data, { profiles: true });
     for (const caller of ['serve', 'mcp', 'tool']) {
       const result = await program.eval(['serve', '--profile', 'prod'], { caller });
-      expect(result.argsResult?.issues?.[0]?.message).toBe('Unknown option: "profile"');
+      expect(result.argsResult?.issues?.[0]?.message).toBe('Unknown option "--profile"');
     }
     expect(await argsOf(program, ['serve', '--profile', 'prod'])).toEqual({ port: 2 });
   });

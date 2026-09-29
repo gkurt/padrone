@@ -49,7 +49,7 @@ Arguments:
   id  Task ID
 
 Options:
-  --priority  [string]  Priority level (default: medium) (choices: low, medium, high)
+  --priority  <string>  Priority level (default: medium) (choices: low, medium, high)
   --verbose             Show detailed information
 "
 `;
@@ -61,7 +61,7 @@ exports[`help should generate help for a command with enabled colors 1`] = `
   \x1B[32mid\x1B[0m  \x1B[2mTask ID\x1B[0m
 
 \x1B[1mOptions:\x1B[0m
-  \x1B[32m--priority\x1B[0m  \x1B[33m[string]\x1B[0m  \x1B[2mPriority level\x1B[0m \x1B[90m(default: medium)\x1B[0m \x1B[90m(choices: low, medium, high)\x1B[0m
+  \x1B[32m--priority\x1B[0m  \x1B[33m<string>\x1B[0m  \x1B[2mPriority level\x1B[0m \x1B[90m(default: medium)\x1B[0m \x1B[90m(choices: low, medium, high)\x1B[0m
   \x1B[32m--verbose\x1B[0m             \x1B[2mShow detailed information\x1B[0m
 "
 `;
@@ -74,8 +74,8 @@ Commands:
   extended
 
 Options:
-  --status    [string]  Filter by status (choices: pending, in_progress, completed)
-  --priority  [string]  Filter by priority (default: medium) (choices: low, medium, high)
+  --status    <string>  Filter by status (choices: pending, in_progress, completed)
+  --priority  <string>  Filter by priority (default: medium) (choices: low, medium, high)
 
 Run "padrone-test list extended [command] --help" for more information on a command.
 "
@@ -96,7 +96,7 @@ Arguments:
   query  Search query
 
 Options:
-  -s, --status  [string[]]  Filter by status (choices: pending, in_progress, completed)
+  -s, --status  <string[]>  Filter by status (choices: pending, in_progress, completed)
 "
 `;
 
@@ -104,8 +104,8 @@ exports[`help should generate help for a command with deprecated arguments 1`] =
 "Usage: padrone-test deprecated-test [options]
 
 Options:
-  --old-arg                  [string]  This arg is deprecated (deprecated)
-  --new-arg                  [string]  This is the new arg
+  --old-arg                  <string>  This arg is deprecated (deprecated)
+  --new-arg                  <string>  This is the new arg
   --deprecated-with-message            This arg is deprecated with a message
                                        (deprecated: Use newArg instead)
 "
@@ -115,8 +115,8 @@ exports[`help should generate help for a command with deprecated arguments and c
 "\x1B[1mUsage:\x1B[0m \x1B[36m\x1B[1mpadrone-test deprecated-test\x1B[0m \x1B[90m[options]\x1B[0m
 
 \x1B[1mOptions:\x1B[0m
-  \x1B[9m\x1B[90m--old-arg\x1B[0m                  \x1B[33m[string]\x1B[0m  \x1B[9m\x1B[90mThis arg is deprecated\x1B[0m \x1B[90m(deprecated)\x1B[0m
-  \x1B[32m--new-arg\x1B[0m                  \x1B[33m[string]\x1B[0m  \x1B[2mThis is the new arg\x1B[0m
+  \x1B[9m\x1B[90m--old-arg\x1B[0m                  \x1B[33m<string>\x1B[0m  \x1B[9m\x1B[90mThis arg is deprecated\x1B[0m \x1B[90m(deprecated)\x1B[0m
+  \x1B[32m--new-arg\x1B[0m                  \x1B[33m<string>\x1B[0m  \x1B[2mThis is the new arg\x1B[0m
   \x1B[9m\x1B[90m--deprecated-with-message\x1B[0m            \x1B[9m\x1B[90mThis arg is deprecated with a message\x1B[0m
                                        \x1B[90m(deprecated: Use newArg instead)\x1B[0m
 "
@@ -126,7 +126,7 @@ exports[`help should generate help for a command with hidden arguments 1`] = `
 "Usage: padrone-test hidden-test [options]
 
 Options:
-  --visible-arg      [string]  This arg is visible in help
+  --visible-arg      <string>  This arg is visible in help
   --another-visible            This arg is also visible
 "
 `;
@@ -135,7 +135,7 @@ exports[`help should generate help for a command with hidden arguments and color
 "\x1B[1mUsage:\x1B[0m \x1B[36m\x1B[1mpadrone-test hidden-test\x1B[0m \x1B[90m[options]\x1B[0m
 
 \x1B[1mOptions:\x1B[0m
-  \x1B[32m--visible-arg\x1B[0m      \x1B[33m[string]\x1B[0m  \x1B[2mThis arg is visible in help\x1B[0m
+  \x1B[32m--visible-arg\x1B[0m      \x1B[33m<string>\x1B[0m  \x1B[2mThis arg is visible in help\x1B[0m
   \x1B[32m--another-visible\x1B[0m            \x1B[2mThis arg is also visible\x1B[0m
 "
 `;
@@ -144,13 +144,13 @@ exports[`help should generate help for a command with examples 1`] = `
 "Usage: padrone-test examples-test [options]
 
 Options:
-  --output   [string]  Specify the output file path
+  --output   <string>  Specify the output file path
                        Example: output.txt, ./dist/result.json
-  --format   [string]  Choose the output format (choices: json, yaml, xml)
+  --format   <string>  Choose the output format (choices: json, yaml, xml)
                        Example: json, yaml
   --verbose            Show detailed information
                        Example: true
-  --config   [string]  Path to configuration file
+  --config   <string>  Path to configuration file
                        Example: ./config.json, ~/.config/app.json
 "
 `;
@@ -159,13 +159,13 @@ exports[`help should generate help for a command with examples and colors 1`] = 
 "\x1B[1mUsage:\x1B[0m \x1B[36m\x1B[1mpadrone-test examples-test\x1B[0m \x1B[90m[options]\x1B[0m
 
 \x1B[1mOptions:\x1B[0m
-  \x1B[32m--output\x1B[0m   \x1B[33m[string]\x1B[0m  \x1B[2mSpecify the output file path\x1B[0m
+  \x1B[32m--output\x1B[0m   \x1B[33m<string>\x1B[0m  \x1B[2mSpecify the output file path\x1B[0m
                        \x1B[4mExample:\x1B[0m \x1B[3moutput.txt, ./dist/result.json\x1B[0m
-  \x1B[32m--format\x1B[0m   \x1B[33m[string]\x1B[0m  \x1B[2mChoose the output format\x1B[0m \x1B[90m(choices: json, yaml, xml)\x1B[0m
+  \x1B[32m--format\x1B[0m   \x1B[33m<string>\x1B[0m  \x1B[2mChoose the output format\x1B[0m \x1B[90m(choices: json, yaml, xml)\x1B[0m
                        \x1B[4mExample:\x1B[0m \x1B[3mjson, yaml\x1B[0m
   \x1B[32m--verbose\x1B[0m            \x1B[2mShow detailed information\x1B[0m
                        \x1B[4mExample:\x1B[0m \x1B[3mtrue\x1B[0m
-  \x1B[32m--config\x1B[0m   \x1B[33m[string]\x1B[0m  \x1B[2mPath to configuration file\x1B[0m
+  \x1B[32m--config\x1B[0m   \x1B[33m<string>\x1B[0m  \x1B[2mPath to configuration file\x1B[0m
                        \x1B[4mExample:\x1B[0m \x1B[3m./config.json, ~/.config/app.json\x1B[0m
 "
 `;
@@ -177,7 +177,7 @@ exports[`help should generate help in console format 1`] = `
   \x1B[32mid\x1B[0m  \x1B[2mTask ID\x1B[0m
 
 \x1B[1mOptions:\x1B[0m
-  \x1B[32m--priority\x1B[0m  \x1B[33m[string]\x1B[0m  \x1B[2mPriority level\x1B[0m \x1B[90m(default: medium)\x1B[0m \x1B[90m(choices: low, medium, high)\x1B[0m
+  \x1B[32m--priority\x1B[0m  \x1B[33m<string>\x1B[0m  \x1B[2mPriority level\x1B[0m \x1B[90m(default: medium)\x1B[0m \x1B[90m(choices: low, medium, high)\x1B[0m
   \x1B[32m--verbose\x1B[0m             \x1B[2mShow detailed information\x1B[0m
 "
 `;
@@ -195,7 +195,7 @@ exports[`help should generate help in markdown format 1`] = `
 
 ### Options:
 
-  \`--priority\`  \`[string]\`  Priority level
+  \`--priority\`  \`<string>\`  Priority level
 
     *(default: medium)* *(choices: low, medium, high)*
 
@@ -204,7 +204,7 @@ exports[`help should generate help in markdown format 1`] = `
 "
 `;
 
-exports[`help should generate help in html format 1`] = `"<div style="font-family: monospace; line-height: 1.6;"><strong>Usage:</strong> <strong style="color: #00bcd4;">padrone-test show</strong> <span style="color: #999;">&lt;id&gt;</span> <span style="color: #999;">[options]</span><br><br><h3>Arguments:</h3><br>&nbsp;&nbsp;<code style="color: #4caf50;">id</code>  <span style="color: #666;">Task ID</span><br><br><h3>Options:</h3><br>&nbsp;&nbsp;<code style="color: #4caf50;">--priority</code>  <code style="color: #ff9800;">[string]</code>  <span style="color: #666;">Priority level</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #999;">(default: medium)</span> <span style="color: #999;">(choices: low, medium, high)</span><br>&nbsp;&nbsp;<code style="color: #4caf50;">--verbose</code>             <span style="color: #666;">Show detailed information</span><br></div>"`;
+exports[`help should generate help in html format 1`] = `"<div style="font-family: monospace; line-height: 1.6;"><strong>Usage:</strong> <strong style="color: #00bcd4;">padrone-test show</strong> <span style="color: #999;">&lt;id&gt;</span> <span style="color: #999;">[options]</span><br><br><h3>Arguments:</h3><br>&nbsp;&nbsp;<code style="color: #4caf50;">id</code>  <span style="color: #666;">Task ID</span><br><br><h3>Options:</h3><br>&nbsp;&nbsp;<code style="color: #4caf50;">--priority</code>  <code style="color: #ff9800;">&lt;string&gt;</code>  <span style="color: #666;">Priority level</span><br>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span style="color: #999;">(default: medium)</span> <span style="color: #999;">(choices: low, medium, high)</span><br>&nbsp;&nbsp;<code style="color: #4caf50;">--verbose</code>             <span style="color: #666;">Show detailed information</span><br></div>"`;
 
 exports[`help should generate help in json format 1`] = `
 "{
@@ -286,10 +286,10 @@ Arguments:
   command...  The command to show help for
 
 Options:
-  -d, --detail  [string]  How much detail to show (choices: minimal, standard, full)
-  -f, --format  [string]  Output format (choices: text, ansi, console, markdown, html, json)
+  -d, --detail  <string>  How much detail to show (choices: minimal, standard, full)
+  -f, --format  <string>  Output format (choices: text, ansi, console, markdown, html, json)
       --all               Show all global commands and options
-  -s, --search  [string]  Search commands and help topics
+  -s, --search  <string>  Search commands and help topics
 
 ────────────────────────────────────────────────────────────
 Usage: padrone-test version [options]
@@ -317,9 +317,9 @@ Commands:
   extended <subcommand>
 
 Options:
-  --status    [string]  Filter by status (choices: pending, in_progress, completed)
-  --limit     [number]  Maximum number of tasks (default: 10)
-  --priority  [string]  Filter by priority (default: medium) (choices: low, medium, high)
+  --status    <string>  Filter by status (choices: pending, in_progress, completed)
+  --limit     <number>  Maximum number of tasks (default: 10)
+  --priority  <string>  Filter by priority (default: medium) (choices: low, medium, high)
 
 Run "padrone-test list [command] --help" for more information on a command.
 
@@ -333,8 +333,8 @@ Commands:
   extended
 
 Options:
-  --status    [string]  Filter by status (choices: pending, in_progress, completed)
-  --priority  [string]  Filter by priority (default: medium) (choices: low, medium, high)
+  --status    <string>  Filter by status (choices: pending, in_progress, completed)
+  --priority  <string>  Filter by priority (default: medium) (choices: low, medium, high)
 
 Run "padrone-test list extended [command] --help" for more information on a command.
 
@@ -344,7 +344,7 @@ Subcommand Details:
 Usage: padrone-test list extended extended [options]
 
 Options:
-  --status  [string]  Filter by status (choices: pending, in_progress, completed)
+  --status  <string>  Filter by status (choices: pending, in_progress, completed)
 
 ────────────────────────────────────────────────────────────
 Usage: padrone-test show <id> [options]
@@ -353,15 +353,15 @@ Arguments:
   id  Task ID
 
 Options:
-  --priority  [string]  Priority level (default: medium) (choices: low, medium, high)
+  --priority  <string>  Priority level (default: medium) (choices: low, medium, high)
   --verbose             Show detailed information
 
 ────────────────────────────────────────────────────────────
 Usage: padrone-test filter [options]
 
 Options:
-  --status     [string]  Filter by status (choices: pending, in_progress, completed)
-  --priority   [string]  Filter by priority (choices: low, medium, high)
+  --status     <string>  Filter by status (choices: pending, in_progress, completed)
+  --priority   <string>  Filter by priority (choices: low, medium, high)
   --ascending            Sort in ascending order
 
 ────────────────────────────────────────────────────────────
@@ -377,7 +377,7 @@ Arguments:
   query  Search query
 
 Options:
-  -s, --status  [string[]]  Filter by status (choices: pending, in_progress, completed)
+  -s, --status  <string[]>  Filter by status (choices: pending, in_progress, completed)
 
 ────────────────────────────────────────────────────────────
 Usage: padrone-test noop
@@ -392,8 +392,8 @@ Options:
 Usage: padrone-test deprecated-test [options]
 
 Options:
-  --old-arg                  [string]  This arg is deprecated (deprecated)
-  --new-arg                  [string]  This is the new arg
+  --old-arg                  <string>  This arg is deprecated (deprecated)
+  --new-arg                  <string>  This is the new arg
   --deprecated-with-message            This arg is deprecated with a message
                                        (deprecated: Use newArg instead)
 
@@ -401,20 +401,20 @@ Options:
 Usage: padrone-test hidden-test [options]
 
 Options:
-  --visible-arg      [string]  This arg is visible in help
+  --visible-arg      <string>  This arg is visible in help
   --another-visible            This arg is also visible
 
 ────────────────────────────────────────────────────────────
 Usage: padrone-test examples-test [options]
 
 Options:
-  --output   [string]  Specify the output file path
+  --output   <string>  Specify the output file path
                        Example: output.txt, ./dist/result.json
-  --format   [string]  Choose the output format (choices: json, yaml, xml)
+  --format   <string>  Choose the output format (choices: json, yaml, xml)
                        Example: json, yaml
   --verbose            Show detailed information
                        Example: true
-  --config   [string]  Path to configuration file
+  --config   <string>  Path to configuration file
                        Example: ./config.json, ~/.config/app.json
 "
 `;
@@ -1190,17 +1190,17 @@ Display help for a command
 
 ### Options:
 
-  \`-d\`, \`--detail\`  \`[string]\`  How much detail to show
+  \`-d\`, \`--detail\`  \`<string>\`  How much detail to show
 
     *(choices: minimal, standard, full)*
 
-  \`-f\`, \`--format\`  \`[string]\`  Output format
+  \`-f\`, \`--format\`  \`<string>\`  Output format
 
     *(choices: text, ansi, console, markdown, html, json)*
 
       \`--all\`               Show all global commands and options
 
-  \`-s\`, \`--search\`  \`[string]\`  Search commands and help topics
+  \`-s\`, \`--search\`  \`<string>\`  Search commands and help topics
 
 
 
@@ -1256,15 +1256,15 @@ Start an interactive REPL
 
 ### Options:
 
-  \`--status\`    \`[string]\`  Filter by status
+  \`--status\`    \`<string>\`  Filter by status
 
     *(choices: pending, in_progress, completed)*
 
-  \`--limit\`     \`[number]\`  Maximum number of tasks
+  \`--limit\`     \`<number>\`  Maximum number of tasks
 
     *(default: 10)*
 
-  \`--priority\`  \`[string]\`  Filter by priority
+  \`--priority\`  \`<string>\`  Filter by priority
 
     *(default: medium)* *(choices: low, medium, high)*
 
@@ -1294,11 +1294,11 @@ Start an interactive REPL
 
 ### Options:
 
-  \`--status\`    \`[string]\`  Filter by status
+  \`--status\`    \`<string>\`  Filter by status
 
     *(choices: pending, in_progress, completed)*
 
-  \`--priority\`  \`[string]\`  Filter by priority
+  \`--priority\`  \`<string>\`  Filter by priority
 
     *(default: medium)* *(choices: low, medium, high)*
 
@@ -1320,7 +1320,7 @@ Start an interactive REPL
 
 ### Options:
 
-  \`--status\`  \`[string]\`  Filter by status
+  \`--status\`  \`<string>\`  Filter by status
 
     *(choices: pending, in_progress, completed)*
 
@@ -1340,7 +1340,7 @@ Start an interactive REPL
 
 ### Options:
 
-  \`--priority\`  \`[string]\`  Priority level
+  \`--priority\`  \`<string>\`  Priority level
 
     *(default: medium)* *(choices: low, medium, high)*
 
@@ -1356,11 +1356,11 @@ Start an interactive REPL
 
 ### Options:
 
-  \`--status\`     \`[string]\`  Filter by status
+  \`--status\`     \`<string>\`  Filter by status
 
     *(choices: pending, in_progress, completed)*
 
-  \`--priority\`   \`[string]\`  Filter by priority
+  \`--priority\`   \`<string>\`  Filter by priority
 
     *(choices: low, medium, high)*
 
@@ -1394,7 +1394,7 @@ Start an interactive REPL
 
 ### Options:
 
-  \`-s\`, \`--status\`  \`[string[]]\`  Filter by status
+  \`-s\`, \`--status\`  \`<string[]>\`  Filter by status
 
     *(choices: pending, in_progress, completed)*
 
@@ -1426,11 +1426,11 @@ Start an interactive REPL
 
 ### Options:
 
-  ~~--old-arg~~                  \`[string]\`  ~~This arg is deprecated~~
+  ~~--old-arg~~                  \`<string>\`  ~~This arg is deprecated~~
 
     *(deprecated)*
 
-  \`--new-arg\`                  \`[string]\`  This is the new arg
+  \`--new-arg\`                  \`<string>\`  This is the new arg
 
   ~~--deprecated-with-message~~            ~~This arg is deprecated with a message~~
 
@@ -1446,7 +1446,7 @@ Start an interactive REPL
 
 ### Options:
 
-  \`--visible-arg\`      \`[string]\`  This arg is visible in help
+  \`--visible-arg\`      \`<string>\`  This arg is visible in help
 
   \`--another-visible\`            This arg is also visible
 
@@ -1460,11 +1460,11 @@ Start an interactive REPL
 
 ### Options:
 
-  \`--output\`   \`[string]\`  Specify the output file path
+  \`--output\`   \`<string>\`  Specify the output file path
 
     **Example:** \`output.txt, ./dist/result.json\`
 
-  \`--format\`   \`[string]\`  Choose the output format
+  \`--format\`   \`<string>\`  Choose the output format
 
     *(choices: json, yaml, xml)*
 
@@ -1474,7 +1474,7 @@ Start an interactive REPL
 
     **Example:** \`true\`
 
-  \`--config\`   \`[string]\`  Path to configuration file
+  \`--config\`   \`<string>\`  Path to configuration file
 
     **Example:** \`./config.json, ~/.config/app.json\`
 
@@ -1490,9 +1490,9 @@ Commands:
   extended <subcommand>
 
 Options:
-  --status    [string]  Filter by status (choices: pending, in_progress, completed)
-  --limit     [number]  Maximum number of tasks (default: 10)
-  --priority  [string]  Filter by priority (default: medium) (choices: low, medium, high)
+  --status    <string>  Filter by status (choices: pending, in_progress, completed)
+  --limit     <number>  Maximum number of tasks (default: 10)
+  --priority  <string>  Filter by priority (default: medium) (choices: low, medium, high)
 
 Run "padrone-test list [command] --help" for more information on a command.
 
@@ -1506,8 +1506,8 @@ Commands:
   extended
 
 Options:
-  --status    [string]  Filter by status (choices: pending, in_progress, completed)
-  --priority  [string]  Filter by priority (default: medium) (choices: low, medium, high)
+  --status    <string>  Filter by status (choices: pending, in_progress, completed)
+  --priority  <string>  Filter by priority (default: medium) (choices: low, medium, high)
 
 Run "padrone-test list extended [command] --help" for more information on a command.
 
@@ -1517,7 +1517,7 @@ Subcommand Details:
 Usage: padrone-test list extended extended [options]
 
 Options:
-  --status  [string]  Filter by status (choices: pending, in_progress, completed)
+  --status  <string>  Filter by status (choices: pending, in_progress, completed)
 "
 `;
 
@@ -1529,8 +1529,8 @@ Commands:
   extended
 
 Options:
-  --status    [string]  Filter by status (choices: pending, in_progress, completed)
-  --priority  [string]  Filter by priority (default: medium) (choices: low, medium, high)
+  --status    <string>  Filter by status (choices: pending, in_progress, completed)
+  --priority  <string>  Filter by priority (default: medium) (choices: low, medium, high)
 
 Run "padrone-test list extended [command] --help" for more information on a command.
 
@@ -1540,7 +1540,7 @@ Subcommand Details:
 Usage: padrone-test list extended extended [options]
 
 Options:
-  --status  [string]  Filter by status (choices: pending, in_progress, completed)
+  --status  <string>  Filter by status (choices: pending, in_progress, completed)
 "
 `;
 
@@ -1553,9 +1553,9 @@ exports[`help with full detail mode should work with ansi format in full detail 
   \x1B[36m\x1B[1mextended\x1B[0m\x1B[90m <subcommand>\x1B[0m
 
 \x1B[1mOptions:\x1B[0m
-  \x1B[32m--status\x1B[0m    \x1B[33m[string]\x1B[0m  \x1B[2mFilter by status\x1B[0m \x1B[90m(choices: pending, in_progress, completed)\x1B[0m
-  \x1B[32m--limit\x1B[0m     \x1B[33m[number]\x1B[0m  \x1B[2mMaximum number of tasks\x1B[0m \x1B[90m(default: 10)\x1B[0m
-  \x1B[32m--priority\x1B[0m  \x1B[33m[string]\x1B[0m  \x1B[2mFilter by priority\x1B[0m \x1B[90m(default: medium)\x1B[0m \x1B[90m(choices: low, medium, high)\x1B[0m
+  \x1B[32m--status\x1B[0m    \x1B[33m<string>\x1B[0m  \x1B[2mFilter by status\x1B[0m \x1B[90m(choices: pending, in_progress, completed)\x1B[0m
+  \x1B[32m--limit\x1B[0m     \x1B[33m<number>\x1B[0m  \x1B[2mMaximum number of tasks\x1B[0m \x1B[90m(default: 10)\x1B[0m
+  \x1B[32m--priority\x1B[0m  \x1B[33m<string>\x1B[0m  \x1B[2mFilter by priority\x1B[0m \x1B[90m(default: medium)\x1B[0m \x1B[90m(choices: low, medium, high)\x1B[0m
 
 \x1B[90mRun "padrone-test list [command] --help" for more information on a command.\x1B[0m
 
@@ -1569,8 +1569,8 @@ exports[`help with full detail mode should work with ansi format in full detail 
   \x1B[36m\x1B[1mextended\x1B[0m
 
 \x1B[1mOptions:\x1B[0m
-  \x1B[32m--status\x1B[0m    \x1B[33m[string]\x1B[0m  \x1B[2mFilter by status\x1B[0m \x1B[90m(choices: pending, in_progress, completed)\x1B[0m
-  \x1B[32m--priority\x1B[0m  \x1B[33m[string]\x1B[0m  \x1B[2mFilter by priority\x1B[0m \x1B[90m(default: medium)\x1B[0m \x1B[90m(choices: low, medium, high)\x1B[0m
+  \x1B[32m--status\x1B[0m    \x1B[33m<string>\x1B[0m  \x1B[2mFilter by status\x1B[0m \x1B[90m(choices: pending, in_progress, completed)\x1B[0m
+  \x1B[32m--priority\x1B[0m  \x1B[33m<string>\x1B[0m  \x1B[2mFilter by priority\x1B[0m \x1B[90m(default: medium)\x1B[0m \x1B[90m(choices: low, medium, high)\x1B[0m
 
 \x1B[90mRun "padrone-test list extended [command] --help" for more information on a command.\x1B[0m
 
@@ -1580,7 +1580,7 @@ exports[`help with full detail mode should work with ansi format in full detail 
 \x1B[1mUsage:\x1B[0m \x1B[36m\x1B[1mpadrone-test list extended extended\x1B[0m \x1B[90m[options]\x1B[0m
 
 \x1B[1mOptions:\x1B[0m
-  \x1B[32m--status\x1B[0m  \x1B[33m[string]\x1B[0m  \x1B[2mFilter by status\x1B[0m \x1B[90m(choices: pending, in_progress, completed)\x1B[0m
+  \x1B[32m--status\x1B[0m  \x1B[33m<string>\x1B[0m  \x1B[2mFilter by status\x1B[0m \x1B[90m(choices: pending, in_progress, completed)\x1B[0m
 "
 `;
 
@@ -1594,7 +1594,7 @@ Examples:
   $ example-cli deploy --env staging --dry-run
 
 Options:
-  --env      <string>  Target environment
+  --env      <string>  Target environment (required)
   --dry-run            Dry run mode
 "
 `;
@@ -1603,16 +1603,16 @@ exports[`help with groups should group options under labeled sections 1`] = `
 "Usage: group-test deploy [options]
 
 Options:
-  --target   <string>  Deploy target
+  --target   <string>  Deploy target (required)
   --verbose            Verbose output
 
 AWS:
-  --region   [string]  AWS region
-  --profile  [string]  AWS profile
+  --region   <string>  AWS region
+  --profile  <string>  AWS profile
 
 Advanced:
-  --retries  [number]  Retry count
-  --timeout  [number]  Timeout in seconds
+  --retries  <number>  Retry count
+  --timeout  <number>  Timeout in seconds
 "
 `;
 

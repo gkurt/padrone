@@ -165,7 +165,7 @@ describe('padroneFormat options', () => {
     expect(run(program, 'users -o csv')).toEqual(['Name,ID\nBob,2\nAlice,1']);
     expect(run(program, 'stream -o tsv')).toEqual(['Name\tID', 'Bob\t2', 'Alice\t1']);
     expect(run(program, 'users -o csv --columns id,note')).toEqual(['ID,note\n2,"first\nsecond"\n1,one']);
-    expect((run(program, 'users -o table')[0] as string).split('\n')[0]).toBe(' Name  │ ID ');
+    expect((run(program, 'users -o table')[0] as string).split('\n')[0]).toBe(' Name  │ ID');
 
     const perCommand = create({ columns: (command) => (command.name === 'users' ? { id: 'User ID' } : undefined) });
     expect(run(perCommand, 'users -o csv')).toEqual(['User ID\n2\n1']);
@@ -185,17 +185,17 @@ describe('multi-line table cells', () => {
 
   it('wraps a cell with newlines inside its column', () => {
     expect(renderTable(users, undefined, ctx).split('\n')).toEqual([
-      ' id │ name  │ note   ',
+      ' id │ name  │ note',
       '────┼───────┼────────',
-      ' 2  │ Bob   │ first  ',
-      '    │       │ second ',
-      ' 1  │ Alice │ one    ',
+      ' 2  │ Bob   │ first',
+      '    │       │ second',
+      ' 1  │ Alice │ one',
     ]);
     expect(renderTable(users, { border: false }, ctx).split('\n')).toEqual([
-      'id  name   note  ',
-      '2   Bob    first ',
+      'id  name   note',
+      '2   Bob    first',
       '           second',
-      '1   Alice  one   ',
+      '1   Alice  one',
     ]);
   });
 });

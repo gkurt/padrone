@@ -49,6 +49,8 @@ export type HelpArgumentInfo = {
   enum?: string[];
   /** Placeholder for the value, shown instead of the type (from the field's `valueName`). */
   valueName?: string;
+  /** Whether the option can be given without a value (`--json` or `--json name,url`): shown as `[value]` instead of `<value>`. */
+  optionalValue?: boolean;
   /** Single-character short flags (shown as `-v`) */
   flags?: string[];
   /** Multi-character alternative long names (shown as `--dry-run`) */
@@ -373,7 +375,7 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
         ', ',
       );
       const placeholder = optionPlaceholder(arg);
-      const typePlain = placeholder ? (arg.optional ? `[${placeholder}]` : `<${placeholder}>`) : '';
+      const typePlain = placeholder ? (arg.optionalValue ? `[${placeholder}]` : `<${placeholder}>`) : '';
 
       const isDeprecated = !!arg.deprecated;
 
@@ -422,6 +424,10 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
         // Build inline meta (deprecated no-reason, default, choices)
         const inlineMeta: string[] = [];
         const styledInlineMeta: string[] = [];
+        if (!arg.optional) {
+          inlineMeta.push('(required)');
+          styledInlineMeta.push(styler.meta('(required)'));
+        }
         if (isDeprecated && typeof arg.deprecated !== 'string') {
           inlineMeta.push('(deprecated)');
           styledInlineMeta.push(styler.meta('(deprecated)'));

@@ -51,8 +51,8 @@ describe('option suggestions', () => {
           .action(() => 'built'),
       );
     const issues = (r: { argsResult?: { issues?: readonly { message: string }[] } }) => r.argsResult?.issues?.map((i) => i.message);
-    expect(issues(program.eval('build --secret-mod'))).toEqual(['Unknown option: "secret-mod"']);
-    expect(issues(program.eval('build --debug-inf'))).toEqual(['Unknown option: "debug-inf"']);
+    expect(issues(program.eval('build --secret-mod'))).toEqual(['Unknown option "--secret-mod"']);
+    expect(issues(program.eval('build --debug-inf'))).toEqual(['Unknown option "--debug-inf"']);
   });
 });
 

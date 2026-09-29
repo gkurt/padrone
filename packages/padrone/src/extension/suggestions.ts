@@ -85,7 +85,7 @@ function enrichIssuesWithSuggestions(
 ): typeof issues {
   return issues.map((i: any) => {
     // Handle direct unknown option detection (from checkUnknownArgs)
-    const unknownMatch = i.message?.match(/^Unknown option: "([^"]+)"$/);
+    const unknownMatch = i.message?.match(/^Unknown option "--?([^"]+)"$/);
     if (unknownMatch) {
       const similar = suggestSimilar(unknownMatch[1], knownOptions());
       if (similar.length) {

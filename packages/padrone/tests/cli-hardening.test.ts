@@ -174,7 +174,7 @@ describe('CLI hardening', () => {
     });
 
     it('reports --constructor as an unknown option', () => {
-      expect(issuesOf(createProgram().eval(['build', '--constructor']))?.join('\n')).toContain('Unknown option: "constructor"');
+      expect(issuesOf(createProgram().eval(['build', '--constructor']))?.join('\n')).toContain('Unknown option "--constructor"');
     });
   });
 

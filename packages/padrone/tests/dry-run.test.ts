@@ -44,7 +44,7 @@ describe('dry-run', () => {
   it('rejects --dry-run on commands without a dry-run handler, without running them', () => {
     const { program, deleted } = createProgram();
     const result = program.eval('touch x --dry-run', { runtime: quiet });
-    expect(result.argsResult?.issues?.[0]?.message).toStartWith('Unknown option: "dry-run"');
+    expect(result.argsResult?.issues?.[0]?.message).toStartWith('Unknown option "--dry-run"');
     expect(program.eval('touch x -n', { runtime: quiet }).argsResult?.issues).toBeDefined();
     expect(deleted).toEqual([]);
   });

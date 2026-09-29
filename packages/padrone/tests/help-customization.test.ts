@@ -108,7 +108,7 @@ describe('renamed help and version flags', () => {
     expect(program.eval('deploy --info').result).toContain('Deploy it');
     expect(program.eval(['deploy', '-?']).result).toContain('Deploy it');
     // --help is no longer a help flag
-    expect(program.eval('deploy --help').argsResult?.issues?.[0]?.message).toBe('Unknown option: "help"');
+    expect(program.eval('deploy --help').argsResult?.issues?.[0]?.message).toBe('Unknown option "--help"');
   });
 
   it('points error hints at the custom flag, or the help command without flags', () => {
@@ -131,7 +131,7 @@ describe('renamed help and version flags', () => {
       .arguments(z.object({ verbose: z.boolean().optional().meta({ flags: 'v' }) }))
       .action((args) => args);
     expect(program.eval('--version').result as unknown).toBe('1.2.3');
-    expect(program.eval('-V').argsResult?.issues?.[0]?.message).toBe('Unknown option: "V"');
+    expect(program.eval('-V').argsResult?.issues?.[0]?.message).toBe('Unknown option "-V"');
   });
 });
 

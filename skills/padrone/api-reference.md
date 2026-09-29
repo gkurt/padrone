@@ -381,6 +381,7 @@ import { createPadrone, padroneEnv } from 'padrone';
 // Or read every option from MY_APP_* variables (`dryRun` ← MY_APP_DRY_RUN, `db.host` ← MY_APP_DB__HOST), like yargs' .env('MY_APP')
 .extend(padroneEnv({ prefix: 'MY_APP' }))
 .extend(padroneEnv({ prefix: 'MY_APP', allowEmpty: true })) // MY_APP_NAME= gives '' (by default empty variables are unset)
+.extend(padroneEnv({ prefix: 'MY_APP', scope: 'command' })) // `my-app list --limit` ← MY_APP_LIST_LIMIT (globals: MY_APP_<OPTION>)
 .extend(padroneEnv({ prefix: 'MY_APP', nestedSeparator: '.' })) // MY_APP_DB.HOST → db.host (default '__')
 .extend(padroneEnv({ prefix: 'MY_APP', arraySeparator: ';' })) // MY_APP_TAGS=a;b → ['a', 'b'] (default ','; false keeps one item)
 ```
@@ -410,7 +411,7 @@ import { createPadrone, padroneConfig } from 'padrone';
 .extend(padroneConfig({ files: 'config.json', xdg: true })) // also ~/.config/<program>/
 .extend(padroneConfig({ files: 'config.json', profiles: true })) // `profiles.<name>` via --profile, <PROGRAM>_PROFILE or a `profile` key
 .extend(padroneConfig({ files: 'config.json', profiles: { remote: true } })) // also let serve/MCP/tool() calls pass --profile
-.extend(padroneConfig({ files: 'config.json', sections: true })) // { port: 1, serve: { port: 2 }, db: { migrate: { dryRun: true } } }
+.extend(padroneConfig({ files: 'config.json' })) // sections by default ('auto'): { port: 1, serve: { port: 2 }, db: { migrate: { dryRun: true } } }; `sections: true` always reads a command's name as its section, `false` never
 .extend(padroneConfig({ command: true })) // `config get|set|unset|list|path|edit` for the user config file (JSON)
 ```
 

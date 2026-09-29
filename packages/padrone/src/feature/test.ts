@@ -1,26 +1,37 @@
 import type { InteractivePromptConfig, PadroneRuntime } from '../core/runtime.ts';
-import type { AnyPadroneCommand, PadroneCommandResult } from '../types/index.ts';
+import type { AnyPadroneCommand, PadroneCommand, PadroneCommandResult, PadroneSchema } from '../types/index.ts';
+import type { GetArguments, GetResults } from '../types/result.ts';
+import type { Drained, PickCommandByPossibleCommands, PossibleCommands, SafeString, WithGlobalArgs } from '../util/type-utils.ts';
 
 /**
  * Result from a single command execution in test mode.
- * Extends the standard PadroneCommandResult with captured I/O.
+ * Extends the standard PadroneCommandResult with captured I/O. `TCommand` is the command the input names
+ * (as `eval()` infers it), so `args` and `result` are typed.
  */
-export type TestCliResult = {
+export type TestCliResult<TCommand extends AnyPadroneCommand = AnyPadroneCommand> = {
   /** The matched command. */
-  command: AnyPadroneCommand;
+  command: TCommand;
   /** Validated arguments (undefined if validation failed). */
-  args: unknown;
-  /** Action handler return value (undefined if validation failed or no action). */
-  result: unknown;
+  args: TestValue<TCommand, GetArguments<'out', TCommand>>;
+  /** Action handler return value, awaited and with iterables collected (undefined if validation failed or no action). */
+  result: TestValue<TCommand, Drained<GetResults<TCommand>>>;
   /** Validation issues, if any. */
   issues: { message: string; path?: PropertyKey[] }[] | undefined;
   /** All values passed to `runtime.output()`. */
   stdout: unknown[];
   /** All strings passed to `runtime.error()`. */
   stderr: string[];
-  /** The thrown error, if the command threw (routing error, action error, etc.). */
+  /** The thrown error, if the command threw (routing error, action error, etc.). Anything can be thrown, so it's `unknown`. */
   error?: unknown;
 };
+
+/**
+ * A value that is only there when the command ran. `unknown` where the input doesn't name one command: a string that
+ * isn't a literal, or a name no command has (an interceptor, like completion or `commandNotFound`, may answer it).
+ */
+type TestValue<TCommand, T> = 0 extends 1 & T ? unknown : true extends IsUnion<TCommand> ? unknown : T | undefined;
+
+type IsUnion<T, U = T> = T extends unknown ? ([U] extends [T] ? false : true) : never;
 
 /**
  * Result from a REPL test session.
@@ -34,28 +45,62 @@ export type TestReplResult = {
   stderr: string[];
 };
 
+/** The program's root as `eval()` sees it, to pick the command an input names. */
+type TestRoot<TProgram> = TProgram extends {
+  '~types': {
+    argsSchema: infer A extends PadroneSchema;
+    globals: infer G extends PadroneSchema;
+    result: infer R;
+    commands: infer C extends [...AnyPadroneCommand[]];
+  };
+}
+  ? PadroneCommand<'', '', WithGlobalArgs<A, G>, R, C>
+  : AnyPadroneCommand;
+
+/** Inputs `eval()` recognizes for the program (command paths, optionally followed by arguments). */
+type TestInput<TProgram> = PossibleCommands<[TestRoot<TProgram>], true, true>;
+
+/** The command an input names. */
+type TestCommand<TProgram, TInput> = [TInput] extends [never]
+  ? AnyPadroneCommand
+  : [TInput] extends [TestInput<TProgram> | SafeString]
+    ? PickCommandByPossibleCommands<[TestRoot<TProgram>], TInput> extends infer C extends AnyPadroneCommand
+      ? // Words that reach the program itself may name no command at all (`__complete ...`, a typo)
+        TInput extends ''
+        ? C
+        : C['~types']['name'] extends ''
+          ? AnyPadroneCommand
+          : C
+      : AnyPadroneCommand
+    : AnyPadroneCommand;
+
+/** The context the program declares (`.context<T>()`), or anything when it declares none. */
+type TestContext<TProgram> = TProgram extends { '~types': { context: infer C } } ? (unknown extends C ? unknown : C) : unknown;
+
 /**
  * Fluent builder for setting up CLI test scenarios.
  */
-export type TestCliBuilder = {
+export type TestCliBuilder<TProgram = unknown, TArgsInput = string> = {
   /** Set the CLI input string (e.g. `'deploy --env production'`). */
-  args(input: string): TestCliBuilder;
+  args<const TInput extends TestInput<TProgram>>(input: TInput | SafeString): TestCliBuilder<TProgram, TInput>;
   /** Set environment variables visible to the command. */
-  env(vars: Record<string, string | undefined>): TestCliBuilder;
+  env(vars: Record<string, string | undefined>): TestCliBuilder<TProgram, TArgsInput>;
   /**
    * Provide mock answers for interactive prompts. Keys are field names, and prompt names for `ctx.prompt` (a `group()` step's key,
    * its `name`, else its message). `PROMPT_CANCEL` as an answer cancels that prompt.
    */
-  prompt(answers: Record<string, unknown>): TestCliBuilder;
+  prompt(answers: Record<string, unknown>): TestCliBuilder<TProgram, TArgsInput>;
   /** Provide mock stdin data (simulates piped input). */
-  stdin(data: string): TestCliBuilder;
-  /** The context commands receive (`ctx.context`), as passed to `cli()` / `eval()`. */
-  context(value: unknown): TestCliBuilder;
+  stdin(data: string): TestCliBuilder<TProgram, TArgsInput>;
+  /** The context commands receive (`ctx.context`), as passed to `cli()` / `eval()`: typed as the one the program declares. */
+  context(value: TestContext<TProgram>): TestCliBuilder<TProgram, TArgsInput>;
   /**
    * Execute a single command via `eval()` and return the result with captured I/O.
    * @param input - Optional CLI input string. Overrides `.args()` if provided.
    */
-  run(input?: string): Promise<TestCliResult>;
+  run<const TInput extends TestInput<TProgram> = never>(
+    input?: TInput | SafeString,
+  ): Promise<TestCliResult<TestCommand<TProgram, [TInput] extends [never] ? TArgsInput : TInput>>>;
   /**
    * Run a REPL session with the given sequence of inputs.
    * Each string in the array is fed as one line of input.
@@ -120,14 +165,15 @@ type TestableProgram = {
   repl: (options?: any) => AsyncIterable<any>;
 };
 
-export function testCli(program: TestableProgram): TestCliBuilder {
+export function testCli<TProgram extends TestableProgram>(program: TProgram): TestCliBuilder<TProgram> {
   let input: string | undefined;
   let envVars: Record<string, string | undefined> | undefined;
   let promptAnswers: Record<string, unknown> | undefined;
   let stdinData: string | undefined;
   let context: unknown;
 
-  const builder: TestCliBuilder = {
+  // The input's type only narrows the result types: at runtime every builder is this one
+  const builder: TestCliBuilder<any, any> = {
     args(args: string) {
       input = args;
       return builder;
@@ -149,7 +195,7 @@ export function testCli(program: TestableProgram): TestCliBuilder {
       return builder;
     },
 
-    async run(runInput?: string) {
+    async run(runInput?: string): Promise<any> {
       const stdout: unknown[] = [];
       const stderr: string[] = [];
 

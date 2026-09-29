@@ -262,4 +262,8 @@ export type CommandTypesBase = {
   };
 };
 
-export type GetArgsMeta<TArgs extends PadroneSchema> = PadroneArgsSchemaMeta<NonNullable<StandardSchemaV1.InferInput<TArgs>>>;
+/** The meta of `.arguments(schema, meta)`: its field rules may name the schema's options and the global ones (`TGlobals`). */
+export type GetArgsMeta<TArgs extends PadroneSchema, TGlobals extends PadroneSchema = PadroneSchema<void>> = PadroneArgsSchemaMeta<
+  NonNullable<StandardSchemaV1.InferInput<TArgs>>,
+  (keyof NonNullable<StandardSchemaV1.InferInput<TArgs>> | keyof NonNullable<StandardSchemaV1.InferInput<TGlobals>>) & string
+>;

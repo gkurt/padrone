@@ -31,7 +31,11 @@ type Letter =
 /** A single letter character, valid as a short CLI flag (e.g. `'v'`, `'n'`, `'V'`). */
 export type SingleChar = Letter | Uppercase<Letter>;
 
-export interface PadroneFieldMeta {
+/**
+ * Metadata of an option or positional. `TKey` is the option names `conflicts`, `implies`, `requires`, `requiredIf` and
+ * `requiredUnless` may name: in `.arguments()`, the command's own options and its global ones.
+ */
+export interface PadroneFieldMeta<TKey extends string = string> {
   description?: string;
   /** Single-character short flags (stackable: `-abc` = `-a -b -c`). Used with single dash. */
   flags?: readonly SingleChar[] | SingleChar;
@@ -69,21 +73,21 @@ export interface PadroneFieldMeta {
    */
   fromFile?: boolean;
   /** Options (by field name) that can't be used together with this one. Only options the user provided are checked. */
-  conflicts?: readonly string[] | string;
+  conflicts?: readonly TKey[] | TKey;
   /**
    * Values for other options (by field name) to use when this option is provided and not `false`.
    * Options given explicitly keep their value. @example `{ color: false }`
    */
-  implies?: Record<string, unknown>;
+  implies?: { readonly [K in TKey]?: unknown };
   /** Other options (by field name) that must be provided when this one is. */
-  requires?: readonly string[] | string;
+  requires?: readonly TKey[] | TKey;
   /**
    * Required when every listed option has the given value: `{ format: 'file' }`. An array of such objects: required when any matches.
    * Compares the typed value (`{ port: 80 }` matches `--port 80`), including implied values; schema defaults don't count.
    */
-  requiredIf?: Record<string, unknown> | readonly Record<string, unknown>[];
+  requiredIf?: { readonly [K in TKey]?: unknown } | readonly { readonly [K in TKey]?: unknown }[];
   /** Required unless one of these options is provided. */
-  requiredUnless?: readonly string[] | string;
+  requiredUnless?: readonly TKey[] | TKey;
   /** Secret value (token, password): prompted without echo, and never shown in help defaults, env values, logs, traces or errors. */
   sensitive?: boolean;
   /**
@@ -146,7 +150,7 @@ export type PadroneCompleteContext = {
 type PositionalArgs<TObj> =
   TObj extends Record<string, any>
     ? {
-        [K in keyof TObj]: NonNullable<TObj[K]> extends Array<any> ? `...${K & string}` | (K & string) : K & string;
+        [K in keyof TObj]-?: NonNullable<TObj[K]> extends Array<any> ? `...${K & string}` | (K & string) : K & string;
       }[keyof TObj]
     : string;
 
@@ -191,7 +195,7 @@ export type PadroneFieldGroups<TObj = Record<string, any>> =
   | readonly (keyof TObj & string)[]
   | readonly (readonly (keyof TObj & string)[])[];
 
-export interface PadroneArgsSchemaMeta<TObj = Record<string, any>> {
+export interface PadroneArgsSchemaMeta<TObj = Record<string, any>, TKeys extends string = keyof TObj & string> {
   /**
    * Array of argument names that should be treated as positional arguments.
    * Order in array determines position. Use '...name' prefix for variadic args.
@@ -201,7 +205,7 @@ export interface PadroneArgsSchemaMeta<TObj = Record<string, any>> {
   /**
    * Per-argument metadata.
    */
-  fields?: { [K in keyof TObj]?: PadroneFieldMeta };
+  fields?: { [K in keyof TObj]?: PadroneFieldMeta<TKeys> };
   /**
    * Options of which exactly one must be provided, like oclif's `exactlyOne`: `exactlyOne: ['file', 'url']` requires
    * `--file` or `--url`, not both. Pass several groups as an array of arrays: `[['file', 'url'], ['json', 'yaml']]`.

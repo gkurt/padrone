@@ -66,12 +66,12 @@ describe('globalArgs', () => {
   it('lets a subcommand override a global with its own field', () => {
     expect(createProgram().eval(['scale', '--verbose', '3']).args).toEqual({ verbose: 3, profile: 'default' });
     // The override's flags don't include the global `-v`
-    expect(issuesOf(createProgram().eval(['scale', '-v']))).toEqual(['v: Unknown option: "v"']);
+    expect(issuesOf(createProgram().eval(['scale', '-v']))).toEqual(['v: Unknown option "-v"']);
   });
 
   it('lets a subcommand extend the globals for its subtree', () => {
     expect(createProgram().eval(['cloud', 'up', '-r', 'eu', '-v']).args).toEqual({ region: 'eu', verbose: true, profile: 'default' });
-    expect(issuesOf(createProgram().eval(['logs', '--region', 'eu']))).toEqual(['region: Unknown option: "region"']);
+    expect(issuesOf(createProgram().eval(['logs', '--region', 'eu']))).toEqual(['region: Unknown option "--region"']);
   });
 
   it('validates global args', () => {
@@ -86,7 +86,7 @@ describe('globalArgs', () => {
   });
 
   it('still rejects unknown options', () => {
-    expect(issuesOf(createProgram().eval(['deploy', 'prod', '--nope']))).toEqual(['nope: Unknown option: "nope"']);
+    expect(issuesOf(createProgram().eval(['deploy', 'prod', '--nope']))).toEqual(['nope: Unknown option "--nope"']);
   });
 
   it('works with parse()', () => {

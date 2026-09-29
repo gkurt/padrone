@@ -37,23 +37,22 @@ test('greet command', async () => {
 | `.args(input)` | Set the CLI input string |
 | `.env(vars)` | Set environment variables |
 | `.prompt(answers)` | Provide mock answers for interactive prompts, by field name or `ctx.prompt` question name (`PROMPT_CANCEL` cancels one) |
-| `.config(files)` | Provide mock config file contents |
 | `.stdin(data)` | Provide mock stdin data (piped input) |
-| `.context(value)` | The context commands receive (`ctx.context`), as passed to `cli()` |
+| `.context(value)` | The context commands receive (`ctx.context`), as passed to `cli()`: typed as the one the program declares |
 | `.run(input?)` | Execute the command and return the result |
 | `.repl(inputs)` | Run a REPL session with a sequence of inputs |
 
-All builder methods are chainable and `.run()` / `.repl()` return a Promise.
+All builder methods are chainable and `.run()` / `.repl()` return a Promise. Mock config files with `padroneConfig({ loadConfig })`.
 
 ## Test Result
 
-`run()` returns a `TestCliResult`:
+`run()` returns a `TestCliResult`, typed by the command the input names, like `eval()`: `(await testCli(program).run('list --limit 2')).result` has the `list` action's type, with no casts.
 
 | Property | Type | Description |
 |----------|------|-------------|
 | `command` | `PadroneCommand` | The matched command |
-| `args` | `unknown` | Validated arguments (`undefined` if validation failed) |
-| `result` | `unknown` | Action handler return value |
+| `args` | the command's args | Validated arguments (`undefined` if validation failed) |
+| `result` | the action's result | Action handler return value, awaited, with iterables collected into arrays (`unknown` for an input that names no command, like `__complete ...` or a non-literal string) |
 | `issues` | `Array \| undefined` | Validation issues, if any |
 | `stdout` | `unknown[]` | All values passed to `runtime.output()` |
 | `stderr` | `string[]` | All strings passed to `runtime.error()` |

@@ -27,7 +27,7 @@ describe('--repl from remote callers', () => {
     for (const caller of ['serve', 'mcp', 'tool'] as const) {
       const result = await program.eval(['--repl'], { caller, runtime: { ...quiet, readLine: repl } } as any);
       expect(repl).not.toHaveBeenCalled();
-      expect(result.argsResult?.issues).toEqual([{ path: ['repl'], message: 'Unknown option: "repl"' }]);
+      expect(result.argsResult?.issues).toEqual([{ path: ['repl'], message: 'Unknown option "--repl"' }]);
     }
   });
 

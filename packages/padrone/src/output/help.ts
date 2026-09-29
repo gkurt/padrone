@@ -3,6 +3,7 @@ import {
   extractFieldRules,
   extractSchemaMetadata,
   getJsonSchema,
+  getOptionArity,
   getStdinConfig,
   isSensitiveField,
   optionDisplayName,
@@ -190,9 +191,10 @@ function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSc
           description: optMeta?.description ?? prop.description,
           optional: isOptional,
           default: sensitive ? undefined : prop.default,
-          type: isCount ? undefined : propType === 'array' ? `${prop.items?.type || 'string'}[]` : propType,
+          type: isCount ? undefined : propType === 'array' ? `${prop.items?.type || 'string'}[]` : valueType(prop.type),
           enum: enumValues,
           valueName: optMeta?.valueName ?? prop?.valueName,
+          ...(getOptionArity(prop) === 'optional' && { optionalValue: true }),
           deprecated: optMeta?.deprecated ?? prop?.deprecated,
           hidden: optMeta?.hidden ?? prop?.hidden,
           examples: sensitive ? undefined : (optMeta?.examples ?? prop?.examples),
@@ -209,6 +211,12 @@ function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSc
   }
 
   return result;
+}
+
+/** The type an option's value is shown as: `string` for `boolean | string` (the boolean is the value left out). */
+function valueType(type: unknown): string | undefined {
+  if (!Array.isArray(type)) return type as string | undefined;
+  return type.filter((t) => t !== 'boolean' && t !== 'null').join('|') || undefined;
 }
 
 /** Option info for a schema, with its short flags and aliases attached. */

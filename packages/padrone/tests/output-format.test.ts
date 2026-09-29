@@ -175,7 +175,7 @@ describe('padroneFormat', () => {
 
   it('renders a table', () => {
     const [table] = run('users -o table --columns id,name --sort name --no-header') as string[];
-    expect(table!.split('\n')).toEqual([' 1 │ Alice, A. ', ' 2 │ Bob       ', ' 3 │ Carol "C" ']);
+    expect(table!.split('\n')).toEqual([' 1 │ Alice, A.', ' 2 │ Bob', ' 3 │ Carol "C"']);
     const [streamed] = run('stream -o table --columns id') as string[];
     expect(streamed!.split('\n')[0]).toContain('id');
   });

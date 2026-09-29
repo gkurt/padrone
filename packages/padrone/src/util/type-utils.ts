@@ -340,21 +340,23 @@ type CommandIsUnknownable<TCommand> =
  * Recursively re-paths a command's children under a new parent path.
  * Used by `mount()` to update all nested command paths when a program is mounted as a subcommand.
  */
-export type RepathCommands<TCommands extends [...AnyPadroneCommand[]], TNewParentPath extends string> = TCommands extends [
-  infer First extends AnyPadroneCommand,
-  ...infer Rest extends AnyPadroneCommand[],
-]
-  ? [RepathCommand<First, TNewParentPath>, ...RepathCommands<Rest, TNewParentPath>]
+/** Commands moved under a new parent path, with the global args in effect there (`TGlobals`) merged into their args. */
+export type RepathCommands<
+  TCommands extends [...AnyPadroneCommand[]],
+  TNewParentPath extends string,
+  TGlobals extends PadroneSchema = PadroneSchema<void>,
+> = TCommands extends [infer First extends AnyPadroneCommand, ...infer Rest extends AnyPadroneCommand[]]
+  ? [RepathCommand<First, TNewParentPath, TGlobals>, ...RepathCommands<Rest, TNewParentPath, TGlobals>]
   : [];
 
-type RepathCommand<TCommand extends AnyPadroneCommand, TNewParentName extends string> = PadroneCommand<
+type RepathCommand<TCommand extends AnyPadroneCommand, TNewParentName extends string, TGlobals extends PadroneSchema> = PadroneCommand<
   TCommand['~types']['name'],
   TNewParentName,
-  TCommand['~types']['argsSchema'],
+  WithGlobalArgs<TCommand['~types']['argsSchema'], TGlobals>,
   TCommand['~types']['result'],
-  RepathCommands<TCommand['~types']['commands'], FullCommandName<TCommand['~types']['name'], TNewParentName>>,
+  RepathCommands<TCommand['~types']['commands'], FullCommandName<TCommand['~types']['name'], TNewParentName>, TGlobals>,
   TCommand['~types']['aliases'],
-  TCommand['~types']['async'],
+  OrAsync<TCommand['~types']['async'], TGlobals>,
   TCommand['~types']['context'],
   TCommand['~types']['contextProvided']
 >;

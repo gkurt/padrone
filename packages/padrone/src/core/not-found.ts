@@ -5,7 +5,7 @@ import type {
   PadroneEventContext,
   PadroneInput,
 } from '../types/index.ts';
-import { findCommandByName, getExtraCommands, subcommandNames, suggestSimilar } from './commands.ts';
+import { findCommandByName, getExtraCommands, suggestSubcommands } from './commands.ts';
 import { defineEvent, eventHandlers, withEmit } from './events.ts';
 import { parseCliInputToParts, tokenizeInput } from './parse.ts';
 import { createParseResolver } from './validate.ts';
@@ -109,7 +109,11 @@ export function emitCommandNotFound(
     args: index === -1 ? unmatchedTerms.slice(1) : tokens.slice(index + 1),
     command,
     input,
-    suggestions: suggestSimilar(name, [...subcommandNames(command), ...getExtraCommands(command).map((c) => c.name)]),
+    suggestions: suggestSubcommands(
+      name,
+      command,
+      getExtraCommands(command).map((c) => c.name),
+    ),
     get handled() {
       return outcome !== undefined;
     },

@@ -1023,12 +1023,17 @@ export const remove = defineCommand((c) =>
 // With the context the program passes: give the type to defineCommand() and call the result
 export const list = defineCommand<{ db: Database }>()((c) => c.action((_args, ctx) => ctx.context.db.list()));
 
+// With the program's global args too (the type of the schema passed to `.globalArgs()`), typed in `args`
+export const status = defineCommand<{ db: Database }, typeof globals>()((c) => c.action((args) => (args.verbose ? 'details' : 'ok')));
+
 // Context an interceptor must provide: without it, `.command()` returns a `DefineCommandRequiresError` type
 export const audit = defineCommand().requires<{ logger: PadroneLogger }>().define((c) => c.action((_args, ctx) => ctx.context.logger.info('audit')));
 
 // cli.ts
 createPadrone('app').context<{ db: Database }>().command(['remove', 'rm'], remove).command('list', list);
 ```
+
+Once registered, every command takes the global args of the program it's added to in `run()`, `api()` and `InferArgsOutput`, with or without the second type argument, which only types them inside the command.
 
 `defineCommand<Context>(fn)` (a type argument together with the callback) is a type error: TypeScript can't infer the command's type once a type argument is given, so pass the context type to `defineCommand<Context>()` and call the result with the callback.
 

@@ -686,7 +686,7 @@ const withDb = defineInterceptor({ name: 'with-db' })
   .factory(() => ({
     execute: (ctx, next) => {
       const db = createDatabase();
-      return next({ context: { ...ctx.context, db } });
+      return next({ context: { db } }); // merged into the existing context
     },
   }));
 

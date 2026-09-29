@@ -2,6 +2,7 @@ import { ValidationError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { OptionArity } from '../core/parse.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
+import type { HelpArgumentInfo } from '../output/formatter.ts';
 import { renderTable, sanitizeValue, stringifyCell } from '../output/primitives.ts';
 import { resolveOutputFormat } from '../output/styling.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneActionContext, PadroneInput } from '../types/index.ts';
@@ -218,7 +219,35 @@ function createFormatInterceptor(options: PadroneFormatOptions) {
     ...(options.tableFlags && { columns: 'value' as const, sort: 'value' as const, header: 'flag' as const }),
   };
 
-  return defineInterceptor({ id: 'padrone:format', name: 'padrone:format', order: -1102, options: flagOptions }, () => {
+  const [long, ...short] = [...flagNames].sort((a, b) => b.length - a.length);
+  const helpOptions: HelpArgumentInfo[] = [
+    {
+      name: long!,
+      flags: short.filter((name) => name.length === 1),
+      aliases: short.filter((name) => name.length > 1),
+      type: 'string',
+      enum: [...formats],
+      valueName: 'format',
+      optional: true,
+      ...(defaultFormat !== 'text' && { default: defaultFormat }),
+      description: 'Output format',
+    },
+    ...(options.tableFlags
+      ? [
+          { name: 'columns', type: 'string', valueName: 'list', optional: true, description: 'Columns to print, comma-separated' },
+          {
+            name: 'sort',
+            type: 'string',
+            valueName: 'column',
+            optional: true,
+            description: 'Sort rows by a column (-column for descending)',
+          },
+          { name: 'no-header', optional: true, description: 'Leave out the header row' },
+        ]
+      : []),
+  ];
+
+  return defineInterceptor({ id: 'padrone:format', name: 'padrone:format', order: -1102, options: flagOptions, helpOptions }, () => {
     let applied = false;
 
     const read = (

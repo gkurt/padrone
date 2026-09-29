@@ -287,6 +287,8 @@ Creates or extends a subcommand.
 export const remove = defineCommand((c) => c.arguments(z.object({ ids: z.array(z.number()) })).action((args) => args.ids));
 // With the program's context: type argument on defineCommand(), then call the result with the builder function
 export const list = defineCommand<{ db: Database }>()((c) => c.action((_args, ctx) => ctx.context.db.list()));
+// With the program's global args typed in `args` (reusable: `export const command = defineCommand<Ctx, typeof globals>()`)
+export const status = defineCommand<{ db: Database }, typeof globals>()((c) => c.action((args) => args.verbose));
 // Context an interceptor must provide (a type error where the program doesn't provide it)
 export const audit = defineCommand().requires<{ logger: PadroneLogger }>().define((c) => c.action((_a, ctx) => ctx.context.logger.info('x')));
 

@@ -50,7 +50,7 @@ export const discounts = defineInterceptor({ name: 'discounts' })
       const coupon = ctx.context.kitchen.coupon;
       const rate = coupon ? COUPONS[coupon] : undefined;
       if (coupon && rate) list.push({ label: `Coupon ${coupon} (${rate * 100}% off)`, rate });
-      return next({ context: { ...ctx.context, discounts: list } });
+      return next({ context: { discounts: list } });
     },
   }))
   .provides<{ discounts: Discount[] }>();

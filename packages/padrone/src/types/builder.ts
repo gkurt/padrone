@@ -95,25 +95,45 @@ type AddCommand<
 
 /**
  * A command built without a known name (by `defineCommand()`, whose builder is typed with `string` names)
- * takes the name and parent path it's registered under, so `run()`, `api()` and `find()` can look it up.
+ * takes the name and parent path it's registered under, so `run()`, `api()` and `find()` can look it up,
+ * and the global args of its new parent (`TGlobals`), which it accepts at runtime.
  */
 type NamedSubcommand<
   TCommand extends AnyPadroneCommand,
   TNameNested extends string,
   TParentPath extends string,
+  TGlobals extends PadroneSchema = PadroneSchema<void>,
 > = string extends TCommand['~types']['name']
   ? PadroneCommand<
       TNameNested,
       TParentPath,
-      TCommand['~types']['argsSchema'],
+      WithGlobalArgs<TCommand['~types']['argsSchema'], TGlobals>,
       TCommand['~types']['result'],
-      RepathCommands<TCommand['~types']['commands'], FullCommandName<TNameNested, TParentPath>>,
+      RepathCommands<TCommand['~types']['commands'], FullCommandName<TNameNested, TParentPath>, TGlobals>,
       TCommand['~types']['aliases'],
-      TCommand['~types']['async'],
+      OrAsync<TCommand['~types']['async'], TGlobals>,
       TCommand['~types']['context'],
       TCommand['~types']['contextProvided']
     >
   : TCommand;
+
+/** A program mounted as `TNameNested` under `TParentPath`: its root command and subcommands, with the parent's global args. */
+type MountedCommand<
+  TProgram extends CommandTypesBase,
+  TNameNested extends string,
+  TParentPath extends string,
+  TContext,
+  TGlobals extends PadroneSchema,
+> = PadroneCommand<
+  TNameNested,
+  TParentPath,
+  WithGlobalArgs<TProgram['~types']['command']['~types']['argsSchema'], TGlobals>,
+  TProgram['~types']['command']['~types']['result'],
+  RepathCommands<TProgram['~types']['command']['~types']['commands'], FullCommandName<TNameNested, TParentPath>, TGlobals>,
+  [],
+  OrAsync<TProgram['~types']['command']['~types']['async'], TGlobals>,
+  TContext
+>;
 
 /**
  * The trailing preferences parameter of `cli()`, `eval()`, `run()`, `repl()` and `api()`: optional, unless the program
@@ -826,7 +846,7 @@ export type PadroneBuilderMethods<
         TCommands,
         TNameNested,
         TAliases,
-        NamedSubcommand<TBuilder['~types']['command'], TNameNested, FullCommandName<TName, TParentName>>
+        NamedSubcommand<TBuilder['~types']['command'], TNameNested, FullCommandName<TName, TParentName>, TGlobals>
       >,
       TParentArgs,
       TAsync,
@@ -850,7 +870,7 @@ export type PadroneBuilderMethods<
             TCommands,
             TNameNested,
             TAliases,
-            NamedSubcommand<TBuilder['~types']['command'], TNameNested, FullCommandName<TName, TParentName>>
+            NamedSubcommand<TBuilder['~types']['command'], TNameNested, FullCommandName<TName, TParentName>, TGlobals>
           >,
           TParentArgs,
           TAsync,
@@ -876,7 +896,7 @@ export type PadroneBuilderMethods<
         TCommands,
         TNameNested,
         TAliases,
-        NamedSubcommand<TBuilder['~types']['command'], TNameNested, FullCommandName<TName, TParentName>>
+        NamedSubcommand<TBuilder['~types']['command'], TNameNested, FullCommandName<TName, TParentName>, TGlobals>
       >,
       TParentArgs,
       TAsync,
@@ -898,64 +918,12 @@ export type PadroneBuilderMethods<
       TParentName,
       TArgs,
       TRes,
-      TCommands extends []
-        ? [
-            WithAliases<
-              PadroneCommand<
-                TNameNested,
-                FullCommandName<TName, TParentName>,
-                TProgram['~types']['command']['~types']['argsSchema'],
-                TProgram['~types']['command']['~types']['result'],
-                RepathCommands<
-                  TProgram['~types']['command']['~types']['commands'],
-                  FullCommandName<TNameNested, FullCommandName<TName, TParentName>>
-                >,
-                [],
-                TProgram['~types']['command']['~types']['async'],
-                TContext & TContextProvided
-              >,
-              TAliases
-            >,
-          ]
-        : AnyPadroneCommand[] extends TCommands
-          ? [
-              WithAliases<
-                PadroneCommand<
-                  TNameNested,
-                  FullCommandName<TName, TParentName>,
-                  TProgram['~types']['command']['~types']['argsSchema'],
-                  TProgram['~types']['command']['~types']['result'],
-                  RepathCommands<
-                    TProgram['~types']['command']['~types']['commands'],
-                    FullCommandName<TNameNested, FullCommandName<TName, TParentName>>
-                  >,
-                  [],
-                  TProgram['~types']['command']['~types']['async'],
-                  TContext & TContextProvided
-                >,
-                TAliases
-              >,
-            ]
-          : ReplaceOrAppendCommand<
-              TCommands,
-              TNameNested,
-              WithAliases<
-                PadroneCommand<
-                  TNameNested,
-                  FullCommandName<TName, TParentName>,
-                  TProgram['~types']['command']['~types']['argsSchema'],
-                  TProgram['~types']['command']['~types']['result'],
-                  RepathCommands<
-                    TProgram['~types']['command']['~types']['commands'],
-                    FullCommandName<TNameNested, FullCommandName<TName, TParentName>>
-                  >,
-                  [],
-                  TProgram['~types']['command']['~types']['async'],
-                  TContext & TContextProvided
-                >,
-                ResolvedAliases<TCommands, TNameNested, TAliases>
-              >
-            >,
+      AddCommand<
+        TCommands,
+        TNameNested,
+        TAliases,
+        MountedCommand<TProgram, TNameNested, FullCommandName<TName, TParentName>, TContext & TContextProvided, TGlobals>
+      >,
       TParentArgs,
       TAsync,
       TContext,
@@ -979,64 +947,12 @@ export type PadroneBuilderMethods<
       TParentName,
       TArgs,
       TRes,
-      TCommands extends []
-        ? [
-            WithAliases<
-              PadroneCommand<
-                TNameNested,
-                FullCommandName<TName, TParentName>,
-                TProgram['~types']['command']['~types']['argsSchema'],
-                TProgram['~types']['command']['~types']['result'],
-                RepathCommands<
-                  TProgram['~types']['command']['~types']['commands'],
-                  FullCommandName<TNameNested, FullCommandName<TName, TParentName>>
-                >,
-                [],
-                TProgram['~types']['command']['~types']['async'],
-                TNewContext
-              >,
-              TAliases
-            >,
-          ]
-        : AnyPadroneCommand[] extends TCommands
-          ? [
-              WithAliases<
-                PadroneCommand<
-                  TNameNested,
-                  FullCommandName<TName, TParentName>,
-                  TProgram['~types']['command']['~types']['argsSchema'],
-                  TProgram['~types']['command']['~types']['result'],
-                  RepathCommands<
-                    TProgram['~types']['command']['~types']['commands'],
-                    FullCommandName<TNameNested, FullCommandName<TName, TParentName>>
-                  >,
-                  [],
-                  TProgram['~types']['command']['~types']['async'],
-                  TNewContext
-                >,
-                TAliases
-              >,
-            ]
-          : ReplaceOrAppendCommand<
-              TCommands,
-              TNameNested,
-              WithAliases<
-                PadroneCommand<
-                  TNameNested,
-                  FullCommandName<TName, TParentName>,
-                  TProgram['~types']['command']['~types']['argsSchema'],
-                  TProgram['~types']['command']['~types']['result'],
-                  RepathCommands<
-                    TProgram['~types']['command']['~types']['commands'],
-                    FullCommandName<TNameNested, FullCommandName<TName, TParentName>>
-                  >,
-                  [],
-                  TProgram['~types']['command']['~types']['async'],
-                  TNewContext
-                >,
-                ResolvedAliases<TCommands, TNameNested, TAliases>
-              >
-            >,
+      AddCommand<
+        TCommands,
+        TNameNested,
+        TAliases,
+        MountedCommand<TProgram, TNameNested, FullCommandName<TName, TParentName>, TNewContext, TGlobals>
+      >,
       TParentArgs,
       TAsync,
       TContext,
@@ -1284,34 +1200,60 @@ export type DefineCommand<TContext = unknown, TParentArgs extends PadroneSchema 
 ) => CommandTypesBase;
 
 /** A command builder callback typed for `defineCommand()`. */
-type DefineCommandFn<TContext, TContextProvided, TOut extends CommandTypesBase> = (
-  builder: PadroneBuilder<string, string, string, PadroneSchema<void>, void, [], any, false, TContext, TContextProvided>,
+type DefineCommandFn<TContext, TContextProvided, TOut extends CommandTypesBase, TGlobals extends PadroneSchema = PadroneSchema<void>> = (
+  builder: PadroneBuilder<
+    string,
+    string,
+    string,
+    PadroneSchema<void>,
+    void,
+    [],
+    any,
+    OrAsync<false, TGlobals>,
+    TContext,
+    TContextProvided,
+    TGlobals
+  >,
 ) => TOut;
 
 /**
  * Builder returned by `defineCommand()` (no-arg form). Call it with the command builder callback, after
- * `.requires<T>()` to declare context that interceptors must provide.
+ * `.requires<T>()` to declare context that interceptors must provide. It can be kept and reused for every command
+ * of a program: `export const command = defineCommand<Context, typeof globals>()`.
  *
  * @example
  * ```ts
  * const listCommand = defineCommand<{ db: Database }>()((c) => c.action((_args, ctx) => ctx.context.db.list()));
+ *
+ * // With the program's global args (the schema passed to `.globalArgs()`)
+ * const statusCommand = defineCommand<{ db: Database }, typeof globals>()((c) => c.action((args) => args.verbose));
  *
  * const adminCommand = defineCommand()
  *   .requires<{ adminDb: AdminDB }>()
  *   .define((c) => c.action((_args, ctx) => ctx.context.adminDb.query(...)));
  * ```
  */
-export type DefineCommandBuilder<TContextProvided = DefineCommandContext, TBrand = unknown, TContext = unknown> = {
+export type DefineCommandBuilder<
+  TContextProvided = DefineCommandContext,
+  TBrand = unknown,
+  TContext = unknown,
+  TGlobals extends PadroneSchema = PadroneSchema<void>,
+> = {
   /** Provide the command builder callback. */
   <TOut extends CommandTypesBase>(
-    fn: DefineCommandFn<TContext, TContextProvided, TOut>,
-  ): DefineCommandFn<TContext, TContextProvided, TOut> & TBrand;
+    fn: DefineCommandFn<TContext, TContextProvided, TOut, TGlobals>,
+  ): DefineCommandFn<TContext, TContextProvided, TOut, TGlobals> & TBrand;
   /** Declare context types this command requires. Purely type-level — no runtime effect. */
-  requires: <TRequires>() => DefineCommandBuilder<TContextProvided & TRequires, { '~contextRequires': (ctx: TRequires) => void }, TContext>;
+  requires: <TRequires>() => DefineCommandBuilder<
+    TContextProvided & TRequires,
+    { '~contextRequires': (ctx: TRequires) => void },
+    TContext,
+    TGlobals
+  >;
   /** Provide the command builder callback (same as calling the builder). */
   define: <TOut extends CommandTypesBase>(
-    fn: DefineCommandFn<TContext, TContextProvided, TOut>,
-  ) => DefineCommandFn<TContext, TContextProvided, TOut> & TBrand;
+    fn: DefineCommandFn<TContext, TContextProvided, TOut, TGlobals>,
+  ) => DefineCommandFn<TContext, TContextProvided, TOut, TGlobals> & TBrand;
 };
 
 type DefaultArgs = Record<string, unknown> | void;

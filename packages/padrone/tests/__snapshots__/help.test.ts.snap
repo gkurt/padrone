@@ -73,11 +73,11 @@ Commands:
   [default]
   extended
 
-Run "padrone-test list extended [command] --help" for more information on a command.
-
 Options:
   --status    [string]  Filter by status (choices: pending, in_progress, completed)
   --priority  [string]  Filter by priority (default: medium) (choices: low, medium, high)
+
+Run "padrone-test list extended [command] --help" for more information on a command.
 "
 `;
 
@@ -316,12 +316,12 @@ Commands:
   extended
   extended <subcommand>
 
-Run "padrone-test list [command] --help" for more information on a command.
-
 Options:
   --status    [string]  Filter by status (choices: pending, in_progress, completed)
   --limit     [number]  Maximum number of tasks (default: 10)
   --priority  [string]  Filter by priority (default: medium) (choices: low, medium, high)
+
+Run "padrone-test list [command] --help" for more information on a command.
 
 Subcommand Details:
 
@@ -332,11 +332,11 @@ Commands:
   [default]
   extended
 
-Run "padrone-test list extended [command] --help" for more information on a command.
-
 Options:
   --status    [string]  Filter by status (choices: pending, in_progress, completed)
   --priority  [string]  Filter by priority (default: medium) (choices: low, medium, high)
+
+Run "padrone-test list extended [command] --help" for more information on a command.
 
 Subcommand Details:
 
@@ -1254,10 +1254,6 @@ Start an interactive REPL
 
 
 
-*Run "padrone-test list [command] --help" for more information on a command.*
-
-
-
 ### Options:
 
   \`--status\`    \`[string]\`  Filter by status
@@ -1271,6 +1267,10 @@ Start an interactive REPL
   \`--priority\`  \`[string]\`  Filter by priority
 
     *(default: medium)* *(choices: low, medium, high)*
+
+
+
+*Run "padrone-test list [command] --help" for more information on a command.*
 
 
 
@@ -1292,10 +1292,6 @@ Start an interactive REPL
 
 
 
-*Run "padrone-test list extended [command] --help" for more information on a command.*
-
-
-
 ### Options:
 
   \`--status\`    \`[string]\`  Filter by status
@@ -1305,6 +1301,10 @@ Start an interactive REPL
   \`--priority\`  \`[string]\`  Filter by priority
 
     *(default: medium)* *(choices: low, medium, high)*
+
+
+
+*Run "padrone-test list extended [command] --help" for more information on a command.*
 
 
 
@@ -1489,12 +1489,12 @@ Commands:
   extended
   extended <subcommand>
 
-Run "padrone-test list [command] --help" for more information on a command.
-
 Options:
   --status    [string]  Filter by status (choices: pending, in_progress, completed)
   --limit     [number]  Maximum number of tasks (default: 10)
   --priority  [string]  Filter by priority (default: medium) (choices: low, medium, high)
+
+Run "padrone-test list [command] --help" for more information on a command.
 
 Subcommand Details:
 
@@ -1505,11 +1505,11 @@ Commands:
   [default]
   extended
 
-Run "padrone-test list extended [command] --help" for more information on a command.
-
 Options:
   --status    [string]  Filter by status (choices: pending, in_progress, completed)
   --priority  [string]  Filter by priority (default: medium) (choices: low, medium, high)
+
+Run "padrone-test list extended [command] --help" for more information on a command.
 
 Subcommand Details:
 
@@ -1528,11 +1528,11 @@ Commands:
   [default]
   extended
 
-Run "padrone-test list extended [command] --help" for more information on a command.
-
 Options:
   --status    [string]  Filter by status (choices: pending, in_progress, completed)
   --priority  [string]  Filter by priority (default: medium) (choices: low, medium, high)
+
+Run "padrone-test list extended [command] --help" for more information on a command.
 
 Subcommand Details:
 
@@ -1552,12 +1552,12 @@ exports[`help with full detail mode should work with ansi format in full detail 
   \x1B[36m\x1B[1mextended\x1B[0m
   \x1B[36m\x1B[1mextended\x1B[0m\x1B[90m <subcommand>\x1B[0m
 
-\x1B[90mRun "padrone-test list [command] --help" for more information on a command.\x1B[0m
-
 \x1B[1mOptions:\x1B[0m
   \x1B[32m--status\x1B[0m    \x1B[33m[string]\x1B[0m  \x1B[2mFilter by status\x1B[0m \x1B[90m(choices: pending, in_progress, completed)\x1B[0m
   \x1B[32m--limit\x1B[0m     \x1B[33m[number]\x1B[0m  \x1B[2mMaximum number of tasks\x1B[0m \x1B[90m(default: 10)\x1B[0m
   \x1B[32m--priority\x1B[0m  \x1B[33m[string]\x1B[0m  \x1B[2mFilter by priority\x1B[0m \x1B[90m(default: medium)\x1B[0m \x1B[90m(choices: low, medium, high)\x1B[0m
+
+\x1B[90mRun "padrone-test list [command] --help" for more information on a command.\x1B[0m
 
 \x1B[1mSubcommand Details:\x1B[0m
 
@@ -1568,11 +1568,11 @@ exports[`help with full detail mode should work with ansi format in full detail 
   \x1B[90m[default]\x1B[0m
   \x1B[36m\x1B[1mextended\x1B[0m
 
-\x1B[90mRun "padrone-test list extended [command] --help" for more information on a command.\x1B[0m
-
 \x1B[1mOptions:\x1B[0m
   \x1B[32m--status\x1B[0m    \x1B[33m[string]\x1B[0m  \x1B[2mFilter by status\x1B[0m \x1B[90m(choices: pending, in_progress, completed)\x1B[0m
   \x1B[32m--priority\x1B[0m  \x1B[33m[string]\x1B[0m  \x1B[2mFilter by priority\x1B[0m \x1B[90m(default: medium)\x1B[0m \x1B[90m(choices: low, medium, high)\x1B[0m
+
+\x1B[90mRun "padrone-test list extended [command] --help" for more information on a command.\x1B[0m
 
 \x1B[1mSubcommand Details:\x1B[0m
 

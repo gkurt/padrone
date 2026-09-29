@@ -9,6 +9,8 @@ import {
   padroneEnv,
   padroneFormat,
   padroneJson,
+  padroneLogger,
+  padroneTiming,
   ValidationError,
 } from 'padrone';
 import * as z from 'zod/v4';
@@ -264,5 +266,82 @@ describe('command-line output', () => {
       process.stdout.isTTY = isTTY;
       log.mockRestore();
     }
+  });
+});
+
+describe('global args of commands defined elsewhere', () => {
+  const globals = z.object({ verbose: z.boolean().default(false) });
+  const echo = defineCommand((c) => c.arguments(z.object({ a: z.string() })).action((args) => args));
+  const group = defineCommand((c) => c.command('sub', (s) => s.arguments(z.object({ b: z.number() })).action((args) => args)));
+  const command = defineCommand<{ db: string }, typeof globals>();
+  const status = command((c) => c.action((args, ctx) => `${ctx.context.db}:${args.verbose}`));
+  const child = createPadrone('child').command('run', (c) => c.action((args) => args));
+  const program = createPadrone('app')
+    .runtime(quiet)
+    .context<{ db: string }>()
+    .globalArgs(globals)
+    .command('echo', echo)
+    .command('group', group)
+    .command('status', status)
+    .mount('child', child);
+  const context = { db: 'main' };
+
+  it('types the globals into their args for run() and api()', () => {
+    const api = program.api({ context });
+    expect(api.echo({ a: 'x', verbose: true })).toMatchObject({ verbose: true });
+    expect(api.group.sub({ b: 1, verbose: true })).toMatchObject({ verbose: true });
+    expect(api.child.run({ verbose: true })).toMatchObject({ verbose: true });
+    expect(program.run('echo', { a: 'x', verbose: true }, { context }).result).toMatchObject({ verbose: true });
+    type SubArgs = InferArgsOutput<InferCommand<typeof program, 'group sub'>>;
+    expectTypeOf<SubArgs['verbose']>().toEqualTypeOf<boolean>();
+    expectTypeOf<SubArgs['b']>().toEqualTypeOf<number>();
+    // @ts-expect-error unknown option
+    if (false as boolean) api.echo({ a: 'x', other: 1 });
+  });
+
+  it('types them inside the command with defineCommand<Context, typeof globals>()', () => {
+    expect(program.eval('status --verbose', { context }).result).toBe('main:true');
+    expectTypeOf(program.run('status', {}, { context }).result).toEqualTypeOf<string | undefined>();
+  });
+});
+
+describe('help for extension options', () => {
+  const program = createPadrone('app')
+    .runtime(quiet)
+    .extend(padroneFormat({ tableFlags: true }), padroneJson(), padroneLogger(), padroneTiming())
+    .command('ls', (c) => c.action(() => []))
+    .command('export', (c) => c.arguments(z.object({ out: z.string().optional() }), { fields: { out: { flags: 'o' } } }).action(() => 1));
+
+  it('lists the flags of --output, --json, the logger and timing, in the order the extensions were added', () => {
+    const help = program.help('ls');
+    const names = ['--output', '--columns', '--sort', '--no-header', '--json', '--jq', '--template', '--log-level', '--quiet', '--timing'];
+    const positions = names.map((name) => help.indexOf(name));
+    expect(positions.every((p) => p > 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(help).toContain('-o, --output');
+    expect(help).toContain('(choices: text, json, yaml, csv, tsv, table)');
+  });
+
+  it("leaves a command's own short flag to it", () => {
+    const lines = program.help('export').split('\n');
+    expect(lines.filter((line) => line.includes('-o,'))).toEqual([expect.stringContaining('--out')]);
+    expect(lines.some((line) => /^\s+--output/.test(line))).toBe(true);
+  });
+});
+
+describe('suggestions', () => {
+  it('names a mistyped command once, not also by its aliases', async () => {
+    const program = createPadrone('app')
+      .runtime(quiet)
+      .command(['list', 'ls'], (c) => c.action(() => 1));
+    expect((await program.eval('lst')).error).toMatchObject({ suggestions: ['Did you mean "list"?'] });
+  });
+
+  it('puts the subcommand help hint after the options', () => {
+    const program = createPadrone('app')
+      .runtime(quiet)
+      .command('tags', (c) => c.arguments(z.object({ all: z.boolean().optional() })).command('list', (s) => s.action(() => 1)));
+    const help = program.help('tags');
+    expect(help.indexOf('Run "app tags [command] --help"')).toBeGreaterThan(help.indexOf('--all'));
   });
 });

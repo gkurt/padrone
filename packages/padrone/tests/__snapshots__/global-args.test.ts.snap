@@ -7,17 +7,17 @@ Commands:
   [default]
   status
 
-Run "app deploy [command] --help" for more information on a command.
-
 Arguments:
-  env  
+  env
 
 Options:
-      --replicas  [number]  
+      --replicas  [number]
 
 Global Options:
-  -v, --verbose             
+  -v, --verbose
       --profile   [string]  (default: default)
       --format    [string]  (choices: text, json)
+
+Run "app deploy [command] --help" for more information on a command.
 "
 `;

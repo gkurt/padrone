@@ -196,7 +196,7 @@ describe('REPL: suggestions', () => {
 
   it('suggests within the current scope', async () => {
     const { errors } = await runRepl(['.scope db', '.scope migrat']);
-    expect(errors).toEqual(['Unknown command: migrat\n\n  Did you mean "migrate" or "mig"?']);
+    expect(errors).toEqual(['Unknown command: migrat\n\n  Did you mean "migrate"?']);
   });
 
   it('runs `help <command>` for the current scope, with suggestions', async () => {

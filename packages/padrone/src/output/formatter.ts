@@ -293,14 +293,6 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
       renderSubcommands(items!);
     }
 
-    // Skip hint when builtins are present — the builtins section shows a combined hint
-    if (!info.builtins?.length) {
-      lines.push('');
-      lines.push(
-        styler.meta(`Run "${info.usage.command} [command] ${info.usage.helpFlag ?? '--help'}" for more information on a command.`),
-      );
-    }
-
     return lines;
   }
 
@@ -346,9 +338,9 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
         const metaPlain = metaParts.join(' ');
         const fullPlain = [descPlain, metaPlain].filter(Boolean).join(' ');
         if (fullPlain.length <= posAvailWidth) {
-          lines.push(prefix + [styledDesc, metaStyled].filter(Boolean).join(' '));
+          lines.push((prefix + [styledDesc, metaStyled].filter(Boolean).join(' ')).trimEnd());
         } else if (!descPlain || descPlain.length <= posAvailWidth) {
-          lines.push(prefix + styledDesc);
+          lines.push((prefix + styledDesc).trimEnd());
           if (metaStyled) lines.push(descColPad + metaStyled);
         } else {
           const wrapped = wrapText(descPlain, posAvailWidth);
@@ -357,7 +349,7 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
           if (metaStyled) lines.push(descColPad + metaStyled);
         }
       } else {
-        lines.push(prefix + join([styledDesc, metaStyled]));
+        lines.push((prefix + join([styledDesc, metaStyled])).trimEnd());
       }
     }
 
@@ -468,9 +460,9 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
           const metaPlain = inlineMeta.join(' ');
           const fullPlain = [descPlain, metaPlain].filter(Boolean).join(' ');
           if (fullPlain.length <= argAvailWidth) {
-            lines.push(prefix + [styledDesc, metaStyled].filter(Boolean).join(' '));
+            lines.push((prefix + [styledDesc, metaStyled].filter(Boolean).join(' ')).trimEnd());
           } else if (!descPlain || descPlain.length <= argAvailWidth) {
-            lines.push(prefix + styledDesc);
+            lines.push((prefix + styledDesc).trimEnd());
             if (metaStyled) lines.push(descColPad + metaStyled);
           } else {
             const wrapped = wrapText(descPlain, argAvailWidth);
@@ -483,7 +475,7 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
           // No terminal width (markdown/html): description on line 1, meta on line 2
           const descParts: string[] = [];
           if (styledDesc) descParts.push(styledDesc);
-          lines.push(prefix + join(descParts));
+          lines.push((prefix + join(descParts)).trimEnd());
           if (styledInlineMeta.length > 0) lines.push(indent(3) + metaStyled);
         }
 
@@ -646,6 +638,12 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
 
       if (info.builtins && info.builtins.length > 0) {
         lines.push(...formatBuiltinsSection(info));
+        lines.push('');
+      } else if (info.subcommands && info.subcommands.length > 0) {
+        // Last, like the builtins section's combined hint
+        lines.push(
+          styler.meta(`Run "${info.usage.command} [command] ${info.usage.helpFlag ?? '--help'}" for more information on a command.`),
+        );
         lines.push('');
       }
 

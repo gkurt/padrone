@@ -1,11 +1,4 @@
-import {
-  buildReplCompleter,
-  findCommandByName,
-  formatSuggestions,
-  getCommandRuntime,
-  subcommandNames,
-  suggestSimilar,
-} from '../core/commands.ts';
+import { buildReplCompleter, findCommandByName, formatSuggestions, getCommandRuntime, suggestSubcommands } from '../core/commands.ts';
 import { createTerminalReplSession } from '../core/default-runtime.ts';
 import { formatErrorText } from '../core/errors.ts';
 import { REPL_SIGINT, type ReplSessionConfig } from '../core/runtime.ts';
@@ -227,7 +220,7 @@ export function createReplIterator(deps: ReplDeps, options?: PadroneReplPreferen
             const found = resolveScope(target, getScopeCommand());
             const parts = target.split(/\s+/);
             if (found.length < parts.length) {
-              const similar = suggestSimilar(parts[found.length]!, subcommandNames(found.at(-1) ?? getScopeCommand()));
+              const similar = suggestSubcommands(parts[found.length]!, found.at(-1) ?? getScopeCommand());
               runtime.error(`Unknown command: ${target}${similar.length ? `\n\n  ${formatSuggestions(similar)}` : ''}`);
             } else if (!found.at(-1)!.commands?.length) {
               runtime.error(`"${target}" has no subcommands to scope into.`);

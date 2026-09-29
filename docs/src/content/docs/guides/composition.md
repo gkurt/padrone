@@ -136,9 +136,20 @@ export const remove = defineCommand((c) =>
 // A command that uses the program's context: pass its type, then the builder function
 export const list = defineCommand<{ store: Store }>()((c) => c.action((_args, ctx) => ctx.context.store.items));
 
+// A command that reads the program's global args: pass the schema's type too.
+// The result of defineCommand<...>() can be kept and reused for every command.
+export const command = defineCommand<{ store: Store }, typeof globals>();
+export const stats = command((c) => c.action((args, ctx) => (args.verbose ? ctx.context.store.items : ctx.context.store.items.length)));
+
 // cli.ts
-const program = createPadrone('bm').context<{ store: Store }>().command(['remove', 'rm'], remove).command('list', list);
-program.run('rm', { ids: [1] }, { context: { store } }); // typed args and result
+export const globals = z.object({ verbose: z.boolean().default(false) });
+const program = createPadrone('bm')
+  .context<{ store: Store }>()
+  .globalArgs(globals)
+  .command(['remove', 'rm'], remove)
+  .command('list', list)
+  .command('stats', stats);
+program.run('rm', { ids: [1], verbose: true }, { context: { store } }); // typed args (global ones too) and result
 ```
 
 `defineCommand().requires<{ logger: PadroneLogger }>().define(fn)` declares context that an interceptor must provide: added to a program that doesn't provide it, `.command()` returns a `DefineCommandRequiresError` type, so the next use of the program is a type error.

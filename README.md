@@ -126,7 +126,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.action(handler)` | Set handler `(args, ctx, base?) => result` |
 | `.dryRun(handler)` | Add `--dry-run` / `-n`: runs `handler` instead of the action and prints what would change |
 | `.hook('preAction' \| 'postAction', handler)` | Run code before / after the action of the command and all its subcommands (ancestors' pre-hooks first, post-hooks last) |
-| `.command(name, builder)` | Add subcommand (name or `[name, ...aliases]`); `defineCommand((c) => ...)` types a builder kept in its own file (`defineCommand<Context>()((c) => ...)` with the program's context) |
+| `.command(name, builder)` | Add subcommand (name or `[name, ...aliases]`); `defineCommand((c) => ...)` types a builder kept in its own file (`defineCommand<Context>()((c) => ...)` with the program's context, `defineCommand<Context, typeof globals>()` with its global args too) |
 | `.describe(text)` | Set the description shown in help (shorthand for `.configure({ description })`) |
 | `.context(transform?)` | Define typed context or transform inherited context |
 | `.mount(name, program, options?)` | Mount another program as subcommand tree |

@@ -2,6 +2,7 @@ import { ValidationError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import type { OptionArity } from '../core/parse.ts';
 import type { ResolvedPadroneRuntime } from '../core/runtime.ts';
+import type { HelpArgumentInfo } from '../output/formatter.ts';
 import type { AnyPadroneBuilder, AnyPadroneCommand, CommandTypesBase, PadroneCaller } from '../types/index.ts';
 import type { JqOptions } from '../util/jq.ts';
 import { compileJq, compileTemplate, DEFAULT_JQ_MAX_STEPS, formatJqOutput } from '../util/jq.ts';
@@ -180,7 +181,22 @@ function createJsonInterceptor(options: PadroneJsonOptions) {
   const availableFor = (command: AnyPadroneCommand) =>
     typeof options.availableFields === 'function' ? options.availableFields(command) : options.availableFields;
 
-  return defineInterceptor({ id: 'padrone:json', name: 'padrone:json', order: -1101, options: flagOptions }, () => {
+  const helpOptions: HelpArgumentInfo[] = [
+    {
+      name: 'json',
+      ...(options.fields && { type: 'string', valueName: 'fields' }),
+      optional: true,
+      description: options.fields ? 'Print the result as JSON, only these comma-separated fields' : 'Print the result as JSON',
+    },
+    ...(jqEnabled
+      ? [{ name: 'jq', type: 'string', valueName: 'expr', optional: true, description: 'Filter the JSON result with a jq expression' }]
+      : []),
+    ...(templateEnabled
+      ? [{ name: 'template', type: 'string', valueName: 'template', optional: true, description: 'Format the JSON result with a template' }]
+      : []),
+  ];
+
+  return defineInterceptor({ id: 'padrone:json', name: 'padrone:json', order: -1101, options: flagOptions, helpOptions }, () => {
     const read = (rawArgs: Record<string, unknown>, command: AnyPadroneCommand, runtime: ResolvedPadroneRuntime, caller: PadroneCaller) => {
       const flags = frameworkFlags(rawArgs, command);
       const jq = jqEnabled ? flags.get('jq') : undefined;

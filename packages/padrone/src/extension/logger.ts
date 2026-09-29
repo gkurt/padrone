@@ -481,6 +481,17 @@ function loggerInterceptor(rawConfig?: PadroneLoggerConfig) {
       'log-level': 'value',
       ...(rawConfig?.shortFlags && { v: 'count' as const, q: 'flag' as const }),
     },
+    helpOptions: [
+      { name: 'log-level', type: 'string', enum: [...VALID_LEVELS], valueName: 'level', optional: true, description: 'Log level' },
+      {
+        name: 'verbose',
+        ...(rawConfig?.shortFlags && { flags: ['v'] }),
+        optional: true,
+        notes: ['repeatable'],
+        description: 'More logs (debug, then trace)',
+      },
+      { name: 'quiet', ...(rawConfig?.shortFlags && { flags: ['q'] }), optional: true, description: 'No logs' },
+    ],
   })
     .requires<{ tracing?: PadroneTracer; loggerConfig?: PadroneLoggerConfig }>()
     .factory(() => {

@@ -22,6 +22,7 @@ const timingMeta: InterceptorMeta = {
   name: 'padrone:timing',
   order: -1002,
   options: { timing: 'flag', time: 'flag' },
+  helpOptions: [{ name: 'timing', aliases: ['time'], optional: true, negatable: true, description: 'Print how long the command took' }],
 };
 
 function createTimingInterceptor(enabledByDefault: boolean, format: NonNullable<PadroneTimingOptions['format']>) {

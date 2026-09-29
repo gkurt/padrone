@@ -353,6 +353,12 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
  * );
  * ```
  *
+ * @example With the program's global args (the schema passed to `.globalArgs()`)
+ * ```ts
+ * export const command = defineCommand<{ db: Database }, typeof globals>();
+ * export const statusCommand = command((c) => c.action((args) => (args.verbose ? 'details' : 'ok')));
+ * ```
+ *
  * @example With required interceptor context
  * ```ts
  * export const adminCommand = defineCommand()
@@ -363,7 +369,12 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
 export function defineCommand<TOut extends CommandTypesBase>(
   fn: (builder: PadroneBuilder<string, string, string, PadroneSchema<void>, void, [], any, false, unknown, DefineCommandContext>) => TOut,
 ): typeof fn;
-export function defineCommand<TContext = unknown>(): DefineCommandBuilder<DefineCommandContext, unknown, TContext>;
+export function defineCommand<TContext = unknown, TGlobals extends PadroneSchema = PadroneSchema<void>>(): DefineCommandBuilder<
+  DefineCommandContext,
+  unknown,
+  TContext,
+  TGlobals
+>;
 export function defineCommand<TContext>(
   fn: 'Pass the context type with defineCommand<Context>()((c) => ...): an explicit type argument stops TypeScript from inferring the command',
 ): never;

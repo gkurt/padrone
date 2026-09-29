@@ -386,6 +386,20 @@ export function subcommandNames(command: AnyPadroneCommand): string[] {
 }
 
 /**
+ * The subcommands of `command` (and `extra` names) a mistyped `term` may have meant, best first, naming each
+ * subcommand once: `lst` suggests `list`, not `list` and its alias `ls`.
+ */
+export function suggestSubcommands(term: string, command: AnyPadroneCommand, extra: readonly string[] = []): string[] {
+  const seen = new Set<unknown>();
+  return suggestSimilar(term, [...extra, ...subcommandNames(command)]).filter((name) => {
+    const key = findCommandByName(name, command.commands) ?? name;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
  * Commands interceptors on `command`'s chain run under it without being in the tree (`extraCommands` meta, e.g. external
  * commands on `PATH`), minus names a subcommand already has. The nearest interceptor of an id wins.
  */

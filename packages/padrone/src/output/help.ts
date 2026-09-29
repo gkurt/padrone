@@ -399,8 +399,16 @@ export function getHelpInfo(
       ...(dryRunKeys.includes('n') && { flags: ['n'] }),
     });
   }
-  const listedNames = new Set([...visibleArgs, ...visibleInherited].map((arg) => arg.name));
-  for (const option of collectInterceptorHelpOptions(cmd)) if (!listedNames.has(option.name)) visibleArgs.push({ ...option });
+  // Names and short flags the command's own options use belong to them (the parser reads them first)
+  const listed = [...visibleArgs, ...visibleInherited];
+  const listedNames = new Set(listed.flatMap((arg) => [arg.name, ...(arg.aliases ?? [])]));
+  const listedFlags = new Set(listed.flatMap((arg) => arg.flags ?? []));
+  for (const option of collectInterceptorHelpOptions(cmd)) {
+    if (listedNames.has(option.name)) continue;
+    const flags = option.flags?.filter((flag) => !listedFlags.has(flag));
+    const aliases = option.aliases?.filter((alias) => !listedNames.has(alias));
+    visibleArgs.push({ ...option, ...(flags && { flags }), ...(aliases && { aliases }) });
+  }
   // Global options come after the command's own (and those interceptors add)
   visibleArgs.push(...visibleInherited);
   if (visibleArgs.length > 0) {
@@ -549,13 +557,16 @@ function collectInterceptorHelpOptions(command: AnyPadroneCommand): HelpArgument
   const seen = new Set<string>();
   const options: HelpArgumentInfo[] = [];
   for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
+    const level: HelpArgumentInfo[][] = [];
     for (const { meta } of [...(current.interceptors ?? [])].reverse()) {
       if (current !== command && meta.inherit === false) continue;
       if (meta.id && seen.has(meta.id)) continue;
       if (meta.id) seen.add(meta.id);
       if (meta.disabled || !meta.helpOptions) continue;
-      options.push(...(typeof meta.helpOptions === 'function' ? meta.helpOptions(command) : meta.helpOptions));
+      level.unshift([...(typeof meta.helpOptions === 'function' ? meta.helpOptions(command) : meta.helpOptions)]);
     }
+    // In the order the interceptors were registered
+    options.push(...level.flat());
   }
   return options;
 }

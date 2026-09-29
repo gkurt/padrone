@@ -61,7 +61,7 @@ program.cli();
 | `.arguments(schema, meta?)` | Define options/args with a Standard Schema |
 | `.globalArgs(schema, meta?)` | Options for this command and all subcommands (before or after the subcommand name), merged into their args. Subcommands override by redefining a field, or extend via `.globalArgs((inherited) => inherited.extend({...}))` |
 | `.action(handler?)` | Set the command handler `(args, ctx, base?) => result` |
-| `.command(name, builderFn?)` | Add or extend a subcommand. For a builder in its own file: `defineCommand((c) => ...)`, or `defineCommand<Ctx>()((c) => ...)` with the program's context (never `defineCommand<Ctx>(fn)`, a type error), or `defineCommand().requires<Ctx>().define(fn)` for interceptor-provided context |
+| `.command(name, builderFn?)` | Add or extend a subcommand. For a builder in its own file: `defineCommand((c) => ...)`, or `defineCommand<Ctx>()((c) => ...)` with the program's context (`defineCommand<Ctx, typeof globals>()` also types its global args) (never `defineCommand<Ctx>(fn)`, a type error), or `defineCommand().requires<Ctx>().define(fn)` for interceptor-provided context |
 | `.context(transform?)` | Define typed context or transform inherited context |
 | `.mount(name, program, options?)` | Mount another Padrone program as a subcommand (with optional `{ context }`) |
 | `.configure(config)` | Set title, description, version, deprecated, hidden, group, mutation, needsApproval, outputSchema, expose (which callers may run it: `false` = local only) |

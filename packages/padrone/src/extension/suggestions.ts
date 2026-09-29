@@ -5,8 +5,8 @@ import {
   getExtraCommands,
   getGlobalArgs,
   resolveCommand,
-  subcommandNames,
   suggestSimilar,
+  suggestSubcommands,
 } from '../core/commands.ts';
 import { RoutingError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
@@ -59,7 +59,7 @@ function similarCommands(
 
   const sourceCmd = findSourceCommand(err.command, rootCommand);
   const extras = getExtraCommands(sourceCmd).map((c) => c.name);
-  return { term, similar: suggestSimilar(term, [...extraCandidates, ...subcommandNames(sourceCmd), ...extras]) };
+  return { term, similar: suggestSubcommands(term, sourceCmd, [...extraCandidates, ...extras]) };
 }
 
 /** Parse-context key under which the aliases extension passes the alias names, suggested for an unknown top-level command. */

@@ -49,6 +49,7 @@ import type {
 } from './interceptor.ts';
 import type { PadroneCliPreferences, PadroneEvalPreferences, PadroneReplPreferences, PadroneToolPreferences } from './preferences.ts';
 import type {
+  ArgsThenPrefs,
   GetArguments,
   MaybePromiseCommandResult,
   PadroneAPI,
@@ -1075,10 +1076,12 @@ export type PadroneProgram<
   /** Execute a command by name with pre-validated args (skips parsing and validation). @category Execution */
   run: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], true, true>>(
     name: TCommand | SafeString,
-    args: NoInfer<
-      KnownCommandArgs<PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>, TCommand>
-    >,
-    ...prefs: PrefsParam<TCallerContext, { signal?: AbortSignal }>
+    ...argsAndPrefs: NoInfer<
+      ArgsThenPrefs<
+        KnownCommandArgs<PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>, TCommand>,
+        PrefsParam<TCallerContext, { signal?: AbortSignal }>
+      >
+    >
   ) => PadroneCommandResult<PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>;
 
   /**

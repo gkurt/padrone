@@ -84,7 +84,7 @@ program.cli();
 |---|---|
 | `.cli(prefs?)` | Entry point from `process.argv` (one token per entry) — prints errors and sets the exit code (error's `exitCode`, or 1). Pass `context` in prefs. |
 | `.eval(input, prefs?)` | Parse + validate + execute a string — returns issues softly. Pass `context` in prefs. |
-| `.run(name, args, prefs?)` | Execute by name with args object: checked against the schema (defaults applied; invalid args in `argsResult.issues`), no parse/validate phases, nothing printed. Pass `context` in prefs (required when the program declares one). |
+| `.run(name, args?, prefs?)` | Execute by name with args object: checked against the schema (defaults applied; invalid args in `argsResult.issues`), no parse/validate phases, nothing printed. Args (also in `api()`) can be left out, `undefined` or `{}` when none are required. Pass `context` in prefs (required when the program declares one). |
 | `.parse(input?)` | Parse without executing |
 | `.repl(options?)` | Start interactive REPL session |
 | `.help(command?, prefs?)` | Generate help text |

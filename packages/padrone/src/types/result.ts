@@ -6,8 +6,21 @@ import type { AnyPadroneCommand } from './command.ts';
 type EmptyRecord = Record<string, never>;
 
 type NormalizeArguments<TArgs> = IsGeneric<TArgs> extends true ? void | EmptyRecord : TArgs;
+
+/** Args of a command that requires none: left out, `undefined` or `{}`. */
+type NoArgs = void | undefined | EmptyRecord;
+
+/** Input args, which may be left out (or `undefined`) when no field is required. */
+type NormalizeInputArguments<TArgs> =
+  IsGeneric<TArgs> extends true
+    ? NoArgs
+    : [TArgs] extends [void | undefined]
+      ? NoArgs
+      : EmptyRecord extends TArgs
+        ? TArgs | void | undefined
+        : TArgs;
 export type GetArguments<TDir extends 'in' | 'out', TCommand extends AnyPadroneCommand> = TDir extends 'in'
-  ? NormalizeArguments<TCommand['~types']['argsInput']>
+  ? NormalizeInputArguments<TCommand['~types']['argsInput']>
   : NormalizeArguments<TCommand['~types']['argsOutput']>;
 
 export type GetResults<TCommand extends AnyPadroneCommand> = ReturnType<NonNullable<TCommand['action']>>;
@@ -70,4 +83,14 @@ export type PadroneAPI<TCommand extends AnyPadroneCommand> = PadroneAPICommand<T
   [K in TCommand['~types']['commands'][number] as K['name']]: PadroneAPI<K>;
 };
 
-type PadroneAPICommand<TCommand extends AnyPadroneCommand> = (args: GetArguments<'in', TCommand>) => GetResults<TCommand>;
+type PadroneAPICommand<TCommand extends AnyPadroneCommand> = (...args: ArgsParam<GetArguments<'in', TCommand>>) => GetResults<TCommand>;
+
+/** A trailing args parameter: optional when the command requires no args. */
+export type ArgsParam<TArgs> = undefined extends TArgs ? [args?: TArgs] : [args: TArgs];
+
+/** An args parameter followed by the preferences (`PrefsParam`): the args can be left out too when neither is required. */
+export type ArgsThenPrefs<TArgs, TPrefs extends unknown[]> = undefined extends TArgs
+  ? [] extends TPrefs
+    ? [args?: TArgs, ...TPrefs]
+    : [args: TArgs, ...TPrefs]
+  : [args: TArgs, ...TPrefs];

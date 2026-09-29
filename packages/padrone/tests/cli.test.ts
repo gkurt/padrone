@@ -57,7 +57,8 @@ describe('CLI', () => {
       const result = program.run('noop', undefined);
 
       expect(result.command?.path).toBe('noop');
-      expect(result.args).toBeUndefined();
+      // Like eval(), a command without arguments gets {}
+      expect(result.args as unknown).toEqual({});
       expect(result.result).toBeUndefined();
     });
   });

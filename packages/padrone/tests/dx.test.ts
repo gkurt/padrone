@@ -18,7 +18,9 @@ import {
 import { padroneServe } from 'padrone/serve';
 import { testCli } from 'padrone/test';
 import * as z from 'zod/v4';
+import { commandSymbol } from '../src/core/commands.ts';
 import { createDefaultRuntime } from '../src/core/default-runtime.ts';
+import { createServeHandler } from '../src/feature/serve.ts';
 import { renderTable, stringifyCell } from '../src/output/primitives.ts';
 import { createTextLayout, createTextStyler } from '../src/output/styling.ts';
 
@@ -587,5 +589,74 @@ describe('program-level context transforms', () => {
       .command('label', (c) => c.action((_args, ctx) => ctx.context.label));
     expect(program.eval('label').result).toBe('MAIN');
     expect(program.api().label()).toBe('MAIN');
+  });
+});
+
+describe('commands that need no args', () => {
+  const seen: unknown[] = [];
+  const program = createPadrone('app')
+    .runtime(quiet)
+    .command('ping', (c) =>
+      c.action((args) => {
+        seen.push(args);
+        return 'pong';
+      }),
+    )
+    .command('list', (c) =>
+      c.arguments(z.object({ limit: z.number().default(5), tag: z.string().optional() })).action((args) => args.limit),
+    )
+    .command('add', (c) => c.arguments(z.object({ name: z.string() })).action((args) => args.name));
+
+  it('take nothing, undefined or {} in run(), api() and stringify()', () => {
+    seen.length = 0;
+    expect(program.run('ping').result).toBe('pong');
+    expect(program.run('ping', undefined).result).toBe('pong');
+    expect(program.run('ping', {}).result).toBe('pong');
+    // Like eval(), the action gets {}
+    expect(seen).toEqual([{}, {}, {}]);
+    const api = program.api();
+    expect([api.ping(), api.ping(undefined), api.ping({})]).toEqual(['pong', 'pong', 'pong']);
+    expect(program.stringify('ping', {})).toBe('ping');
+  });
+
+  it('take nothing when every field is optional', () => {
+    expect(program.run('list').result).toBe(5);
+    expect(program.run('list', undefined).result).toBe(5);
+    expect(program.api().list()).toBe(5);
+    expect(program.api().list({ limit: 2 })).toBe(2);
+  });
+
+  it('still require args with a required field', () => {
+    // @ts-expect-error `name` is required
+    program.run('add');
+    // @ts-expect-error `name` is required
+    program.run('add', {});
+    // @ts-expect-error `name` is required
+    expect(() => program.api().add()).toThrow();
+  });
+
+  it('take undefined or {} before a required context, and optional global args', () => {
+    const withContext = createPadrone('app')
+      .runtime(quiet)
+      .context<{ user: string }>()
+      .globalArgs(z.object({ verbose: z.boolean().optional() }))
+      .command('whoami', (c) => c.action((_args, ctx) => ctx.context.user));
+    const context = { user: 'ada' };
+    expect(withContext.run('whoami', undefined, { context }).result).toBe('ada');
+    expect(withContext.run('whoami', {}, { context }).result).toBe('ada');
+    expect(withContext.api({ context }).whoami()).toBe('ada');
+    // @ts-expect-error the context is required
+    withContext.run('whoami');
+    const name: string = 'whoami';
+    expect(withContext.run(name, undefined, { context }).result as unknown).toBe('ada');
+  });
+
+  it('take no body, an empty object or null over serve', async () => {
+    const serve = createServeHandler((program as never)[commandSymbol], program.eval.bind(program) as never);
+    for (const body of [undefined, '{}', 'null']) {
+      const res = await serve(new Request('http://localhost/list', { method: 'POST', body }));
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { result: unknown }).result).toBe(5);
+    }
   });
 });

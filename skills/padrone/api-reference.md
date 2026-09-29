@@ -576,7 +576,11 @@ Execute a command by name with an args object. The args are checked against the 
 const result = program.run('greet', { name: 'World' });
 const result = program.run('db migrate', { name: 'v1' });
 const result = program.run('greet', { name: 'World' }, { context: { db } });
+const result = program.run('status'); // no required args: leave them out, or pass undefined / {}
+const result = program.run('status', undefined, { context: { db } }); // before prefs, pass undefined or {}
 ```
+
+Args can be left out (or `undefined` / `{}`) whenever the command requires none, in `run()`, `api()` (`api.status()`) and `stringify()`; the action gets `{}` then, as from `eval()`.
 
 ### `.parse(input?)`
 

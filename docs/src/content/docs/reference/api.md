@@ -1118,7 +1118,7 @@ const result = program.run('serve', { port: 8080 }, { context: { db } });
 
 **Parameters:**
 - `command`: Command path (e.g., `'serve'` or `'db migrate up'`)
-- `args`: Arguments object matching the command's schema (the schema's input: fields with defaults can be left out)
+- `args`: Arguments object matching the command's schema (the schema's input: fields with defaults can be left out). When no field is required it can be left out, `undefined` or `{}` (`program.run('status')`, or `program.run('status', undefined, { context })` before prefs), here and in `api()` (`api.status()`); the action gets `{}` then, as from `eval()`
 - `prefs`: `{ context?: TContext, signal?: AbortSignal }` — provide context (required when the program declares one) and a cancellation signal
 
 **Returns:** `PadroneCommandResult` with the action's return value in `result`. Invalid args come back in `argsResult.issues` without running the action; an error the action throws in `error`.

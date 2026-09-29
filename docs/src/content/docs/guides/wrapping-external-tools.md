@@ -268,7 +268,7 @@ program
   );
 
 // Get the result
-const result = await program.run('version', {});
+const result = await program.run('version');
 const wrapResult = await result.result;
 
 console.log('Exit code:', wrapResult.exitCode);

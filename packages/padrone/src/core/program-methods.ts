@@ -104,7 +104,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
     return parts.join(' ');
   };
 
-  const run: AnyPadroneProgram['run'] = (command, args, prefs?: { context?: unknown; signal?: AbortSignal }) => {
+  const run: AnyPadroneProgram['run'] = (command, args?: unknown, prefs?: { context?: unknown; signal?: AbortSignal }) => {
     try {
       const commandObj = typeof command === 'string' ? findCommandByName(command, rootCommand.commands) : (command as AnyPadroneCommand);
       if (!commandObj) throw new RoutingError(`Command "${command ?? ''}" not found`);
@@ -112,7 +112,8 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
       const refusal = exposeRefusal(commandObj, 'run');
       if (refusal) throw new ActionError(refusal, { command: commandObj.path });
 
-      if (!commandObj.argsSchema && !getGlobalArgs(commandObj)) return executeValidated(commandObj, args, prefs);
+      // Like eval(), an action without arguments gets {}
+      if (!commandObj.argsSchema && !getGlobalArgs(commandObj)) return executeValidated(commandObj, args ?? {}, prefs);
       // Args are checked against the schema, which applies its defaults and transforms (the validate phase doesn't run)
       const validatedOrPromise = validateCommandArgs(commandObj, (args ?? {}) as Record<string, unknown>);
       const execute = (validated: { args: unknown; argsResult: StandardSchemaV1.Result<unknown> }) => {

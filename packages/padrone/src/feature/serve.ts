@@ -531,7 +531,8 @@ export function createServeHandler(
           req.headers.get('content-length'),
           prefs?.maxBodySize,
         );
-        body = text.trim() ? JSON.parse(text) : {};
+        // No body, or `null`, means no args (like MCP's `arguments`)
+        body = (text.trim() ? JSON.parse(text) : null) ?? {};
       } catch (error) {
         if (error instanceof BodyTooLargeError)
           return addCorsHeaders(jsonResponse({ ok: false, error: 'payload_too_large', message: error.message }, 413));

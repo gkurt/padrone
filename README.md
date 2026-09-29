@@ -156,7 +156,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 |--------|-------------|
 | `.cli(prefs?)` | Entry point — parses `process.argv`, throws on errors. Pass `context` in prefs. |
 | `.eval(input, prefs?)` | Parse + validate + execute string, returns errors softly. Pass `context` in prefs. |
-| `.run(command, args, prefs?)` | Run by name with typed args: checked against the schema (defaults applied), without the parse/validate phases or printing. Pass `context` in prefs (required when the program declares one). |
+| `.run(command, args?, prefs?)` | Run by name with typed args: checked against the schema (defaults applied), without the parse/validate phases or printing. Args can be left out (or `undefined` / `{}`) when none are required. Pass `context` in prefs (required when the program declares one). |
 | `.parse(input?)` | Parse without executing |
 | `.api(prefs?)` | Commands as typed functions that return the result and throw on invalid args or a failing action |
 | `.repl(options?)` | Interactive REPL session |

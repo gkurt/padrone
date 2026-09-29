@@ -17,7 +17,7 @@
     },
     "docs": {
       "name": "@padrone/docs",
-      "version": "2.1.0",
+      "version": "3.0.0",
       "dependencies": {
         "@astrojs/react": "7.0.0",
         "@astrojs/starlight": "^0.42.4",
@@ -37,7 +37,7 @@
     },
     "examples/deploy-example": {
       "name": "@padrone/deploy-example",
-      "version": "2.1.0",
+      "version": "3.0.0",
       "bin": "src/cli.ts",
       "dependencies": {
         "padrone": "workspace:*",
@@ -46,7 +46,7 @@
     },
     "examples/padrone-example": {
       "name": "@padrone/tasks-example",
-      "version": "2.1.0",
+      "version": "3.0.0",
       "bin": "src/tasks.ts",
       "dependencies": {
         "ai": "^7.0.118",
@@ -61,7 +61,7 @@
     },
     "examples/pizza-example": {
       "name": "@padrone/pizza-example",
-      "version": "2.1.0",
+      "version": "3.0.0",
       "bin": "src/cli.ts",
       "dependencies": {
         "padrone": "workspace:*",
@@ -70,7 +70,7 @@
     },
     "packages/padrone": {
       "name": "padrone",
-      "version": "2.1.0",
+      "version": "3.0.0",
       "bin": {
         "padrone": "./src/cli/index.ts",
       },

@@ -35,6 +35,7 @@ export type {
   PadroneHookContext,
   PadroneHookName,
   PadroneProgramMeta,
+  PadroneRunCommand,
 } from './command.ts';
 export type {
   ExtractInterceptorContext,

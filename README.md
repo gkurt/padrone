@@ -123,10 +123,10 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 |--------|-------------|
 | `.arguments(schema, meta?)` | Define args with Zod schema, positional config, field metadata |
 | `.globalArgs(schema, meta?)` | Define options shared by a command and all its subcommands, merged into their args |
-| `.action(handler)` | Set handler `(args, ctx, base?) => result` |
+| `.action(handler)` | Set handler `(args, ctx, base?) => result`; `ctx.run(name, args)` runs another command and resolves to its result |
 | `.dryRun(handler)` | Add `--dry-run` / `-n`: runs `handler` instead of the action and prints what would change |
 | `.hook('preAction' \| 'postAction', handler)` | Run code before / after the action of the command and all its subcommands (ancestors' pre-hooks first, post-hooks last) |
-| `.command(name, builder)` | Add subcommand (name or `[name, ...aliases]`); `defineCommand((c) => ...)` types a builder kept in its own file (`defineCommand<Context>()((c) => ...)` with the program's context, `defineCommand<Context, typeof globals>()` with its global args too) |
+| `.command(name, builder)` | Add subcommand (name or `[name, ...aliases]`); `defineCommand((c) => ...)` types a builder kept in its own file (`defineCommand<Context>()((c) => ...)` with the program's context, `defineCommand<Context, typeof globals>()` with its global args too; `defineCommand().requires<T>()` for context an interceptor provides) |
 | `.describe(text)` | Set the description shown in help (shorthand for `.configure({ description })`) |
 | `.context(transform?)` | Define typed context or transform inherited context |
 | `.mount(name, program, options?)` | Mount another program as subcommand tree |
@@ -156,7 +156,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 |--------|-------------|
 | `.cli(prefs?)` | Entry point — parses `process.argv`, throws on errors. Pass `context` in prefs. |
 | `.eval(input, prefs?)` | Parse + validate + execute string, returns errors softly. Pass `context` in prefs. |
-| `.run(command, args?, prefs?)` | Run by name with typed args: checked against the schema (defaults applied), without the parse/validate phases or printing. Args can be left out (or `undefined` / `{}`) when none are required. Pass `context` in prefs (required when the program declares one). |
+| `.run(command, args?, prefs?)` | Run by name with typed args: checked against the schema (defaults applied), without the parse/validate phases or printing. An async action's result is awaited, as in `.eval()`. Args can be left out (or `undefined` / `{}`) when none are required. Pass `context` in prefs (required when the program declares one). |
 | `.parse(input?)` | Parse without executing |
 | `.api(prefs?)` | Commands as typed functions that return the result and throw on invalid args or a failing action |
 | `.repl(options?)` | Interactive REPL session |
@@ -204,6 +204,8 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
   autoAlias: true,  // default
 })
 ```
+
+An optional positional before required ones (`['method', 'url']`) only takes a value when they still get one: `http https://x` sets `url`. Object and record options take `key=value` (`-q page=2 -q sort=asc`), JSON or dotted keys (`--db.host x`). Keep a meta apart from the call with `defineArgsMeta(schema, meta)`, which types it against the schema.
 
 ## Agent Skill
 

@@ -532,7 +532,7 @@ export type PadroneBuilderMethods<
 
   /** Set command metadata like title, description, version, hidden, deprecated, etc. @category Builder */
   configure: (
-    config: PadroneCommandConfig<ArgsOutput<WithGlobalArgs<TArgs, TGlobals>>>,
+    config: PadroneCommandConfig<ConfigureArgs<TArgs, TGlobals>>,
   ) => BuilderOrProgram<
     TReturn,
     TProgramName,
@@ -849,7 +849,7 @@ export type PadroneBuilderMethods<
       >,
     >(
       name: TNameNested | readonly [TNameNested, ...TAliases],
-      builderFn?: (
+      builderFn?: ((
         builder: InitialCommandBuilder<
           TProgramName,
           TNameNested,
@@ -859,7 +859,8 @@ export type PadroneBuilderMethods<
           TContext & TContextProvided,
           TGlobals
         >,
-      ) => TBuilder,
+      ) => TBuilder) &
+        NoContextRequires,
     ): BuilderOrProgram<
       TReturn,
       TProgramName,
@@ -879,42 +880,35 @@ export type PadroneBuilderMethods<
       TContextProvided,
       TGlobals
     >;
-    // Overload for defineCommand.requires() branded callbacks — validates context requirements
-    <
-      const TNameNested extends string,
-      const TAliases extends string[] = [],
-      TBuilder extends CommandTypesBase = CommandTypesBase,
-      TReq = unknown,
-    >(
-      name: TNameNested | readonly [TNameNested, ...TAliases],
-      builderFn: ((builder: any) => TBuilder) & { '~contextRequires': (ctx: TReq) => void },
-    ): TContext & TContextProvided extends TReq
-      ? BuilderOrProgram<
-          TReturn,
-          TProgramName,
-          TName,
-          TParentName,
-          TArgs,
-          TRes,
-          AddCommand<
-            TCommands,
-            TNameNested,
-            TAliases,
-            NamedSubcommand<TBuilder['~types']['command'], TNameNested, FullCommandName<TName, TParentName>, TGlobals>
-          >,
-          TParentArgs,
-          TAsync,
-          TContext,
-          TContextProvided,
-          TGlobals
-        >
-      : DefineCommandRequiresError;
     // Fallback overload: accepts DefineCommand-typed callbacks where the builder type is not structurally compatible
     // (e.g., DefineCommand with unknown context used in a parent with specific context)
     <const TNameNested extends string, const TAliases extends string[] = [], TBuilder extends CommandTypesBase = CommandTypesBase>(
       name: TNameNested | readonly [TNameNested, ...TAliases],
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      builderFn?: (builder: any) => TBuilder,
+      builderFn?: ((builder: any) => TBuilder) & NoContextRequires,
+    ): BuilderOrProgram<
+      TReturn,
+      TProgramName,
+      TName,
+      TParentName,
+      TArgs,
+      TRes,
+      AddCommand<
+        TCommands,
+        TNameNested,
+        TAliases,
+        NamedSubcommand<TBuilder['~types']['command'], TNameNested, FullCommandName<TName, TParentName>, TGlobals>
+      >,
+      TParentArgs,
+      TAsync,
+      TContext,
+      TContextProvided,
+      TGlobals
+    >;
+    // `defineCommand().requires<T>()` callbacks: the context this command gets must include T (else the error names what's missing)
+    <const TNameNested extends string, const TAliases extends string[] = [], TBuilder extends CommandTypesBase = CommandTypesBase>(
+      name: TNameNested | readonly [TNameNested, ...TAliases],
+      builderFn: ((builder: any) => TBuilder) & { '~contextRequires': (ctx: TContext & TContextProvided) => void },
     ): BuilderOrProgram<
       TReturn,
       TProgramName,
@@ -1075,7 +1069,10 @@ export type PadroneProgram<
         PrefsParam<TCallerContext, { signal?: AbortSignal }>
       >
     >
-  ) => PadroneCommandResult<PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>;
+  ) => MaybePromiseCommandResult<
+    PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>,
+    PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>['~types']['async']
+  >;
 
   /**
    * Emit a custom event (see `defineEvent()`) to the root's interceptors, outside any execution; handlers get `caller: 'run'`.
@@ -1209,7 +1206,20 @@ export interface DefineCommandContext {
   progress?: PadroneProgressContext;
 }
 
-/** Error brand returned by `.command()` when a `defineCommand.requires()` context requirement is not satisfied. */
+/**
+ * The args `.configure()` callbacks (`confirm`, `needsApproval`) get. Before `.arguments()` they only know the global args:
+ * the key in the type says so when a command's own option is missing from it.
+ */
+type ConfigureArgs<TArgs extends PadroneSchema, TGlobals extends PadroneSchema> = [StandardSchemaV1.InferOutput<TArgs>] extends [void]
+  ? ([Exclude<StandardSchemaV1.InferOutput<TGlobals>, void | undefined>] extends [never]
+      ? unknown
+      : ArgsOutput<WithGlobalArgs<TArgs, TGlobals>>) & { readonly '~call .configure() after .arguments() to type these args'?: never }
+  : ArgsOutput<WithGlobalArgs<TArgs, TGlobals>>;
+
+/** A command callback without a `defineCommand().requires<T>()` brand: those go through the overload that checks it. */
+type NoContextRequires = { '~contextRequires'?: never };
+
+/** @deprecated `.command()` now reports an unsatisfied `defineCommand().requires()` requirement at the call. */
 export type DefineCommandRequiresError = {
   readonly '~error': 'Required context not satisfied. Ensure required interceptors are registered on the program.';
 };

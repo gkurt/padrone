@@ -39,10 +39,11 @@ test('greet command', async () => {
 | `.prompt(answers)` | Provide mock answers for interactive prompts, by field name or `ctx.prompt` question name (`PROMPT_CANCEL` cancels one) |
 | `.stdin(data)` | Provide mock stdin data (piped input) |
 | `.context(value)` | The context commands receive (`ctx.context`), as passed to `cli()`: typed as the one the program declares |
-| `.run(input?)` | Execute the command and return the result |
+| `.run(input?)` | Execute the command (through `eval()`) and return the result |
+| `.cli(input?)` | Execute it the way `cli()` does: `padroneConfirm()` asks (answer with `.prompt({ confirm: true })`), deprecation warnings and errors are printed to `stderr` as users see them, and `exitCode` is what `cli()` sets |
 | `.repl(inputs)` | Run a REPL session with a sequence of inputs |
 
-All builder methods are chainable and `.run()` / `.repl()` return a Promise. Mock config files with `padroneConfig({ loadConfig })`.
+All builder methods are chainable and `.run()` / `.cli()` / `.repl()` return a Promise. Mock config files with `padroneConfig({ loadConfig })`.
 
 ## Test Result
 
@@ -57,6 +58,16 @@ All builder methods are chainable and `.run()` / `.repl()` return a Promise. Moc
 | `stdout` | `unknown[]` | All values passed to `runtime.output()` |
 | `stderr` | `string[]` | All strings passed to `runtime.error()` |
 | `error` | `unknown` | The thrown error, if the command threw |
+| `exitCode` | `number` | The exit code `cli()` sets: `0` on success, the error's `exitCode` (else `1`), `1` for validation issues (which leave `error` unset under `.run()`) |
+
+```typescript
+const refused = await testCli(program).cli('db drop');
+expect(refused.exitCode).toBe(1);
+expect(refused.stderr[0]).toContain('pass --yes');
+
+const dropped = await testCli(program).prompt({ confirm: true }).cli('db drop');
+expect(dropped.exitCode).toBe(0);
+```
 
 ## Testing Subcommands
 

@@ -167,6 +167,14 @@ type ArgsMeta = {
 };
 ```
 
+Positionals fill in order, but an optional one before required ones (`['method', 'url']`) only takes a value when enough are left for them: `http https://x` sets `url`. Object and record options take `key=value` per occurrence (`-q page=2 -q sort=asc`, keys as is), JSON, or dotted keys.
+
+A meta kept apart from the call is typed with `defineArgsMeta(schema, meta)` (field names checked against the schema, literals like `flags: 'v'` kept, no `as const`):
+
+```ts
+export const globalsMeta = defineArgsMeta(globals, { fields: { verbose: { flags: 'v', count: true } } });
+```
+
 ### `.globalArgs(schema, meta?)`
 
 Options accepted by this command and every subcommand below it, before or after the subcommand name. Values are merged into each command's `args` (typed). A subcommand's own field of the same name overrides the global; the function form extends the inherited globals for a subtree.
@@ -209,7 +217,8 @@ Defines the command handler. Called with no args to create a passthrough command
 ```
 
 - `args`: Validated output from the schema
-- `ctx`: `{ runtime, command, program, progress, context, prompt }`
+- `ctx`: `{ runtime, command, program, progress, context, prompt, run }`
+- `ctx.run(name, args?)`: runs another command (by path) like `program.run()` with this run's caller context (through the target's own transforms) and signal; resolves to its result, rejects with its error or a `ValidationError` (hooks get it too): `.action((args, ctx) => ctx.run('request', { ...args, method: 'GET' }))`
 - `base`: Previous handler when overriding an existing command
 
 `ctx.prompt` asks through `runtime.prompt` (interceptors: `createPrompt(ctx)`):
@@ -289,7 +298,7 @@ export const remove = defineCommand((c) => c.arguments(z.object({ ids: z.array(z
 export const list = defineCommand<{ db: Database }>()((c) => c.action((_args, ctx) => ctx.context.db.list()));
 // With the program's global args typed in `args` (reusable: `export const command = defineCommand<Ctx, typeof globals>()`)
 export const status = defineCommand<{ db: Database }, typeof globals>()((c) => c.action((args) => args.verbose));
-// Context an interceptor must provide (a type error where the program doesn't provide it)
+// Context an interceptor must provide (a type error at `.command()` where the program doesn't provide it)
 export const audit = defineCommand().requires<{ logger: PadroneLogger }>().define((c) => c.action((_a, ctx) => ctx.context.logger.info('x')));
 
 createPadrone('app').context<{ db: Database }>().command(['remove', 'rm'], remove).command('list', list);
@@ -570,7 +579,7 @@ if (result.argsResult?.issues) { /* validation failed */ }
 
 ### `.run(name, args, prefs?)`
 
-Execute a command by name with an args object. The args are checked against the command's schema, which applies defaults and transforms (the parse and validate phases don't run: no env/config values). Invalid args come back in `argsResult.issues` without running the action; the result isn't printed. `prefs.context` is required when the program declares a context.
+Execute a command by name with an args object. The args are checked against the command's schema, which applies defaults and transforms (the parse and validate phases don't run: no env/config values). Invalid args come back in `argsResult.issues` without running the action; the result isn't printed. An async action's result is awaited, as in `eval()`: the call is then a promise of the result (`(await program.run('sync')).result`), and a rejection lands in `error`. `prefs.context` is required when the program declares a context.
 
 ```ts
 const result = program.run('greet', { name: 'World' });
@@ -741,6 +750,8 @@ const slack = defineInterceptor({ name: 'slack' }).on(deployed, (payload, ctx) =
 // in an action or interceptor phase: runs the handlers on the command chain, in interceptor order
 await ctx.emit(deployed, { env, version });
 await program.emit(deployed, { env, version }); // outside an execution: root handlers, caller 'run'
+// handlers' ctx.context is typed by .requires<T>()
+const history = defineInterceptor({ name: 'history' }).requires<{ store: Store }>().on(deployed, (p, ctx) => ctx.context.store.add(p));
 ```
 
 **`commandNotFound`** (built-in event, exported): emitted when routing finds no command for a name (top level, or under a group without positionals). Payload: `name`, `args` (words after it, as typed), `command` (where it was looked up), `input`, `suggestions`, `handled`, `handle(action)` (runs `action(ctx)` in its place through the command chain's execute interceptors; its return value is the result), `reroute(input)` (routes another input). Handlers run in order until one handles it; unhandled → the usual "Unknown command" error with "Did you mean". Only emitted when a handler exists (stays sync otherwise).
@@ -867,7 +878,8 @@ const builder = testCli(program);
 | `.prompt(answers)` | Mock prompt answers by field or prompt name (`PROMPT_CANCEL` cancels) |
 | `.stdin(data)` | Mock piped stdin |
 | `.context(value)` | Context commands receive, as passed to `cli()` |
-| `.run(input?)` | Execute and return `TestCliResult` |
+| `.run(input?)` | Execute through `eval()` and return `TestCliResult` |
+| `.cli(input?)` | Execute as `cli()` does: `padroneConfirm()` asks (`.prompt({ confirm: true })`), deprecation warnings and errors printed to `stderr`, `exitCode` as `cli()` sets it |
 | `.repl(inputs)` | Run REPL session with array of inputs |
 
 **`TestCliResult`:**
@@ -881,6 +893,7 @@ const builder = testCli(program);
   stdout: unknown[],   // captured runtime.output() calls
   stderr: string[],    // captured runtime.error() calls
   error?: unknown,     // thrown error (if any)
+  exitCode: number,    // what cli() sets: 0, the error's exitCode (else 1), 1 for validation issues
 }
 ```
 
@@ -888,7 +901,7 @@ const builder = testCli(program);
 
 ```ts
 {
-  results: { command, args, result, issues }[],
+  results: { command, args, result, issues, exitCode }[],
   stdout: unknown[],
   stderr: string[],
 }

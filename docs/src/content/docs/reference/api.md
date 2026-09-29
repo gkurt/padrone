@@ -44,7 +44,7 @@ program.configure({
 | `hidden` | `boolean` | Hide from help output |
 | `group` | `string` | Group name for organizing in help output |
 | `mutation` | `boolean` | Mark as mutation (POST-only in serve, destructiveHint in MCP, defaults needsApproval in tool) |
-| `needsApproval` | `boolean \| (args) => boolean \| Promise<boolean>` | Whether `tool()` asks for approval before running the command. A function gets the validated args (call `.configure()` after `.arguments()` for them to be typed); with invalid args approval is asked. Defaults to `mutation`; dry runs never need approval |
+| `needsApproval` | `boolean \| (args) => boolean \| Promise<boolean>` | Whether `tool()` asks for approval before running the command. A function gets the validated args (call `.configure()` after `.arguments()` for them to be typed; before it, the args type has a `~call .configure() after .arguments()` key that shows up in the error); with invalid args approval is asked. Defaults to `mutation`; dry runs never need approval |
 | `confirm` | `boolean \| string \| (args) => string` | Whether `padroneConfirm()` asks before running the command, overriding its `when` (by default, `mutation` commands ask): `false` never asks, `true` asks the default question, a string or a function of the validated args is the question |
 | `outputSchema` | `PadroneSchema` | Schema of the object the action returns: MCP's tool `outputSchema` (object schemas only) and the OpenAPI `result`. Not validated at runtime |
 | `builtin` | `boolean` | Mark a command an extension adds for the program itself (like the built-in `help`, `config` or `serve`): `padroneConfig()` and `padroneEnv()` don't fill its options or its subcommands' unless their `builtins: true` |
@@ -142,6 +142,16 @@ When `interactive` or `optionalInteractive` is set, the command becomes async �
 
 `schema` can also be a function receiving the parent command's schema, to extend it: `.arguments((parent) => parent.extend({ file: z.string() }))`. To share options with a whole subtree, prefer [`.globalArgs()`](#globalargsschema-meta).
 
+A meta kept apart from the call (say, next to a schema in its own file) is typed with `defineArgsMeta(schema, meta)`: its field names are checked against the schema and literals such as `flags: 'v'` are kept, with no `as const`:
+
+```typescript
+import { defineArgsMeta } from 'padrone';
+
+export const globals = z.object({ verbose: z.number().default(0) });
+export const globalsMeta = defineArgsMeta(globals, { fields: { verbose: { flags: 'v', count: true } } });
+createPadrone('app').globalArgs(globals, globalsMeta);
+```
+
 ---
 
 ### .globalArgs(schema, meta?)
@@ -227,6 +237,13 @@ program.action((args, ctx) => {
 | `progress` | `PadroneProgress` | Auto-managed progress indicator, or lazy indicator for manual use. See [Progress Indicators](/padrone/guides/progress-indicators/) |
 | `context` | `TContext` | User-defined context, resolved through the command parent chain |
 | `prompt` | `PadronePrompt` | Prompts asked through `runtime.prompt`: `text`, `password`, `confirm`, `select`, `multiselect`, `group` and `available`. See [ctx.prompt](#ctxprompt) |
+| `run` | `(name, args?) => Promise<unknown>` | Runs another command of the program and resolves to its result (rejects with its error, or a `ValidationError` for invalid args). It gets this run's caller context (going through the target's own context transforms) and signal. Hooks get it too |
+
+```typescript
+.command('get', (c) =>
+  c.arguments(z.object({ url: z.string() }), { positional: ['url'] }).action((args, ctx) => ctx.run('request', { ...args, method: 'GET' })),
+)
+```
 
 **Returns:** The program builder (chainable)
 
@@ -583,8 +600,8 @@ const result = await program.run('install', {
   packages: ['react', 'react-dom'],
   saveDev: true,
 });
-console.log(result.result.stdout);  // npm install output
-console.log(result.result.exitCode);  // 0 if successful
+console.log(result.result?.stdout);  // npm install output
+console.log(result.result?.exitCode);  // 0 if successful
 ```
 
 **Type Safety:**
@@ -1027,7 +1044,7 @@ export const list = defineCommand<{ db: Database }>()((c) => c.action((_args, ct
 // With the program's global args too (the type of the schema passed to `.globalArgs()`), typed in `args`
 export const status = defineCommand<{ db: Database }, typeof globals>()((c) => c.action((args) => (args.verbose ? 'details' : 'ok')));
 
-// Context an interceptor must provide: without it, `.command()` returns a `DefineCommandRequiresError` type
+// Context an interceptor must provide: registering it where nothing provides that context is a type error at `.command()`
 export const audit = defineCommand().requires<{ logger: PadroneLogger }>().define((c) => c.action((_args, ctx) => ctx.context.logger.info('audit')));
 
 // cli.ts
@@ -1121,7 +1138,7 @@ const result = program.run('serve', { port: 8080 }, { context: { db } });
 - `args`: Arguments object matching the command's schema (the schema's input: fields with defaults can be left out). When no field is required it can be left out, `undefined` or `{}` (`program.run('status')`, or `program.run('status', undefined, { context })` before prefs), here and in `api()` (`api.status()`); the action gets `{}` then, as from `eval()`
 - `prefs`: `{ context?: TContext, signal?: AbortSignal }` — provide context (required when the program declares one) and a cancellation signal
 
-**Returns:** `PadroneCommandResult` with the action's return value in `result`. Invalid args come back in `argsResult.issues` without running the action; an error the action throws in `error`.
+**Returns:** `PadroneCommandResult` with the action's return value in `result`. Like `eval()`, an async action's result is awaited: the call returns a promise of the result, with the resolved value in `result` (`(await program.run('sync')).result`). Invalid args come back in `argsResult.issues` without running the action; an error the action throws (or its promise rejects with) in `error`.
 
 `program.emit(event, payload)` emits a custom event (see `defineEvent()`) outside any execution, to the root's interceptors.
 
@@ -1737,7 +1754,7 @@ const slack = defineInterceptor({ name: 'slack' }).on(deployed, (payload, ctx) =
 program.intercept(slack).command('deploy', (c) => c.action((args, ctx) => ctx.emit(deployed, { env: args.env, version: '1.2.0' })));
 ```
 
-Handlers receive the payload and `{ command, runtime, context, caller, signal, program, emit }`; a handler's error rejects `emit()`.
+Handlers receive the payload and `{ command, runtime, context, caller, signal, program, emit }`; a handler's error rejects `emit()`. `context` is typed by the interceptor's `.requires<T>()`: `defineInterceptor({ name: 'history' }).requires<{ store: Store }>().on(sent, (entry, ctx) => ctx.context.store.push(entry))`.
 
 **Returns:** A `PadroneInterceptor` — pass to `.intercept()` or use within an extension.
 

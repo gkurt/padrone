@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { getCommand, getCommandRuntime } from '../core/commands.ts';
 import {
+  formatDefaultValue,
   type HelpArgumentInfo,
   type HelpInfo,
   type HelpPositionalInfo,
@@ -106,7 +107,7 @@ function formatMarkdownPositional(arg: HelpPositionalInfo): string {
   parts.push(`- \`${positionalLabel(arg)}\``);
   if (arg.type) parts.push(`*(${arg.type})*`);
   if (arg.optional) parts.push('*(optional)*');
-  if (hasDefaultValue(arg.default)) parts.push(`— default: \`${String(arg.default)}\``);
+  if (hasDefaultValue(arg.default)) parts.push(`— default: \`${formatDefaultValue(arg.default)}\``);
   if (arg.description) parts.push(`— ${arg.description}`);
   return parts.join(' ');
 }
@@ -129,7 +130,7 @@ function formatMarkdownArgument(arg: HelpArgumentInfo): string[] {
   const meta: string[] = [];
   if (arg.type && arg.type !== 'boolean') meta.push(`**Type:** \`${arg.type}\``);
   if (!arg.optional) meta.push('**Required**');
-  if (hasDefaultValue(arg.default)) meta.push(`**Default:** \`${String(arg.default)}\``);
+  if (hasDefaultValue(arg.default)) meta.push(`**Default:** \`${formatDefaultValue(arg.default)}\``);
   if (arg.enum) meta.push(`**Choices:** ${arg.enum.map((v) => `\`${v}\``).join(', ')}`);
   if (arg.variadic) meta.push('**Repeatable**');
   if (arg.deprecated) {
@@ -373,7 +374,7 @@ function generateHtmlPage(info: HelpInfo, depth: number): string {
         `    <dt><code>${escapeHtml(positionalLabel(arg))}</code>${arg.type ? ` <span class="type">${escapeHtml(arg.type)}</span>` : ''}${arg.optional ? ' <em>(optional)</em>' : ''}</dt>`,
       );
       if (arg.description) sections.push(`    <dd>${escapeHtml(arg.description)}</dd>`);
-      if (hasDefaultValue(arg.default)) sections.push(`    <dd>Default: <code>${escapeHtml(String(arg.default))}</code></dd>`);
+      if (hasDefaultValue(arg.default)) sections.push(`    <dd>Default: <code>${escapeHtml(formatDefaultValue(arg.default))}</code></dd>`);
     }
     sections.push('  </dl>');
   }
@@ -393,7 +394,7 @@ function generateHtmlPage(info: HelpInfo, depth: number): string {
 
       const meta: string[] = [];
       if (!arg.optional) meta.push('Required');
-      if (hasDefaultValue(arg.default)) meta.push(`Default: <code>${escapeHtml(String(arg.default))}</code>`);
+      if (hasDefaultValue(arg.default)) meta.push(`Default: <code>${escapeHtml(formatDefaultValue(arg.default))}</code>`);
       if (arg.enum) meta.push(`Choices: ${arg.enum.map((v) => `<code>${escapeHtml(v)}</code>`).join(', ')}`);
       if (arg.variadic) meta.push('Repeatable');
       if (arg.deprecated) {
@@ -555,7 +556,7 @@ function generateManPage(info: HelpInfo, context: ManPageContext): string {
       const parts: string[] = [];
       if (arg.description) parts.push(escapeMan(arg.description));
       if (arg.optional) parts.push('(optional)');
-      if (hasDefaultValue(arg.default)) parts.push(`Default: ${escapeMan(String(arg.default))}`);
+      if (hasDefaultValue(arg.default)) parts.push(`Default: ${escapeMan(formatDefaultValue(arg.default))}`);
       if (parts.length > 0) lines.push(manJoin(parts));
     }
   }
@@ -572,7 +573,7 @@ function generateManPage(info: HelpInfo, context: ManPageContext): string {
       lines.push(`\\fB${flagStr}${aliasStr}${flagName}\\fR${placeholder ? ` \\fI${escapeMan(placeholder)}\\fR` : ''}`);
       const parts: string[] = [];
       if (arg.description) parts.push(escapeMan(arg.description));
-      if (hasDefaultValue(arg.default)) parts.push(`Default: ${escapeMan(String(arg.default))}`);
+      if (hasDefaultValue(arg.default)) parts.push(`Default: ${escapeMan(formatDefaultValue(arg.default))}`);
       if (arg.enum) parts.push(`Choices: ${arg.enum.map((v) => escapeMan(v)).join(', ')}`);
       if (parts.length > 0) lines.push(manJoin(parts));
 

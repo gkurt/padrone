@@ -50,7 +50,7 @@ Parsing follows the schema, so each option consumes values according to its type
 - An option whose type allows both a boolean and a value (`--cache [dir]`) takes the next argument only when it doesn't look like an option or a subcommand.
 - A repeated option keeps the last value (`--name a --name b` → `"b"`); array options collect every value.
 - The `[a,b]` bracket syntax only applies to array options — `--title=[WIP]` stays a string.
-- Objects, records and arrays of objects take a JSON value (a JSON object, or for arrays a JSON array or one object per occurrence). Dotted keys merge with it, the later value winning: `--db '{"host":"x","port":1}' --db.port 2` gives `{ host: 'x', port: 2 }`. Invalid JSON is reported as `Option "--db" has invalid JSON: …`. A JSON string from an env variable or a `fromFile` file (`--db @db.json`) is parsed too.
+- Objects, records and arrays of objects take a JSON value (a JSON object, or for arrays a JSON array or one object per occurrence). Dotted keys merge with it, the later value winning: `--db '{"host":"x","port":1}' --db.port 2` gives `{ host: 'x', port: 2 }`. Invalid JSON is reported as `Option "--db" has invalid JSON: …`. Objects and records also take `key=value`, one key per occurrence and merged like dotted keys (help shows them as `<key=value>`): `-q page=2 -q sort=asc` gives `{ page: '2', sort: 'asc' }`; the key is taken as is, dots included, so it suits records like query parameters or headers. A JSON string from an env variable or a `fromFile` file (`--db @db.json`) is parsed too.
 - `--` ends option parsing; everything after it is positional. A lone `-` is a positional (commonly stdin).
 
 ### Argument Flags
@@ -255,7 +255,7 @@ program
   );
 ```
 
-Global args are validated against their own schema and listed under "Global Options" in help, man pages, generated docs and shell completions.
+Global args are validated against their own schema and listed under "Global Options" in help, man pages, generated docs and shell completions. The options extensions add to every command (`--json`, `-o`, `--config`, `--log-level`, …) are listed there too, after them; those an extension only adds where they apply (`--yes` on commands `padroneConfirm()` asks for, `--dry-run`) stay with the command's own options.
 
 A command with `interactive: true` also prompts for missing required global args. To prompt in every command of a subtree, pass it to `.globalArgs()`:
 

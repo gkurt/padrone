@@ -25,11 +25,12 @@ import {
   resolveContext,
   serializeArgsToFlags,
 } from './commands.ts';
-import { ActionError, RoutingError, ValidationError } from './errors.ts';
+import { ActionError, RoutingError } from './errors.ts';
 import { withEmit } from './events.ts';
 import type { ExecContext } from './exec.ts';
 import { collectInterceptors, errorResultWithSignal, execCommand } from './exec.ts';
 import { checkInterceptorRequirements, resolveRegisteredInterceptors, runInterceptorChain } from './interceptors.ts';
+import { createNestedRun, unwrapApiResult, withCallerContext } from './nested-run.ts';
 import { errorResult, finalizeResult, makeThenable, thenMaybe, warnIfUnexpectedAsync, withPromiseDrain } from './results.ts';
 import { coreValidateForParse, formatIssueMessages, takeDryRunFlag, validateCommandArgs } from './validate.ts';
 
@@ -51,14 +52,6 @@ function finalizeCliResult<T extends { error?: unknown; exitCode?: number }>(
   const code = result.exitCode ?? (result.error !== undefined ? errorExitCode(result.error) : undefined);
   if (code) setExitCode(code);
   return finalizeResult(result, (error) => setExitCode(result.exitCode ?? errorExitCode(error)));
-}
-
-/** What an `api()` function returns for a `run()` result: the action's result, or a throw for invalid args or a failing action. */
-function unwrapApiResult(result: { error?: unknown; result?: unknown; argsResult?: StandardSchemaV1.Result<unknown> }): unknown {
-  if (result.error !== undefined) throw result.error;
-  const issues = result.argsResult?.issues;
-  if (issues) throw new ValidationError(`Validation error:\n${formatIssueMessages(issues)}`, issues as any);
-  return result.result;
 }
 
 /** Quotes a token for `eval()`'s tokenizer when it has spaces or quotes (JSON values do), escaping `\` and the quote. */
@@ -105,6 +98,11 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
   };
 
   const run: AnyPadroneProgram['run'] = (command, args?: unknown, prefs?: { context?: unknown; signal?: AbortSignal }) => {
+    const result = runCommand(command, args, prefs);
+    return (result instanceof Promise ? withPromiseDrain(result) : makeThenable(result)) as any;
+  };
+
+  const runCommand = (command: unknown, args?: unknown, prefs?: { context?: unknown; signal?: AbortSignal }): any => {
     try {
       const commandObj = typeof command === 'string' ? findCommandByName(command, rootCommand.commands) : (command as AnyPadroneCommand);
       if (!commandObj) throw new RoutingError(`Command "${command ?? ''}" not found`);
@@ -137,18 +135,21 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
     try {
       const resolvedCtx = resolveContext(commandObj, prefs?.context);
       const commandRuntime = getCommandRuntime(commandObj);
-      const executeCtx: InterceptorExecuteContext = withEmit({
-        command: commandObj,
-        input: undefined,
-        rawArgs: {},
-        positionalArgs: [],
-        args,
-        signal: prefs?.signal ?? inertSignal,
-        context: resolvedCtx as object,
-        runtime: commandRuntime,
-        program: ctx.builder as any,
-        caller: 'run',
-      });
+      const executeCtx: InterceptorExecuteContext = withCallerContext(
+        withEmit({
+          command: commandObj,
+          input: undefined,
+          rawArgs: {},
+          positionalArgs: [],
+          args,
+          signal: prefs?.signal ?? inertSignal,
+          context: resolvedCtx as object,
+          runtime: commandRuntime,
+          program: ctx.builder as any,
+          caller: 'run',
+        }),
+        prefs?.context,
+      );
 
       const coreExecute = (executeCtx: InterceptorExecuteContext): InterceptorExecuteResult => {
         const actionCtx: PadroneActionContext = withEmit({
@@ -159,6 +160,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
           context: executeCtx.context,
           caller: 'run',
           prompt: createPrompt(executeCtx),
+          run: createNestedRun(ctx.builder, executeCtx),
         });
         const result = commandObj.action!(executeCtx.args as any, actionCtx);
         return { result };
@@ -169,13 +171,14 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
       const commandInterceptors = resolveRegisteredInterceptors(registered, new Map());
       const executedOrPromise = runInterceptorChain('execute', commandInterceptors, executeCtx, coreExecute);
 
-      const toResult = (e: InterceptorExecuteResult) => finalizeResult({ command: commandObj as any, args: args as any, result: e.result });
+      const failed = (err: unknown) => finalizeResult(errorResult(err, { command: commandObj, args }));
+      // Like eval(), an async action's result is awaited: the call becomes a promise of the resolved result
+      const toResult = (e: InterceptorExecuteResult) => {
+        const finish = (result: unknown) => finalizeResult({ command: commandObj as any, args: args as any, result });
+        return e.result instanceof Promise ? e.result.then(finish, failed) : finish(e.result);
+      };
 
-      if (executedOrPromise instanceof Promise) {
-        return executedOrPromise
-          .then(toResult)
-          .catch((err: unknown) => finalizeResult(errorResult(err, { command: commandObj, args }))) as any;
-      }
+      if (executedOrPromise instanceof Promise) return executedOrPromise.then(toResult).catch(failed) as any;
       return toResult(executedOrPromise);
     } catch (err) {
       return finalizeResult(errorResult(err, { command: commandObj, args })) as any;

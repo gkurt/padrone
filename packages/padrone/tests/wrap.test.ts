@@ -197,15 +197,9 @@ describe('wrap', () => {
         }),
       );
 
-      let errorThrown = false;
-      try {
-        const result = await program.run('notfound', {});
-        await result.result;
-      } catch (error) {
-        errorThrown = true;
-        expect(error).toBeDefined();
-      }
-      expect(errorThrown).toBe(true);
+      // Like eval(), run() reports a failing async action in `error`
+      const result = await program.run('notfound', {});
+      expect(result.error).toBeDefined();
     });
 
     it('should return non-zero exit code for failing commands', async () => {

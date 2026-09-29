@@ -28,6 +28,7 @@ import {
   wrapWithCommandLifecycle,
   wrapWithLifecycle,
 } from './interceptors.ts';
+import { createNestedRun, withCallerContext } from './nested-run.ts';
 import { emitCommandNotFound, isNotFoundCommand } from './not-found.ts';
 import { errorResult, noop, thenMaybe, warnIfUnexpectedAsync } from './results.ts';
 import { buildCommandArgs, formatIssueMessages, getDeprecationWarnings, takeDryRunFlag, validateCommandArgs } from './validate.ts';
@@ -275,11 +276,10 @@ export function execCommand(
             pipelineState.args = v.args;
             if (v.argsResult?.issues) return handleValidationIssues(v.argsResult as StandardSchemaV1.FailureResult, command, errorMode);
 
-            const executeCtx: InterceptorExecuteContext = withEmit({
-              ...validatedCtx,
-              args: v.args,
-              ...(dryRun && { dryRun }),
-            });
+            const executeCtx: InterceptorExecuteContext = withCallerContext(
+              withEmit({ ...validatedCtx, args: v.args, ...(dryRun && { dryRun }) }),
+              pipelineContext,
+            );
 
             const coreExecute = (executeCtx: InterceptorExecuteContext): InterceptorExecuteResult => {
               // Under --dry-run the action never runs
@@ -293,6 +293,7 @@ export function execCommand(
                 context: executeCtx.context,
                 caller,
                 prompt: createPrompt(executeCtx),
+                run: createNestedRun(active.builder, executeCtx),
                 auth: executeCtx.auth,
               });
               const result = handler(executeCtx.args as any, actionCtx);

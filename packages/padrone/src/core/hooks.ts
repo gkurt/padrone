@@ -1,6 +1,7 @@
 import { createPrompt } from '../feature/prompt.ts';
 import type { InterceptorExecuteContext, PadroneHookContext, PadroneHookName, RegisteredInterceptor } from '../types/index.ts';
 import { withEmit } from './events.ts';
+import { createNestedRun } from './nested-run.ts';
 import { isNotFoundCommand } from './not-found.ts';
 import { thenMaybe } from './results.ts';
 
@@ -11,7 +12,20 @@ type HookHandler = (ctx: PadroneHookContext, result?: unknown) => unknown;
 
 function hookContext(ctx: InterceptorExecuteContext): PadroneHookContext {
   const { runtime, command, program, signal, context, caller, auth, args, dryRun } = ctx;
-  return withEmit({ runtime, command, program, signal, context, caller, auth, args, prompt: createPrompt(ctx), ...(dryRun && { dryRun }) });
+  const run = createNestedRun(program, ctx);
+  return withEmit({
+    runtime,
+    command,
+    program,
+    signal,
+    context,
+    caller,
+    auth,
+    args,
+    prompt: createPrompt(ctx),
+    run,
+    ...(dryRun && { dryRun }),
+  });
 }
 
 /**

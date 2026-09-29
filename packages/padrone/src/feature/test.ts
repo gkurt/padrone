@@ -1,3 +1,4 @@
+import { tokenizeInput } from '../core/parse.ts';
 import type { InteractivePromptConfig, PadroneRuntime } from '../core/runtime.ts';
 import type { AnyPadroneCommand, PadroneCommand, PadroneCommandResult, PadroneSchema } from '../types/index.ts';
 import type { GetArguments, GetResults } from '../types/result.ts';
@@ -23,6 +24,11 @@ export type TestCliResult<TCommand extends AnyPadroneCommand = AnyPadroneCommand
   stderr: string[];
   /** The thrown error, if the command threw (routing error, action error, etc.). Anything can be thrown, so it's `unknown`. */
   error?: unknown;
+  /**
+   * The exit code `cli()` sets: `0` on success, the error's `exitCode` (else 1) on an error, `1` for validation issues,
+   * or the result's `exitCode` (e.g. 130 after SIGINT, or an external command's).
+   */
+  exitCode: number;
 };
 
 /**
@@ -102,6 +108,14 @@ export type TestCliBuilder<TProgram = unknown, TArgsInput = string> = {
     input?: TInput | SafeString,
   ): Promise<TestCliResult<TestCommand<TProgram, [TInput] extends [never] ? TArgsInput : TInput>>>;
   /**
+   * Execute a single command the way `cli()` runs it (the `cli` caller): with `padroneConfirm()`'s question, deprecation
+   * warnings and errors printed to `stderr` as a user sees them, and `exitCode` as `cli()` sets it.
+   * @param input - Optional CLI input string, split like a shell would. Overrides `.args()` if provided.
+   */
+  cli<const TInput extends TestInput<TProgram> = never>(
+    input?: TInput | SafeString,
+  ): Promise<TestCliResult<TestCommand<TProgram, [TInput] extends [never] ? TArgsInput : TInput>>>;
+  /**
    * Run a REPL session with the given sequence of inputs.
    * Each string in the array is fed as one line of input.
    * The session ends after all inputs are consumed (EOF).
@@ -161,6 +175,7 @@ export type TestCliBuilder<TProgram = unknown, TArgsInput = string> = {
  */
 type TestableProgram = {
   eval: (input: string, prefs?: any) => any;
+  cli: (prefs?: any) => any;
   runtime: (runtime: PadroneRuntime) => TestableProgram;
   repl: (options?: any) => AsyncIterable<any>;
 };
@@ -206,7 +221,21 @@ export function testCli<TProgram extends TestableProgram>(program: TProgram): Te
       if (evalResult.error) {
         stderr.push(evalResult.error instanceof Error ? evalResult.error.message : String(evalResult.error));
       }
-      return toTestResult(evalResult, stdout, stderr);
+      return toTestResult(evalResult, stdout, stderr, resultExitCode(evalResult));
+    },
+
+    async cli(runInput?: string): Promise<any> {
+      const stdout: unknown[] = [];
+      const stderr: string[] = [];
+      let exitCode = 0;
+
+      const runtime = buildRuntime(stdout, stderr, { envVars, promptAnswers, stdinData });
+      const argv = [...tokenizeInput(runInput ?? input ?? '')];
+      const testProgram = program.runtime({ ...runtime, argv: () => argv, setExitCode: (code) => (exitCode = code) });
+
+      // cli() prints its errors itself, and sets the exit code
+      const cliResult = await testProgram.cli(context === undefined ? {} : { context });
+      return toTestResult(cliResult, stdout, stderr, exitCode);
     },
 
     async repl(inputs: string[]) {
@@ -228,6 +257,7 @@ export function testCli<TProgram extends TestableProgram>(program: TProgram): Te
           args: r.args,
           result: r.result,
           issues: r.argsResult?.issues as TestCliResult['issues'],
+          exitCode: resultExitCode(r),
         });
       }
 
@@ -238,8 +268,19 @@ export function testCli<TProgram extends TestableProgram>(program: TProgram): Te
   return builder;
 }
 
-function toTestResult(evalResult: PadroneCommandResult, stdout: unknown[], stderr: string[]): TestCliResult {
+/** The exit code `cli()` would set for an `eval()` result. */
+function resultExitCode(result: PadroneCommandResult): number {
+  if (result.exitCode !== undefined) return result.exitCode;
+  if (result.error !== undefined) {
+    const code = (result.error as { exitCode?: unknown } | null)?.exitCode;
+    return typeof code === 'number' ? code : 1;
+  }
+  return result.argsResult?.issues ? 1 : 0;
+}
+
+function toTestResult(evalResult: PadroneCommandResult, stdout: unknown[], stderr: string[], exitCode: number): TestCliResult {
   return {
+    exitCode,
     command: evalResult.command!,
     args: evalResult.args,
     result: evalResult.result,

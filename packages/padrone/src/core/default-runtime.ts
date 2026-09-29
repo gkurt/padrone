@@ -117,6 +117,11 @@ function detectInteractiveMode(): InteractiveMode {
   return 'supported';
 }
 
+/** Stdin was read to the end (e.g. by an earlier `eval()` in the process): reading it again gives nothing, not an error. */
+function stdinConsumed(): boolean {
+  return process.stdin.readableEnded || process.stdin.destroyed;
+}
+
 /**
  * Creates a default stdin reader from `process.stdin`.
  * Only created when a command actually declares a `stdin` meta field.
@@ -130,11 +135,11 @@ function createDefaultStdin(): NonNullable<PadroneRuntime['stdin']> {
       return process.stdin?.isTTY === true;
     },
     async text() {
-      if (typeof process === 'undefined') return '';
+      if (typeof process === 'undefined' || stdinConsumed()) return '';
       return readStreamAsText(process.stdin);
     },
     async *lines() {
-      if (typeof process === 'undefined') return;
+      if (typeof process === 'undefined' || stdinConsumed()) return;
       const { createInterface } = await import('node:readline');
       const rl = createInterface({ input: process.stdin });
       try {

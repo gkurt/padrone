@@ -48,14 +48,24 @@ export type PadroneEvent<TPayload = void> = {
   readonly '~payload'?: TPayload;
 };
 
-/** What an event handler receives besides the payload: the execution the event was emitted from. */
-export type PadroneEventContext = Pick<
-  InterceptorBaseContext,
+/**
+ * What an event handler receives besides the payload: the execution the event was emitted from. `context` is typed by the
+ * interceptor's `.requires<T>()`.
+ */
+export type PadroneEventContext<TContext = object> = Pick<
+  InterceptorBaseContext<TContext>,
   'command' | 'signal' | 'context' | 'runtime' | 'program' | 'caller' | 'emit'
 >;
 
 /** Handles one custom event. Handlers run one after another, in interceptor order; `emit()` waits for them. */
-export type PadroneEventHandler<TPayload = unknown> = (payload: TPayload, ctx: PadroneEventContext) => unknown;
+export type PadroneEventHandler<TPayload = unknown, TContext = object> = (payload: TPayload, ctx: PadroneEventContext<TContext>) => unknown;
+
+/** The context an interceptor's event handlers get: its phase context, with what `.requires<T>()` declared. */
+type EventContextOf<TSelf, TContext> = TSelf extends { '~contextRequires': (ctx: infer R) => void }
+  ? unknown extends R
+    ? TContext
+    : TContext & R
+  : TContext;
 
 /**
  * Runs the handlers for `event` of the interceptors that apply to the command (enabled, and not filtered out by `callers`),
@@ -332,7 +342,11 @@ export type InterceptorFactory<TArgs = unknown, TResult = unknown, TContext = ob
 export type PadroneInterceptorFn<TArgs = unknown, TResult = unknown, TContext = object> = InterceptorFactory<TArgs, TResult, TContext> &
   Omit<InterceptorMeta, 'requires' | 'on'> & {
     /** Handle a custom event (see `defineEvent()`) emitted during executions this interceptor applies to. */
-    on: <TPayload, TSelf>(this: TSelf, event: PadroneEvent<TPayload>, handler: PadroneEventHandler<TPayload>) => TSelf;
+    on: <TPayload, TSelf>(
+      this: TSelf,
+      event: PadroneEvent<TPayload>,
+      handler: PadroneEventHandler<TPayload, EventContextOf<TSelf, TContext>>,
+    ) => TSelf;
     /** Brand this interceptor as providing additional context of type `TProvides`. No-op at runtime; purely a type-level cast. */
     provides: <TProvides>() => PadroneContextInterceptor<TProvides, TArgs, TResult, TContext>;
     /**
@@ -430,7 +444,7 @@ export type InterceptorDefBuilder<TContext = unknown, TBrand = unknown, TProvide
   /** An interceptor that only handles an event: `defineInterceptor({ name: 'slack' }).on(deployed, handler)`. */
   on: <TPayload>(
     event: PadroneEvent<TPayload>,
-    handler: PadroneEventHandler<TPayload>,
+    handler: PadroneEventHandler<TPayload, unknown extends TContext ? object : TContext>,
   ) => PadroneInterceptorFn<unknown, unknown, TContext> & TBrand;
 };
 

@@ -512,7 +512,7 @@ test.skip('Types - DefineCommandContext default context', () => {
 });
 
 /** This test verifies defineCommand().requires().define() brands callbacks and validates at .command() */
-test.skip('Types - defineCommand().requires()', () => {
+test('Types - defineCommand().requires()', () => {
   type AdminDB = { query: (sql: string) => string[] };
 
   // .requires() adds the required type to context and brands the callback
@@ -541,9 +541,12 @@ test.skip('Types - defineCommand().requires()', () => {
   const program = createPadrone('test').intercept(adminInterceptor).command('admin', adminCommand);
   expectTypeOf(program.eval).toBeFunction();
 
-  // Registering on a program WITHOUT the context: returns DefineCommandRequiresError
-  const badProgram = createPadrone('test').command('admin', adminCommand);
-  expectTypeOf(badProgram).toHaveProperty('~error');
+  // Or one whose context has it
+  createPadrone('test').context<{ adminDb: AdminDB }>().command('admin', adminCommand);
+
+  // Registering on a program WITHOUT the context is an error at the call
+  // @ts-expect-error adminDb isn't provided
+  createPadrone('test').command('admin', adminCommand);
 });
 
 test('function-form arguments infer the extended schema, with meta', () => {

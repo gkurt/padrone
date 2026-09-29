@@ -1,6 +1,6 @@
 export { buildReplCompleter } from './core/commands.ts';
 export type { PadroneOptions } from './core/create.ts';
-export { createPadrone, defineCommand } from './core/create.ts';
+export { createPadrone, defineArgsMeta, defineCommand } from './core/create.ts';
 export type { PadroneErrorOptions } from './core/errors.ts';
 export {
   ActionError,
@@ -224,6 +224,7 @@ export type {
   PadroneParseResult,
   PadroneProgram,
   PadroneProgramMeta,
+  PadroneRunCommand,
   PadroneSchema,
   PadroneValueHint,
   RegisteredInterceptor,

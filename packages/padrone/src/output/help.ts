@@ -18,6 +18,7 @@ import { getRootCommand } from '../util/utils.ts';
 import type { ColorConfig, ColorTheme } from './colorizer.ts';
 import {
   createFormatter,
+  FROM_FILE_NOTE,
   type HelpArgumentInfo,
   type HelpDetail,
   type HelpFormat,
@@ -177,7 +178,7 @@ function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSc
         const notes = [
           ...(isCount ? ['repeatable'] : []),
           ...(isVariadic ? ['takes multiple values'] : []),
-          ...((optMeta?.fromFile ?? prop?.fromFile) ? ['@file or - for stdin'] : []),
+          ...((optMeta?.fromFile ?? prop?.fromFile) ? [FROM_FILE_NOTE] : []),
           ...(conflicts[key] ? [`conflicts with ${formatOptions(conflicts[key], ', ')}`] : []),
           ...(implies[key] ? [`implies ${formatValues(implies[key], ', ')}`] : []),
           ...(requires[key] ? [`requires ${formatOptions(requires[key], ', ')}`] : []),
@@ -215,6 +216,8 @@ function extractArgsInfo(schema: StandardJSONSchemaV1, meta?: Pick<PadroneArgsSc
 
 /** The type an option's value is shown as: `string` for `boolean | string` (the boolean is the value left out). */
 function valueType(type: unknown): string | undefined {
+  // Object options take `key=value` (repeatable), or JSON
+  if (type === 'object') return 'key=value';
   if (!Array.isArray(type)) return type as string | undefined;
   return type.filter((t) => t !== 'boolean' && t !== 'null').join('|') || undefined;
 }
@@ -411,14 +414,18 @@ export function getHelpInfo(
   const listed = [...visibleArgs, ...visibleInherited];
   const listedNames = new Set(listed.flatMap((arg) => [arg.name, ...(arg.aliases ?? [])]));
   const listedFlags = new Set(listed.flatMap((arg) => arg.flags ?? []));
-  for (const option of collectInterceptorHelpOptions(cmd)) {
+  // Options of interceptors that apply to subcommands too (--json, -o, --config, ...) are global options
+  const interceptorGlobals: HelpArgumentInfo[] = [];
+  for (const { option, inherited } of collectInterceptorHelpOptions(cmd)) {
     if (listedNames.has(option.name)) continue;
     const flags = option.flags?.filter((flag) => !listedFlags.has(flag));
     const aliases = option.aliases?.filter((alias) => !listedNames.has(alias));
-    visibleArgs.push({ ...option, ...(flags && { flags }), ...(aliases && { aliases }) });
+    const { commandOption, ...listedOption } = { ...option, ...(flags && { flags }), ...(aliases && { aliases }) };
+    if (inherited && !commandOption) interceptorGlobals.push({ ...listedOption, group: option.group ?? 'Global Options' });
+    else visibleArgs.push(listedOption);
   }
-  // Global options come after the command's own (and those interceptors add)
-  visibleArgs.push(...visibleInherited);
+  // Global options come after the command's own (and those interceptors add only for it)
+  visibleArgs.push(...visibleInherited, ...interceptorGlobals);
   if (visibleArgs.length > 0) {
     helpInfo.arguments = visibleArgs;
     helpInfo.usage.hasArguments = true;
@@ -561,17 +568,20 @@ function collectInterceptorEnv(command: AnyPadroneCommand): (arg: string) => str
 }
 
 /** Options that interceptors on the command chain list in help (`meta.helpOptions`). The nearest interceptor of an id wins. */
-function collectInterceptorHelpOptions(command: AnyPadroneCommand): HelpArgumentInfo[] {
+function collectInterceptorHelpOptions(command: AnyPadroneCommand): { option: HelpArgumentInfo; inherited: boolean }[] {
   const seen = new Set<string>();
-  const options: HelpArgumentInfo[] = [];
+  const options: { option: HelpArgumentInfo; inherited: boolean }[] = [];
   for (let current: AnyPadroneCommand | undefined = command; current; current = current.parent) {
-    const level: HelpArgumentInfo[][] = [];
+    const level: { option: HelpArgumentInfo; inherited: boolean }[][] = [];
     for (const { meta } of [...(current.interceptors ?? [])].reverse()) {
       if (current !== command && meta.inherit === false) continue;
       if (meta.id && seen.has(meta.id)) continue;
       if (meta.id) seen.add(meta.id);
       if (meta.disabled || !meta.helpOptions) continue;
-      level.unshift([...(typeof meta.helpOptions === 'function' ? meta.helpOptions(command) : meta.helpOptions)]);
+      const listed = typeof meta.helpOptions === 'function' ? meta.helpOptions(command) : meta.helpOptions;
+      // Applies to the subcommands too: an ancestor's, or the command's own when it has subcommands
+      const inherited = meta.inherit !== false && (current !== command || !!command.commands?.length);
+      level.unshift(listed.map((option) => ({ option, inherited })));
     }
     // In the order the interceptors were registered
     options.push(...level.flat());

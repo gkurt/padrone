@@ -169,7 +169,7 @@ describe('custom events', () => {
     const program = createPadrone('app')
       .intercept(twice)
       .command('go', (c) => c.action((_args, ctx) => ctx.emit(pinged)));
-    await program.run('go', undefined).result;
+    await program.run('go', undefined);
     expect(log).toEqual(['one', 'two']);
   });
 

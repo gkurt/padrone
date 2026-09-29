@@ -61,7 +61,16 @@ function createConfirmInterceptor(options: PadroneConfirmOptions) {
   const shortFlags = confirmFlags.filter((flag) => flag.length === 1);
   const helpOptions = (command: AnyPadroneCommand): HelpArgumentInfo[] =>
     longFlags.length && mayAsk(command)
-      ? [{ name: longFlags[0]!, flags: shortFlags, type: 'boolean', optional: true, description: 'Run without asking for confirmation' }]
+      ? [
+          {
+            name: longFlags[0]!,
+            flags: shortFlags,
+            type: 'boolean',
+            optional: true,
+            description: 'Run without asking for confirmation',
+            commandOption: true,
+          },
+        ]
       : [];
 
   return defineInterceptor(

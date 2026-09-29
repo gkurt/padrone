@@ -70,7 +70,15 @@ export type PadroneActionContext<TContext = unknown> = {
    * Without an interactive terminal, or for remote callers, they return their `default` or throw a `PromptUnavailableError`.
    */
   prompt: PadronePrompt;
+  /**
+   * Runs another command of the program by name, like `program.run(name, args)` with this run's caller context and signal,
+   * and resolves to its result: rejects with the error of a failing action, or a `ValidationError` for invalid args.
+   */
+  run: PadroneRunCommand;
 };
+
+/** `ctx.run(name, args)`: runs a command of the program (by its path, e.g. `'db migrate'`) and resolves to its result. */
+export type PadroneRunCommand = (name: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 /** The hooks `.hook()` registers: `preAction` runs before the action, `postAction` after it succeeds. */
 export type PadroneHookName = 'preAction' | 'postAction';

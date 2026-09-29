@@ -334,6 +334,8 @@ export function parseCommand(input: PadroneInput | undefined, rootCommand: AnyPa
         continue;
       }
       value = parsed.value;
+      // `key=value` sets one key of an object option (`-q page=2 -q sort=asc`, merged like dotted keys)
+      if (!arrayArguments.has(rootKey)) value = keyValueObject(value) ?? value;
     }
 
     const existing = getNestedValue(rawArgs, key);
@@ -380,6 +382,27 @@ export function getDeprecationWarnings(command: AnyPadroneCommand, rawArgs: Reco
   return warnings;
 }
 
+/** `key=value` as the object it sets, for object and record options (the key is taken as is, dots included); else undefined. */
+function keyValueObject(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== 'string') return undefined;
+  const eq = value.indexOf('=');
+  if (eq <= 0) return undefined;
+  const object: Record<string, unknown> = {};
+  setNestedValue(object, [value.slice(0, eq)], value.slice(eq + 1));
+  return object;
+}
+
+/** The fields the schema requires (none when it has no JSON Schema). */
+function requiredFields(schema: PadroneSchema | undefined): Set<string> {
+  if (!schema) return new Set();
+  try {
+    const required = (getJsonSchema(schema) as { required?: unknown }).required;
+    return new Set(Array.isArray(required) ? required : []);
+  } catch {
+    return new Set();
+  }
+}
+
 type FindCommandFn = (name: string, commands?: AnyPadroneCommand[]) => AnyPadroneCommand | undefined;
 
 /**
@@ -399,9 +422,14 @@ export function buildCommandArgs(
   let argIndex = 0;
 
   if (positionalConfig.length > 0) {
+    // An optional positional before required ones (`[method] <url>`) only takes a value when the required ones still get one
+    const required = requiredFields(command.argsSchema);
+    const needsValue = positionalConfig.map(({ name, variadic }) => !variadic && required.has(name) && !(name in preprocessedArgs));
     for (let i = 0; i < positionalConfig.length; i++) {
       const { name, variadic } = positionalConfig[i]!;
       if (argIndex >= positionalArgs.length) break;
+      const requiredAfter = needsValue.slice(i + 1).filter(Boolean).length;
+      if (!variadic && !required.has(name) && positionalArgs.length - argIndex <= requiredAfter) continue;
 
       // Detect ambiguity: same arg provided both positionally and as a named option
       if (name in preprocessedArgs) {
@@ -485,12 +513,23 @@ function describeIssues(
   return issues.map((issue) => {
     const { code, expected } = issue as { code?: unknown; expected?: unknown };
     const path = (issue.path ?? []).map((segment) => String(typeof segment === 'object' ? segment.key : segment));
+    // An item of a list option: name the option and the value (`Invalid value "x" for "--header": ...`), not `header.0`
+    if (path.length === 2 && /^\d+$/.test(path[1]!) && !positionals.has(path[0]!)) {
+      const item = getNestedValue(input, path);
+      if (item !== undefined && (item === null || typeof item !== 'object')) {
+        const option = `--${camelToKebab(path[0]!) ?? path[0]}`;
+        const reason = code === 'invalid_type' && typeof expected === 'string' ? `expected ${expected}` : issue.message;
+        return { ...issue, message: `Invalid value ${JSON.stringify(item)} for "${option}": ${reason}` };
+      }
+    }
     if (code !== 'invalid_type' || path.length === 0) return issue;
     const value = getNestedValue(input, path);
     if (value === undefined) {
       const positional = path.length === 1 && positionals.has(path[0]!);
       return { ...issue, message: positional ? 'Missing required argument' : 'Missing required option' };
     }
+    if (typeof value === 'string' && (expected === 'record' || expected === 'object'))
+      return { ...issue, message: `Expected key=value or JSON, got ${JSON.stringify(value)}` };
     if (typeof value === 'string' && typeof expected === 'string')
       return { ...issue, message: `Expected ${expected}, got ${JSON.stringify(value)}` };
     return issue;

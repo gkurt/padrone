@@ -1707,12 +1707,12 @@ describe('CLI', () => {
       expect(json).toMatchObject({ name: 'test-cli', version: '6.0.0', arch: process.arch, shell: 'zsh', Channel: 'beta' });
     });
 
-    it('should show version with version command', () => {
+    it('should show version with version command', async () => {
       const program = createPadrone('test-cli')
         .configure({ version: '4.0.0' })
         .command('greet', (c) => c.action(() => 'hello'));
 
-      const result = program.eval('version');
+      const result = await program.eval('version');
 
       expect(result.result as unknown as string).toBe('4.0.0');
     });

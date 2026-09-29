@@ -78,6 +78,7 @@ Array of argument names to accept as positional arguments.
 **Positional argument order:**
 - Arguments are matched in the order specified
 - Optional arguments are skipped if not provided
+- An optional positional before required ones only takes a value when there are enough left for them: with `['method', 'url']` and `method` defaulting to `GET`, `http https://x` sets `url`, and `http POST https://x` sets both (like httpie's `[METHOD] URL`)
 - Position matters: `['source', 'dest']` means first arg is source, second is dest
 - Extra arguments are an error (`Too many arguments`), as are positionals given to a command that declares none. Use a variadic (`...rest`) to accept any number
 

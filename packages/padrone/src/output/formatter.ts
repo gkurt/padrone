@@ -72,6 +72,11 @@ export type HelpArgumentInfo = {
   group?: string;
   /** Short notes shown after the description, e.g. `repeatable` or `conflicts with --json` */
   notes?: string[];
+  /**
+   * An interceptor's `helpOptions` entry listed with the command's own options: one the interceptor only lists where it
+   * applies (like `--yes` on commands that ask). The others of an inherited interceptor go under Global Options.
+   */
+  commandOption?: boolean;
 };
 
 /**
@@ -186,7 +191,32 @@ export function positionalLabel(arg: HelpPositionalInfo): string {
 
 /** Whether a default is worth showing: not unset, `''` or `[]`. */
 export function hasDefaultValue(value: unknown): boolean {
-  return value !== undefined && value !== '' && !(Array.isArray(value) && value.length === 0);
+  if (value === undefined || value === '') return false;
+  if (Array.isArray(value)) return value.length > 0;
+  return !(isPlainObject(value) && Object.keys(value).length === 0);
+}
+
+/** An option's notes; the stdin field's say it reads piped stdin (with `fromFile`, in the note about `@file` and `-`). */
+function optionNotes(arg: HelpArgumentInfo, stdin: boolean): string[] {
+  const notes = arg.notes ?? [];
+  if (!stdin) return notes;
+  const fromFile = notes.indexOf(FROM_FILE_NOTE);
+  if (fromFile === -1) return [...notes, 'reads piped stdin'];
+  return notes.map((note, i) => (i === fromFile ? '@file, - or piped stdin' : note));
+}
+
+/** The note on `fromFile` options. */
+export const FROM_FILE_NOTE = '@file or - for stdin';
+
+/** A default value as help shows it: lists of plain values as `a, b`, objects as JSON. */
+export function formatDefaultValue(value: unknown): string {
+  if (Array.isArray(value) && value.every((v) => v === null || typeof v !== 'object')) return value.map(String).join(', ');
+  if (value !== null && typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype;
 }
 
 /** The value placeholder of an option (`valueName`, or its type); none for booleans and counts. */
@@ -329,7 +359,7 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
         styledMetaParts.push(styler.meta(text));
       }
       if (hasDefaultValue(arg.default)) {
-        const text = `(default: ${String(arg.default)})`;
+        const text = `(default: ${formatDefaultValue(arg.default)})`;
         metaParts.push(text);
         styledMetaParts.push(styler.meta(text));
       }
@@ -433,7 +463,7 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
           styledInlineMeta.push(styler.meta('(deprecated)'));
         }
         if (hasDefaultValue(arg.default)) {
-          const text = `(default: ${String(arg.default)})`;
+          const text = `(default: ${formatDefaultValue(arg.default)})`;
           inlineMeta.push(text);
           styledInlineMeta.push(styler.meta(text));
         }
@@ -442,7 +472,7 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
           inlineMeta.push(text);
           styledInlineMeta.push(styler.meta(text));
         }
-        for (const note of arg.notes ?? []) {
+        for (const note of optionNotes(arg, info.usage.stdinField === arg.name)) {
           inlineMeta.push(`(${note})`);
           styledInlineMeta.push(styler.meta(`(${note})`));
         }
@@ -493,8 +523,6 @@ function createGenericFormatter(styler: Styler, layout: LayoutConfig, showAllBui
           line3Parts.push(styler.example('Example:'), styler.exampleValue(exampleValues));
         }
         if (line3Parts.length > 0) lines.push(contPad + join(line3Parts));
-
-        if (info.usage.stdinField === arg.name) lines.push(contPad + styler.meta('(stdin)'));
       }
     };
 

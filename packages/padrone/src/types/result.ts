@@ -11,7 +11,8 @@ type NoArgs = void | undefined | EmptyRecord;
 /** Input args, which may be left out (or `undefined`) when no field is required. */
 type NormalizeInputArguments<TArgs> =
   IsGeneric<TArgs> extends true
-    ? NoArgs
+    ? // A command of unknown type (e.g. through `ctx.program`, an `AnyPadroneProgram`) takes any args
+      Record<string, unknown> | void | undefined
     : [TArgs] extends [void | undefined]
       ? NoArgs
       : EmptyRecord extends TArgs
@@ -22,6 +23,14 @@ export type GetArguments<TDir extends 'in' | 'out', TCommand extends AnyPadroneC
   : NormalizeArguments<TCommand['~types']['argsOutput']>;
 
 export type GetResults<TCommand extends AnyPadroneCommand> = ReturnType<NonNullable<TCommand['action']>>;
+
+/** Whether the action returns a promise, which makes `eval()` / `run()` promises of the resolved result. */
+type IsAsyncResult<T> = 0 extends 1 & T ? false : [Extract<T, PromiseLike<unknown>>] extends [never] ? false : true;
+
+type IsUnion<T, U = T> = T extends unknown ? ([U] extends [T] ? false : true) : never;
+
+/** An async action makes the call a promise, when the call names one command (`cli()` and unknown input may route to any). */
+type ResultAsync<TCommand extends AnyPadroneCommand> = true extends IsUnion<TCommand> ? never : IsAsyncResult<GetResults<TCommand>>;
 
 /**
  * Result of `drain()` — a discriminated union that never throws.
@@ -38,7 +47,8 @@ export type PadroneDrainResult<TResult> = { value: Drained<TResult>; error?: nev
  */
 export type PadroneCommandResult<TCommand extends AnyPadroneCommand = AnyPadroneCommand> =
   | (PadroneParseResult<TCommand> & {
-      result: GetResults<TCommand>;
+      /** The action's return value, awaited when it's a promise. */
+      result: Awaited<GetResults<TCommand>>;
       error?: never;
       /** The signal that caused cancellation, if any. */
       signal?: PadroneSignal;
@@ -65,7 +75,10 @@ export type PadroneCommandResult<TCommand extends AnyPadroneCommand = AnyPadrone
  * Like `MaybePromise<PadroneCommandResult<TCommand>, TAsync>` but ensures `drain()` is available
  * at the outer level in all cases — both sync (Thenable) and async (Promise).
  */
-export type MaybePromiseCommandResult<TCommand extends AnyPadroneCommand, TAsync> = MaybePromise<PadroneCommandResult<TCommand>, TAsync> & {
+export type MaybePromiseCommandResult<TCommand extends AnyPadroneCommand, TAsync> = MaybePromise<
+  PadroneCommandResult<TCommand>,
+  TAsync | ResultAsync<TCommand>
+> & {
   drain: () => Promise<PadroneDrainResult<GetResults<TCommand>>>;
 };
 

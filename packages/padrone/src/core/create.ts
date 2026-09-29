@@ -1,3 +1,4 @@
+import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { PadroneAutoOutputOptions } from '../extension/auto-output.ts';
 import { padroneAutoOutput } from '../extension/auto-output.ts';
 import { padroneColor } from '../extension/color.ts';
@@ -21,6 +22,7 @@ import type {
   DefineCommandContext,
   InterceptorFactory,
   InterceptorMeta,
+  PadroneArgsSchemaMeta,
   PadroneBuilder,
   PadroneCommand,
   PadroneGlobalArgsMeta,
@@ -385,4 +387,22 @@ export function defineCommand(fn?: any): any {
     define: (f: any) => f,
   }) as DefineCommandBuilder;
   return builder;
+}
+
+/**
+ * Types the meta of `.arguments(schema, meta)` / `.globalArgs(schema, meta)` kept apart from the call, e.g. in its own file:
+ * its field names are checked against the schema and its literals kept (`flags: 'v'`), with no `as const`.
+ *
+ * @example
+ * ```ts
+ * export const globals = z.object({ verbose: z.number().default(0) });
+ * export const globalsMeta = defineArgsMeta(globals, { fields: { verbose: { flags: 'v', count: true } } });
+ * createPadrone('app').globalArgs(globals, globalsMeta);
+ * ```
+ */
+export function defineArgsMeta<
+  TSchema extends PadroneSchema,
+  const TMeta extends PadroneArgsSchemaMeta<NonNullable<StandardSchemaV1.InferInput<TSchema>>>,
+>(_schema: TSchema, meta: TMeta): TMeta {
+  return meta;
 }

@@ -161,7 +161,7 @@ program.help('greet', { format: 'json' });   // json, markdown, html, ansi
 | `.api(prefs?)` | Commands as typed functions that return the result and throw on invalid args or a failing action |
 | `.repl(options?)` | Interactive REPL session |
 | `.help(command?, prefs?)` | Generate help (text, ansi, markdown, html, json) |
-| `.tool()` | Vercel AI SDK tool definition |
+| `.tool(prefs?)` | Vercel AI SDK tool definition. Pass `context` in prefs (as for `.serve()` / `.mcp()`). |
 | `.mcp(prefs?)` | Start MCP server (HTTP or stdio) *(experimental)* |
 | `.serve(prefs?)` | Start REST server with OpenAPI docs *(experimental)* |
 | `.completion(shell?)` | Shell completion script |

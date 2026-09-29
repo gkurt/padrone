@@ -5,7 +5,7 @@ import { isNotFoundCommand } from './not-found.ts';
 import { thenMaybe } from './results.ts';
 
 /** Inside every other execute interceptor (e.g. `padroneConfirm()` asks first), right around the action. */
-const HOOK_ORDER = 10_000;
+export const HOOK_ORDER = 10_000;
 
 type HookHandler = (ctx: PadroneHookContext, result?: unknown) => unknown;
 

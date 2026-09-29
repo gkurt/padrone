@@ -111,6 +111,7 @@ export function defineInterceptor(
     },
     provides: () => builder as any,
     factory: (f) => buildInterceptorFn({ ...meta, requires }, f as InterceptorFactory<any, any, any>) as any,
+    on: (event, handler) => buildInterceptorFn({ ...meta, requires }, () => ({})).on(event, handler as PadroneEventHandler) as any,
   };
   return builder;
 }

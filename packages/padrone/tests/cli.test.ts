@@ -145,7 +145,7 @@ describe('CLI', () => {
     });
 
     it('should return error for non-existent command', () => {
-      const result = program.run('nonexistent', {});
+      const result = program.run('nonexistent' as string, {});
       expect(result.error).toBeInstanceOf(Error);
       expect((result.error as Error).message).toContain('Command "nonexistent" not found');
     });

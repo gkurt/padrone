@@ -355,6 +355,7 @@ export function createServeHandler(
         caller: 'serve',
         signal: controller.signal,
         auth,
+        context: prefs?.context,
         runtime: {
           output: (...args: unknown[]) => output.push(args.map(outputValueToText).join(' ')),
           error: (text: string) => errors.push(text),

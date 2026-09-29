@@ -104,6 +104,8 @@ export type PadroneEvalPreferences = {
 export type PadroneToolPreferences = {
   /** Longest a call may run, in ms: then its signal is aborted and the model gets a "Timed out" error. Default: no limit. */
   timeout?: number;
+  /** The context each call's command receives, like `eval()`'s `context`. */
+  context?: unknown;
 };
 
 /**

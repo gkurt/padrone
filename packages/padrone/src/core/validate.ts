@@ -545,10 +545,8 @@ export function formatIssueMessages(issues: readonly StandardSchemaV1.Issue[]): 
   return issues
     .map((i) => {
       const path = i.path?.map((segment) => (typeof segment === 'object' ? segment.key : segment)).join('.');
-      // A message that already names the option (`Unknown option "--limt"`) needs no `limt:` in front
-      const named =
-        path && [path, camelToKebab(path)].some((name) => name && i.message.includes(`"${name.length === 1 ? '-' : '--'}${name}"`));
-      return path && !named ? `  - ${path}: ${i.message}` : `  - ${i.message}`;
+      // A message that already names an option (`Unknown option "--limt"`, `Option "-l" requires a value`) needs no `limt:` in front
+      return path && !/"--?[a-zA-Z][^"\s]*"/.test(i.message) ? `  - ${path}: ${i.message}` : `  - ${i.message}`;
     })
     .join('\n');
 }

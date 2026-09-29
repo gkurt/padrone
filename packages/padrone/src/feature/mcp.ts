@@ -280,6 +280,7 @@ export function createMcpHandler(
       caller: 'mcp',
       signal,
       auth,
+      context: prefs?.context,
       runtime: {
         output: (...outArgs: unknown[]) => output.push(outArgs.map(outputValueToText).join(' ')),
         error: (text: string) => errors.push(text),

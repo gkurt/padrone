@@ -33,6 +33,8 @@ export type PadroneRemotePreferences = {
   timeout?: number;
   /** Most commands running at once; a request over it fails right away (serve: 503). Default: no limit. */
   maxConcurrent?: number;
+  /** The context each call's command receives, like `eval()`'s `context`. The `serve`/`mcp` commands pass on the one given to `cli()`. */
+  context?: unknown;
 };
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

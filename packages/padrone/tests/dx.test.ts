@@ -4,6 +4,7 @@ import {
   ActionError,
   createPadrone,
   defineCommand,
+  defineEvent,
   defineInterceptor,
   padroneConfig,
   padroneConfirm,
@@ -14,6 +15,7 @@ import {
   padroneTiming,
   ValidationError,
 } from 'padrone';
+import { padroneServe } from 'padrone/serve';
 import { testCli } from 'padrone/test';
 import * as z from 'zod/v4';
 import { createDefaultRuntime } from '../src/core/default-runtime.ts';
@@ -442,5 +444,103 @@ describe('recommendations from the sample program', () => {
           .filter((line) => line.endsWith(' ')),
       ).toEqual([]);
     }
+  });
+});
+
+describe('recommendations from the third sample program', () => {
+  it('keeps the aliases of subcommands in a defineCommand() group, so eval() and parse() still infer the command', () => {
+    const tags = defineCommand((c) =>
+      c.command(['remove', 'rm'], (s) => s.arguments(z.object({ tags: z.array(z.string()) })).action((args) => args.tags)),
+    );
+    const program = createPadrone('app')
+      .runtime(quiet)
+      .command('list', (c) => c.arguments(z.object({ tag: z.string().optional() })).action((args) => args.tag ?? 'all'))
+      .command('tag', tags);
+    const listed = program.eval('list --tag x');
+    expectTypeOf(listed.result).toEqualTypeOf<string | undefined>();
+    expect(listed.result).toBe('x');
+    expectTypeOf(program.parse('tag rm --tags a').args).toEqualTypeOf<{ tags: string[] } | undefined>();
+    expect(program.run('tag rm', { tags: ['a'] }).result).toEqual(['a']);
+  });
+
+  it('rejects a literal name run() has no command for, and takes any string variable', () => {
+    const program = createPadrone('app')
+      .runtime(quiet)
+      .command('list', (c) => c.action(() => 'all'));
+    // @ts-expect-error a typo
+    expect(program.run('lsit', {}).error).toBeInstanceOf(Error);
+    const name: string = 'list';
+    expect(program.run(name, {}).result as unknown).toBe('all');
+  });
+
+  it('passes a context to tool(), serve() and mcp() calls, and requires it when the program declares one', async () => {
+    const program = createPadrone('app')
+      .runtime(quiet)
+      .context<{ user: string }>()
+      .command('whoami', (c) => c.action((_args, ctx) => ctx.context.user));
+    const tool = program.tool({ context: { user: 'ada' } });
+    expect(((await tool.execute!({ command: 'whoami' }, {} as never)) as { result: unknown }).result).toBe('ada');
+    // @ts-expect-error the program's context
+    program.tool();
+    // @ts-expect-error the program's context
+    void program.serve({ port: 0 });
+  });
+
+  it('serve passes on the context given to cli()', async () => {
+    const logs: string[] = [];
+    const listeners: ((signal: 'SIGTERM') => void)[] = [];
+    const program = createPadrone('app')
+      .runtime({
+        output: () => {},
+        error: (text) => logs.push(text),
+        onSignal: (cb) => {
+          listeners.push(cb);
+          return () => {};
+        },
+      })
+      .context<{ user: string }>()
+      .extend(padroneServe())
+      .command('whoami', (c) => c.context((ctx) => ({ ...ctx, greeting: `hi ${ctx.user}` })).action((_args, ctx) => ctx.context.greeting));
+    const running = program.eval('serve --port 0', { context: { user: 'ada' } });
+    let port: string | undefined;
+    for (let i = 0; i < 100 && !port; i++) {
+      port = logs.join('\n').match(/listening on http:\/\/127\.0\.0\.1:(\d+)/)?.[1];
+      if (!port) await new Promise((r) => setTimeout(r, 10));
+    }
+    try {
+      const res = (await (await fetch(`http://127.0.0.1:${port}/whoami`)).json()) as { result: unknown };
+      // The command's transform runs on the context cli() was given
+      expect(res.result).toBe('hi ada');
+    } finally {
+      for (const listener of listeners) listener('SIGTERM');
+      await running;
+    }
+  });
+
+  it('defines an interceptor that only handles an event with defineInterceptor(meta).on()', async () => {
+    const added = defineEvent<{ name: string }>('app:added');
+    const seen: string[] = [];
+    const audit = defineInterceptor({ name: 'audit' }).on(added, (payload) => {
+      seen.push(payload.name);
+    });
+    const program = createPadrone('app')
+      .runtime(quiet)
+      .intercept(audit)
+      .command('add', (c) =>
+        c.arguments(z.object({ name: z.string() }), { positional: ['name'] }).action(async (args, ctx) => {
+          await ctx.emit(added, { name: args.name });
+        }),
+      );
+    await program.eval('add x');
+    expect(seen).toEqual(['x']);
+  });
+
+  it('leaves the path out of an issue that names the option by its short flag', async () => {
+    const errors: string[] = [];
+    const program = createPadrone('app')
+      .runtime({ ...quiet, argv: () => ['add', '-l'], error: (text) => errors.push(text) })
+      .command('add', (c) => c.arguments(z.object({ lang: z.string().meta({ flags: 'l' }) })).action(() => {}));
+    program.cli();
+    expect(errors.join('\n')).toContain('  - Option "-l" requires a value');
   });
 });

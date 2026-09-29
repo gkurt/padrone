@@ -1,9 +1,17 @@
 import { extractSchemaMetadata, getJsonSchema, isSensitiveField, parsePositionalConfig, REDACTED } from '../core/args.ts';
 import { findCommandByName, getGlobalArgs } from '../core/commands.ts';
-import { REMOTE_CALLERS } from '../core/interceptors.ts';
+import { HOOK_ORDER } from '../core/hooks.ts';
+import { defineInterceptor, REMOTE_CALLERS } from '../core/interceptors.ts';
 import { tokenizeInput } from '../core/parse.ts';
 import { getKnownOptionNames } from '../core/validate.ts';
-import type { AnyPadroneCommand, InterceptorValidateResult, PadroneFieldMeta, PadroneInput, PadroneSchema } from '../types/index.ts';
+import type {
+  AnyPadroneCommand,
+  InterceptorExecuteContext,
+  InterceptorValidateResult,
+  PadroneFieldMeta,
+  PadroneInput,
+  PadroneSchema,
+} from '../types/index.ts';
 
 /** An environment variable named after the program: `my-cli` and `YES` → `MY_CLI_YES`. */
 export function programEnvVar(programName: string, suffix: string): string {
@@ -351,4 +359,28 @@ export function redactArgs<T>(command: AnyPadroneCommand, args: T): T {
   const properties = { ...Object.fromEntries(Object.entries(schemaProperties(globalArgs?.schema)).filter(globalOnly)), ...own };
   const fields = { ...Object.fromEntries(Object.entries(globalArgs?.meta?.fields ?? {}).filter(globalOnly)), ...command.meta?.fields };
   return redactObject(args as Record<string, unknown>, properties, fields) as T;
+}
+
+/**
+ * Runs a built-in top-level command that serves the program's commands (`serve`, `mcp`) with the context given to
+ * `cli()` / `eval()`, before any `.context()` transform, which each command it runs resolves through its own transforms.
+ * It takes the action's place, inside every other execute interceptor (hooks included). `run()` has no start phase, so there
+ * the command's action runs instead, with its own `ctx.context`.
+ */
+export function callerContextInterceptor(commandName: string, run: (ctx: InterceptorExecuteContext, context: unknown) => Promise<unknown>) {
+  return defineInterceptor({ name: `padrone:${commandName}-context`, order: HOOK_ORDER + 1 }, () => {
+    let root: AnyPadroneCommand | undefined;
+    let callerContext: unknown;
+    return {
+      start(ctx, next) {
+        root = ctx.command;
+        callerContext = ctx.context;
+        return next();
+      },
+      execute(ctx, next) {
+        if (!root || ctx.command !== findCommandByName(commandName, root.commands)) return next();
+        return run(ctx, callerContext).then(() => ({ result: undefined }));
+      },
+    };
+  });
 }

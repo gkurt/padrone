@@ -656,6 +656,7 @@ Returns a Vercel AI SDK `Tool` definition.
 import { generateText } from 'ai';
 const tool = program.tool();
 const limited = program.tool({ timeout: 30_000 }); // aborts the command; the model gets "Timed out after 30000 ms"
+const withDb = program.tool({ context: { db } }); // the context each call gets (required when the program declares one)
 ```
 
 ### `.mcp(prefs?)` *(experimental)*
@@ -670,7 +671,7 @@ await program.mcp({ port: 3000, host: '127.0.0.1' });
 await program.mcp({ transport: 'stdio' });
 ```
 
-Options: `transport` (`'http'` | `'stdio'`), `port`, `host`, `basePath`, `name`, `version`, `cors` (`string | false`), `maxBodySize` (bytes, default 4 MiB; larger bodies get 413), `include` / `exclude` (command paths or globs, `'db.**'` = `db` and all under it, `'**'` also the root; or `(command) => boolean`), `auth` (`(req: Request) => identity | falsy`; falsy is 401, the identity is `ctx.auth`), `bearer` (`string | string[]` tokens; `ctx.auth` is `{ token }`, 401 with `WWW-Authenticate: Bearer`), `allowedHosts` (`Host` names besides loopback and the bound host, `.example.com` for subdomains; `true`/`'all'` any), `timeout` (ms; aborts the command's signal), `maxConcurrent` (a timed-out call gets JSON-RPC error `-32001`, one over the limit `-32000`), `sessionTtl` (ms an HTTP session may idle before it's dropped and its calls aborted; the client gets 404), `maxSessions` (default 1000; a new session drops the least recently used). `auth`, `bearer` and `allowedHosts` apply to HTTP.
+Options: `transport` (`'http'` | `'stdio'`), `port`, `host`, `basePath`, `name`, `version`, `cors` (`string | false`), `maxBodySize` (bytes, default 4 MiB; larger bodies get 413), `include` / `exclude` (command paths or globs, `'db.**'` = `db` and all under it, `'**'` also the root; or `(command) => boolean`), `auth` (`(req: Request) => identity | falsy`; falsy is 401, the identity is `ctx.auth`), `bearer` (`string | string[]` tokens; `ctx.auth` is `{ token }`, 401 with `WWW-Authenticate: Bearer`), `allowedHosts` (`Host` names besides loopback and the bound host, `.example.com` for subdomains; `true`/`'all'` any), `timeout` (ms; aborts the command's signal), `maxConcurrent` (a timed-out call gets JSON-RPC error `-32001`, one over the limit `-32000`), `sessionTtl` (ms an HTTP session may idle before it's dropped and its calls aborted; the client gets 404), `maxSessions` (default 1000; a new session drops the least recently used), `context` (what each call's command gets, like `eval()`'s; required when the program declares one, and the `mcp` command passes on the one given to `cli()`). `auth`, `bearer` and `allowedHosts` apply to HTTP.
 
 Object results are also returned as `structuredContent`; `.configure({ outputSchema })` (an object schema) is advertised as the tool's `outputSchema`. Over HTTP, a request whose `Origin` isn't a loopback origin (`localhost`, `127.0.0.1`, `[::1]`) or the explicitly set `cors` origin gets 403 (so does a non-loopback `Host` when bound to a loopback host), and `DELETE` (session termination) aborts that session's calls in flight.
 
@@ -684,7 +685,7 @@ Starts a REST HTTP server. Each command becomes an endpoint (`users list` → `/
 await program.serve({ port: 3000, basePath: '/api/' });
 ```
 
-Options: `port`, `host`, `basePath`, `cors` (`string | false`; also the one cross-site `Origin` accepted, `'*'` any), `maxBodySize` (bytes, default 4 MiB; 413 `payload_too_large`), `builtins` (`{ health, help, schema, docs }`), `onRequest`, `onError`, `include` / `exclude` (command paths or globs, `'db.**'` = `db` and all under it, `'**'` also the root; or `(command) => boolean`), `auth` (`(req: Request) => identity | falsy`; falsy is 401, the identity is `ctx.auth`), `bearer` (`string | string[]` tokens; `ctx.auth` is `{ token }`, 401 with `WWW-Authenticate: Bearer`), `allowedHosts` (`Host` names besides loopback and the bound host, `.example.com` for subdomains; `true`/`'all'` any), `timeout` (ms; aborts the command's signal), `maxConcurrent` (504 `timeout`, 503 `unavailable`). `/_health` and the CORS preflight skip `auth`/`bearer`; with `bearer` the OpenAPI spec declares a bearer security scheme.
+Options: `port`, `host`, `basePath`, `cors` (`string | false`; also the one cross-site `Origin` accepted, `'*'` any), `maxBodySize` (bytes, default 4 MiB; 413 `payload_too_large`), `builtins` (`{ health, help, schema, docs }`), `onRequest`, `onError`, `include` / `exclude` (command paths or globs, `'db.**'` = `db` and all under it, `'**'` also the root; or `(command) => boolean`), `auth` (`(req: Request) => identity | falsy`; falsy is 401, the identity is `ctx.auth`), `bearer` (`string | string[]` tokens; `ctx.auth` is `{ token }`, 401 with `WWW-Authenticate: Bearer`), `allowedHosts` (`Host` names besides loopback and the bound host, `.example.com` for subdomains; `true`/`'all'` any), `timeout` (ms; aborts the command's signal), `maxConcurrent` (504 `timeout`, 503 `unavailable`), `context` (what each request's command gets, like `eval()`'s; required when the program declares one, and the `serve` command passes on the one given to `cli()`). `/_health` and the CORS preflight skip `auth`/`bearer`; with `bearer` the OpenAPI spec declares a bearer security scheme.
 
 Built-in endpoints: `/_health`, `/_help`, `/_schema`, `/_docs` (Scalar OpenAPI viewer), `/_openapi`.
 
@@ -732,7 +733,7 @@ const withDb = defineInterceptor({ name: 'with-db' })
 
 ```ts
 const deployed = defineEvent<{ env: string; version: string }>('myapp:deployed');
-const slack = defineInterceptor({ name: 'slack' }, () => ({})).on(deployed, (payload, ctx) => notify(payload));
+const slack = defineInterceptor({ name: 'slack' }).on(deployed, (payload, ctx) => notify(payload));
 // in an action or interceptor phase: runs the handlers on the command chain, in interceptor order
 await ctx.emit(deployed, { env, version });
 await program.emit(deployed, { env, version }); // outside an execution: root handlers, caller 'run'
@@ -741,7 +742,7 @@ await program.emit(deployed, { env, version }); // outside an execution: root ha
 **`commandNotFound`** (built-in event, exported): emitted when routing finds no command for a name (top level, or under a group without positionals). Payload: `name`, `args` (words after it, as typed), `command` (where it was looked up), `input`, `suggestions`, `handled`, `handle(action)` (runs `action(ctx)` in its place through the command chain's execute interceptors; its return value is the result), `reroute(input)` (routes another input). Handlers run in order until one handles it; unhandled → the usual "Unknown command" error with "Did you mean". Only emitted when a handler exists (stays sync otherwise).
 
 ```ts
-const legacy = defineInterceptor({ name: 'legacy' }, () => ({})).on(commandNotFound, (event) => {
+const legacy = defineInterceptor({ name: 'legacy' }).on(commandNotFound, (event) => {
   if (event.name === 'publish') event.reroute(['release', ...event.args]);
 });
 ```

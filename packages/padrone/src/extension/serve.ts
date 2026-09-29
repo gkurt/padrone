@@ -1,10 +1,10 @@
 import { resolveAllCommands } from '../core/commands.ts';
 import type { PadroneServePreferences } from '../feature/serve.ts';
-import type { AnyPadroneBuilder, CommandTypesBase, PadroneCommand } from '../types/index.ts';
+import type { AnyPadroneBuilder, AnyPadroneCommand, AnyPadroneProgram, CommandTypesBase, PadroneCommand } from '../types/index.ts';
 import type { PadroneSchema } from '../types/schema.ts';
 import type { WithCommand } from '../util/type-utils.ts';
 import { getRootCommand } from '../util/utils.ts';
-import { passthroughSchema } from './utils.ts';
+import { callerContextInterceptor, passthroughSchema } from './utils.ts';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -29,29 +29,39 @@ export type WithServe<T> = WithCommand<T, 'serve', ServeCommand>;
  */
 export function padroneServe(defaults?: PadroneServePreferences): <T extends CommandTypesBase>(builder: T) => WithServe<T> {
   return ((builder: AnyPadroneBuilder) =>
-    builder.command('serve', (c) =>
-      c
-        .configure({ description: 'Start a REST HTTP server', hidden: true, builtin: true })
-        .arguments(
-          passthroughSchema({
-            port: { type: 'string', description: 'Port to listen on' },
-            host: { type: 'string', description: 'Host to listen on' },
-            'base-path': { type: 'string', description: 'Base path for all endpoints' },
-          }),
-        )
-        .async()
-        .action(async (args, ctx) => {
-          const rootCommand = getRootCommand(ctx.command);
-          resolveAllCommands(rootCommand);
-          const { startServeServer } = await import('../feature/serve.ts');
-          const port = args.port ? parseInt(args.port, 10) : undefined;
-          const prefs: PadroneServePreferences = {
-            ...defaults,
-            port: port !== undefined && !Number.isNaN(port) ? port : defaults?.port,
-            host: args.host ?? defaults?.host,
-            basePath: args['base-path'] ?? defaults?.basePath,
-          };
-          await startServeServer(ctx.program, rootCommand, ctx.program.eval, prefs);
-        }),
-    )) as any;
+    builder
+      .command('serve', (c) =>
+        c
+          .configure({ description: 'Start a REST HTTP server', hidden: true, builtin: true })
+          .arguments(
+            passthroughSchema({
+              port: { type: 'string', description: 'Port to listen on' },
+              host: { type: 'string', description: 'Host to listen on' },
+              'base-path': { type: 'string', description: 'Base path for all endpoints' },
+            }),
+          )
+          .async()
+          .action((args, ctx) => startServe(defaults, args, ctx, ctx.context)),
+      )
+      .intercept(callerContextInterceptor('serve', (ctx, context) => startServe(defaults, ctx.args as ServeArgs, ctx, context)))) as any;
+}
+
+async function startServe(
+  defaults: PadroneServePreferences | undefined,
+  args: ServeArgs & { 'base-path'?: string },
+  ctx: { command: AnyPadroneCommand; program: AnyPadroneProgram },
+  context: unknown,
+) {
+  const rootCommand = getRootCommand(ctx.command);
+  resolveAllCommands(rootCommand);
+  const { startServeServer } = await import('../feature/serve.ts');
+  const port = args.port ? parseInt(args.port, 10) : undefined;
+  const prefs: PadroneServePreferences = {
+    ...defaults,
+    port: port !== undefined && !Number.isNaN(port) ? port : defaults?.port,
+    host: args.host ?? defaults?.host,
+    basePath: args['base-path'] ?? defaults?.basePath,
+    context: defaults?.context ?? context,
+  };
+  await startServeServer(ctx.program, rootCommand, ctx.program.eval, prefs);
 }

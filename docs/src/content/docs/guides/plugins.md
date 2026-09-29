@@ -717,7 +717,7 @@ import { defineEvent, defineInterceptor } from 'padrone';
 
 export const deployed = defineEvent<{ env: string; version: string }>('myapp:deployed');
 
-const slack = defineInterceptor({ name: 'slack' }, () => ({})).on(deployed, async (payload, ctx) => {
+const slack = defineInterceptor({ name: 'slack' }).on(deployed, async (payload, ctx) => {
   await postToSlack(`Deployed ${payload.version} to ${payload.env}`);
 });
 
@@ -740,12 +740,12 @@ program
 ```typescript
 import { commandNotFound, defineInterceptor, LOCAL_CALLERS } from 'padrone';
 
-const legacy = defineInterceptor({ name: 'legacy-names' }, () => ({})).on(commandNotFound, (event) => {
+const legacy = defineInterceptor({ name: 'legacy-names' }).on(commandNotFound, (event) => {
   // `my-cli publish …` was renamed to `my-cli release …`
   if (event.name === 'publish') event.reroute(['release', ...event.args]);
 });
 
-const fallback = defineInterceptor({ name: 'fallback', callers: LOCAL_CALLERS }, () => ({})).on(commandNotFound, (event) => {
+const fallback = defineInterceptor({ name: 'fallback', callers: LOCAL_CALLERS }).on(commandNotFound, (event) => {
   if (event.command.parent) return; // top-level names only
   event.handle((ctx) => runScript(event.name, event.args, ctx.signal));
 });

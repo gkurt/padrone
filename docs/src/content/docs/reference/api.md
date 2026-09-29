@@ -1249,6 +1249,7 @@ await program.mcp({
 | `maxConcurrent` | `number` | — | Most commands running at once; one over it fails right away (JSON-RPC error `-32000`) |
 | `sessionTtl` | `number` | — | HTTP sessions idle this long (ms, no request and no call running) are dropped, aborting their calls; the client gets 404 and starts a new one |
 | `maxSessions` | `number` | `1000` | Most HTTP sessions kept; a new one drops the least recently used. With `auth`/`bearer`, a session only answers the identity that created it |
+| `context` | `unknown` | — | The context each call's command receives, like `eval()`'s `context`; required when the program declares one. The `mcp` command passes on the one given to `cli()` |
 
 **Returns:** `Promise<void>` (resolves when the server shuts down)
 
@@ -1294,6 +1295,7 @@ await program.serve({
 | `allowedHosts` | `string[] \| true \| 'all'` | — | `Host` names answered besides loopback ones and the bound host (`.example.com` covers subdomains), so non-loopback bindings are protected from DNS rebinding too (403 otherwise); `true`/`'all'` turns the check off |
 | `timeout` | `number` | — | Longest a command may run, in ms: its signal is aborted and the request fails with 504 (`timeout`) |
 | `maxConcurrent` | `number` | — | Most commands running at once; one over it fails right away with 503 (`unavailable`, `Retry-After: 1`) |
+| `context` | `unknown` | — | The context each request's command receives, like `eval()`'s `context`; required when the program declares one. The `serve` command passes on the one given to `cli()` |
 | `builtins.health` | `boolean` | `true` | Enable `GET /_health` endpoint |
 | `builtins.help` | `boolean` | `true` | Enable `GET /_help` and `GET /_help/:command` |
 | `builtins.schema` | `boolean` | `true` | Enable `GET /_schema` and `GET /_schema/:command` |
@@ -1334,6 +1336,8 @@ import { streamText } from 'ai';
 const tool = program.tool();
 // A call running longer than 30 s is aborted, and the model gets "Timed out after 30000 ms"
 const limited = program.tool({ timeout: 30_000 });
+// The context each call's command receives (required when the program declares one)
+const withDb = program.tool({ context: { db } });
 
 await streamText({
   model: yourModel,
@@ -1728,7 +1732,7 @@ import { defineEvent, defineInterceptor } from 'padrone';
 
 const deployed = defineEvent<{ env: string; version: string }>('myapp:deployed');
 
-const slack = defineInterceptor({ name: 'slack' }, () => ({})).on(deployed, (payload, ctx) => notify(payload.env));
+const slack = defineInterceptor({ name: 'slack' }).on(deployed, (payload, ctx) => notify(payload.env));
 
 program.intercept(slack).command('deploy', (c) => c.action((args, ctx) => ctx.emit(deployed, { env: args.env, version: '1.2.0' })));
 ```
@@ -1744,7 +1748,7 @@ A built-in event, emitted when routing finds no command for a name: at the top l
 ```typescript
 import { commandNotFound, defineInterceptor } from 'padrone';
 
-const fallback = defineInterceptor({ name: 'fallback' }, () => ({})).on(commandNotFound, (event) => {
+const fallback = defineInterceptor({ name: 'fallback' }).on(commandNotFound, (event) => {
   if (event.name === 'ship') event.reroute(['deploy', ...event.args]); // an input to route instead
   else if (event.name === 'hello') event.handle((ctx) => `Hello from ${ctx.command.path}`); // runs in its place
 });

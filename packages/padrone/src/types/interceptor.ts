@@ -427,6 +427,11 @@ export type InterceptorDefBuilder<TContext = unknown, TBrand = unknown, TProvide
     ? PadroneInterceptorFn<TArgs, TResult, TContext>
     : PadroneContextInterceptor<TProvides, TArgs, TResult, TContext>) &
     TBrand;
+  /** An interceptor that only handles an event: `defineInterceptor({ name: 'slack' }).on(deployed, handler)`. */
+  on: <TPayload>(
+    event: PadroneEvent<TPayload>,
+    handler: PadroneEventHandler<TPayload>,
+  ) => PadroneInterceptorFn<unknown, unknown, TContext> & TBrand;
 };
 
 /**

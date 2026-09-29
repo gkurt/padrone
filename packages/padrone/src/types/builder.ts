@@ -136,12 +136,19 @@ type MountedCommand<
 >;
 
 /**
- * The trailing preferences parameter of `cli()`, `eval()`, `run()`, `repl()` and `api()`: optional, unless the program
+ * The trailing preferences parameter of `cli()`, `eval()`, `run()`, `repl()`, `api()`, `tool()`, `serve()` and `mcp()`: optional, unless the program
  * declares a context (`.context<T>()`) that the caller has to pass.
  */
 type PrefsParam<TContext, TPrefs> = unknown extends TContext
   ? [prefs?: TPrefs & { context?: TContext }]
   : [prefs: TPrefs & { context: TContext }];
+
+/** The args `run()` takes for a command, or an error naming a literal command name that isn't one (`run('lsit', {})`). */
+type KnownCommandArgs<TCommand extends AnyPadroneCommand, TName> = [TCommand] extends [never]
+  ? string extends TName
+    ? GetArguments<'in', TCommand>
+    : `Unknown command "${TName & string}"`
+  : GetArguments<'in', TCommand>;
 
 /** Options for the `mount()` method. */
 type MountOptions<TContext, TNewContext> = { context: (ctx: TContext) => TNewContext };
@@ -811,8 +818,8 @@ export type PadroneBuilderMethods<
   /** Add or override a subcommand. Pass a builder function to define its schema, action, and nested commands. @category Builder */
   command: {
     <
-      TNameNested extends string,
-      TAliases extends string[] = [],
+      const TNameNested extends string,
+      const TAliases extends string[] = [],
       TBuilder extends CommandTypesBase = DefaultCommandBuilder<
         TProgramName,
         TNameNested,
@@ -855,7 +862,12 @@ export type PadroneBuilderMethods<
       TGlobals
     >;
     // Overload for defineCommand.requires() branded callbacks — validates context requirements
-    <TNameNested extends string, TAliases extends string[] = [], TBuilder extends CommandTypesBase = CommandTypesBase, TReq = unknown>(
+    <
+      const TNameNested extends string,
+      const TAliases extends string[] = [],
+      TBuilder extends CommandTypesBase = CommandTypesBase,
+      TReq = unknown,
+    >(
       name: TNameNested | readonly [TNameNested, ...TAliases],
       builderFn: ((builder: any) => TBuilder) & { '~contextRequires': (ctx: TReq) => void },
     ): TContext & TContextProvided extends TReq
@@ -881,7 +893,7 @@ export type PadroneBuilderMethods<
       : DefineCommandRequiresError;
     // Fallback overload: accepts DefineCommand-typed callbacks where the builder type is not structurally compatible
     // (e.g., DefineCommand with unknown context used in a parent with specific context)
-    <TNameNested extends string, TAliases extends string[] = [], TBuilder extends CommandTypesBase = CommandTypesBase>(
+    <const TNameNested extends string, const TAliases extends string[] = [], TBuilder extends CommandTypesBase = CommandTypesBase>(
       name: TNameNested | readonly [TNameNested, ...TAliases],
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       builderFn?: (builder: any) => TBuilder,
@@ -908,7 +920,7 @@ export type PadroneBuilderMethods<
 
   /** Mount an existing program as a subcommand, optionally transforming the context. @category Builder */
   mount: {
-    <TNameNested extends string, TAliases extends string[] = [], TProgram extends CommandTypesBase = CommandTypesBase>(
+    <const TNameNested extends string, const TAliases extends string[] = [], TProgram extends CommandTypesBase = CommandTypesBase>(
       name: TNameNested | readonly [TNameNested, ...TAliases],
       program: TProgram,
     ): BuilderOrProgram<
@@ -932,8 +944,8 @@ export type PadroneBuilderMethods<
     >;
 
     <
-      TNameNested extends string,
-      TAliases extends string[] = [],
+      const TNameNested extends string,
+      const TAliases extends string[] = [],
       TProgram extends CommandTypesBase = CommandTypesBase,
       TNewContext = unknown,
     >(
@@ -1036,7 +1048,7 @@ export type PadroneProgram<
   run: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], true, true>>(
     name: TCommand | SafeString,
     args: NoInfer<
-      GetArguments<'in', PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>
+      KnownCommandArgs<PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>, TCommand>
     >,
     ...prefs: PrefsParam<TContext, { signal?: AbortSignal }>
   ) => PadroneCommandResult<PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>;
@@ -1112,7 +1124,7 @@ export type PadroneProgram<
   };
 
   /** Export as an AI SDK tool. @category Utility */
-  tool: (prefs?: PadroneToolPreferences) => Tool<{ command: string }>;
+  tool: (...prefs: PrefsParam<TContext, PadroneToolPreferences>) => Tool<{ command: string }>;
 
   /** Generate help text for a command. @category Utility */
   help: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], false, true>>(
@@ -1124,10 +1136,10 @@ export type PadroneProgram<
   completion: (shell?: 'bash' | 'zsh' | 'fish' | 'powershell', options?: CompletionScriptOptions) => Promise<string>;
 
   /** Start a Model Context Protocol server. @category Server */
-  mcp: (prefs?: PadroneMcpPreferences) => Promise<void>;
+  mcp: (...prefs: PrefsParam<TContext, PadroneMcpPreferences>) => Promise<void>;
 
   /** Start a REST HTTP server with OpenAPI docs. @category Server */
-  serve: (prefs?: PadroneServePreferences) => Promise<void>;
+  serve: (...prefs: PrefsParam<TContext, PadroneServePreferences>) => Promise<void>;
 
   /** Read-only metadata about the program (name, version, description, commands, etc.). @category Utility */
   info: PadroneProgramMeta<TProgramName>;

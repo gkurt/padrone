@@ -1064,7 +1064,8 @@ describe('REPL context', () => {
 
   it('run("repl") passes on its context', async () => {
     const { program, seen } = createContextProgram(['whoami', null]);
-    await program.run('repl', {}, { context: { user: 'dave' } }).result;
+    // The repl command isn't in the program's types
+    await program.run('repl' as string, {}, { context: { user: 'dave' } }).result;
     expect(seen).toEqual(['dave']);
   });
 });

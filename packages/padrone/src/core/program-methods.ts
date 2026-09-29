@@ -238,6 +238,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
           evalCommand(input.command, {
             caller: 'tool',
             signal: controller.signal,
+            context: prefs?.context,
             runtime: {
               output: (...args) => printed.push({ text: args.map(outputValueToText).join(' ') }),
               error: (text) => printed.push({ text, stderr: true }),

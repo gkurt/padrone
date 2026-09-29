@@ -651,6 +651,30 @@ describe('commands that need no args', () => {
     expect(withContext.run(name, undefined, { context }).result as unknown).toBe('ada');
   });
 
+  it('type their args as {}, as actions get them', async () => {
+    const noArgs = createPadrone('app')
+      .runtime(quiet)
+      .command('ping', (c) =>
+        c
+          .hook('preAction', (ctx) => {
+            expectTypeOf(ctx.args).toEqualTypeOf<Record<string, never>>();
+          })
+          .action((args) => {
+            expectTypeOf(args).toEqualTypeOf<Record<string, never>>();
+            return 'pong';
+          }),
+      );
+    const ran = noArgs.run('ping');
+    expectTypeOf(ran.args).toEqualTypeOf<Record<string, never> | undefined>();
+    expect(ran.args).toEqual({});
+    const evaluated = noArgs.eval('ping');
+    expectTypeOf(evaluated.args).toEqualTypeOf<Record<string, never> | undefined>();
+    expect(evaluated.args).toEqual({});
+    expect(noArgs.parse('ping').args).toEqual({});
+    expectTypeOf<InferArgsOutput<InferCommand<typeof noArgs, 'ping'>>>().toEqualTypeOf<Record<string, never>>();
+    expect((await testCli(noArgs).run('ping')).args).toEqual({});
+  });
+
   it('take no body, an empty object or null over serve', async () => {
     const serve = createServeHandler((program as never)[commandSymbol], program.eval.bind(program) as never);
     for (const body of [undefined, '{}', 'null']) {

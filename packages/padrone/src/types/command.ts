@@ -3,7 +3,7 @@ import type { PadroneRuntime, ResolvedPadroneRuntime } from '../core/runtime.ts'
 import type { PadroneHelpTopic } from '../extension/help.ts';
 import type { PadronePrompt } from '../feature/prompt.ts';
 import type { PadroneHelpConfig, PadroneHelpTransform } from '../output/formatter.ts';
-import type { FullCommandName } from '../util/type-utils.ts';
+import type { ArgsOutput, FullCommandName } from '../util/type-utils.ts';
 import type { PadroneArgsSchemaMeta, PadroneCompleteContext, PadroneCompletionResult, PadroneGlobalArgsMeta } from './args-meta.ts';
 import type { AnyPadroneProgram } from './builder.ts';
 import type { PadroneEmit, RegisteredInterceptor } from './interceptor.ts';
@@ -193,9 +193,9 @@ export type PadroneCommand<
   /** Which callers may run this command (see `PadroneCommandConfig.expose`). */
   expose?: PadroneExpose;
   /** Whether `tool()` asks for approval before running this command. Set by `.configure({ needsApproval })`. */
-  needsApproval?: boolean | ((args: StandardSchemaV1.InferOutput<TArgs>) => Promise<boolean> | boolean);
+  needsApproval?: boolean | ((args: ArgsOutput<TArgs>) => Promise<boolean> | boolean);
   /** Whether `padroneConfirm()` asks before running this command, or the question. Set by `.configure({ confirm })`. */
-  confirm?: boolean | string | ((args: StandardSchemaV1.InferOutput<TArgs>) => string);
+  confirm?: boolean | string | ((args: ArgsOutput<TArgs>) => string);
   /** Schema of the action's result, set by `.configure({ outputSchema })`. */
   outputSchema?: PadroneSchema;
   /** Usage examples shown in help output. Each entry is a command-line invocation string. */
@@ -216,9 +216,9 @@ export type PadroneCommand<
    */
   globalArgsSchema?: PadroneSchema;
   globalArgsMeta?: PadroneGlobalArgsMeta;
-  action?: (args: StandardSchemaV1.InferOutput<TArgs>, ctx: PadroneActionContext<TContext & TContextProvided>) => TRes;
+  action?: (args: ArgsOutput<TArgs>, ctx: PadroneActionContext<TContext & TContextProvided>) => TRes;
   /** Runs instead of `action` under `--dry-run` / `-n`; the flag only exists on commands that have one. Set by `.dryRun()`. */
-  dryRun?: (args: StandardSchemaV1.InferOutput<TArgs>, ctx: PadroneActionContext<TContext & TContextProvided>) => unknown;
+  dryRun?: (args: ArgsOutput<TArgs>, ctx: PadroneActionContext<TContext & TContextProvided>) => unknown;
   /** Runtime flag indicating this command uses async validation. Set by `.async()` or `asyncSchema()`. */
   isAsync?: boolean;
   /** Runtime configuration for I/O abstraction. */
@@ -241,7 +241,7 @@ export type PadroneCommand<
     aliases: TAliases;
     argsSchema: TArgs;
     argsInput: StandardSchemaV1.InferInput<TArgs>;
-    argsOutput: StandardSchemaV1.InferOutput<TArgs>;
+    argsOutput: ArgsOutput<TArgs>;
     result: TRes;
     commands: TCommands;
     async: TAsync;

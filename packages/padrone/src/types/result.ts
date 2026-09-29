@@ -1,9 +1,7 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import type { PadroneSignal } from '../core/runtime.ts';
-import type { Drained, IsGeneric, MaybePromise } from '../util/type-utils.ts';
+import type { Drained, EmptyRecord, IsGeneric, MaybePromise } from '../util/type-utils.ts';
 import type { AnyPadroneCommand } from './command.ts';
-
-type EmptyRecord = Record<string, never>;
 
 type NormalizeArguments<TArgs> = IsGeneric<TArgs> extends true ? void | EmptyRecord : TArgs;
 

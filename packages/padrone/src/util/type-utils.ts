@@ -179,6 +179,12 @@ type ReplaceInTuple<TCommands extends AnyPadroneCommand[], TName extends string,
 
 type NoArgs = void | undefined;
 
+export type EmptyRecord = Record<string, never>;
+
+/** The args an action (and `result.args`) gets from a schema: `{}` for a command without arguments, as at runtime. */
+export type ArgsOutput<TSchema extends PadroneSchema> = OutputArgs<StandardSchemaV1.InferOutput<TSchema>>;
+type OutputArgs<T> = IsGeneric<T> extends true ? T : T extends NoArgs ? Record<string, never> : T;
+
 /** Global args merged under a command's own args; the command's own fields win. */
 type MergeGlobalArgs<TGlobal, TOwn> = [Exclude<TGlobal, NoArgs>] extends [never]
   ? TOwn

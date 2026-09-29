@@ -11,6 +11,7 @@ import type { WrapConfig, WrapResult } from '../feature/wrap.ts';
 import type { HelpPreferences } from '../output/help.ts';
 import type { PadroneDirs } from '../util/dirs.ts';
 import type {
+  ArgsOutput,
   FindDirectChild,
   FlattenCommands,
   FullCommandName,
@@ -472,7 +473,7 @@ export type PadroneBuilderMethods<
   /** Register a runtime interceptor for lifecycle phases (parse, validate, execute, etc.). @category Builder */
   intercept: {
     /** Context-providing interceptor — extends context type. Rejects if required context is not satisfied. */
-    <TInterceptor extends PadroneContextInterceptor<any, StandardSchemaV1.InferOutput<TArgs>, TRes, any>>(
+    <TInterceptor extends PadroneContextInterceptor<any, ArgsOutput<TArgs>, TRes, any>>(
       interceptor: TInterceptor,
     ): InterceptorRequiresCheck<TInterceptor, TContext & TContextProvided> extends true
       ? BuilderOrProgram<
@@ -491,7 +492,7 @@ export type PadroneBuilderMethods<
         >
       : InterceptorRequiresError;
     /** Plain interceptor — no context change. Rejects if required context is not satisfied. */
-    <TInterceptor extends PadroneInterceptorFn<StandardSchemaV1.InferOutput<TArgs>, TRes, any>>(
+    <TInterceptor extends PadroneInterceptorFn<ArgsOutput<TArgs>, TRes, any>>(
       interceptor: TInterceptor,
     ): InterceptorRequiresCheck<TInterceptor, TContext & TContextProvided> extends true
       ? BuilderOrProgram<
@@ -512,7 +513,7 @@ export type PadroneBuilderMethods<
     /** Register an interceptor with static metadata and a factory function. Context is strongly typed. */
     (
       meta: InterceptorMeta,
-      factory: InterceptorFactory<StandardSchemaV1.InferOutput<TArgs>, TRes, TContext & TContextProvided>,
+      factory: InterceptorFactory<ArgsOutput<TArgs>, TRes, TContext & TContextProvided>,
     ): BuilderOrProgram<
       TReturn,
       TProgramName,
@@ -531,7 +532,7 @@ export type PadroneBuilderMethods<
 
   /** Set command metadata like title, description, version, hidden, deprecated, etc. @category Builder */
   configure: (
-    config: PadroneCommandConfig<StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>>,
+    config: PadroneCommandConfig<ArgsOutput<WithGlobalArgs<TArgs, TGlobals>>>,
   ) => BuilderOrProgram<
     TReturn,
     TProgramName,
@@ -720,12 +721,9 @@ export type PadroneBuilderMethods<
   /** Set the handler function that runs when this command is executed. @category Builder */
   action: <TNewRes>(
     handler?: (
-      args: StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>,
+      args: ArgsOutput<WithGlobalArgs<TArgs, TGlobals>>,
       ctx: PadroneActionContext<TContext & TContextProvided>,
-      base: (
-        args: StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>,
-        ctx: PadroneActionContext<TContext & TContextProvided>,
-      ) => TRes,
+      base: (args: ArgsOutput<WithGlobalArgs<TArgs, TGlobals>>, ctx: PadroneActionContext<TContext & TContextProvided>) => TRes,
     ) => TNewRes,
   ) => BuilderOrProgram<
     TReturn,
@@ -753,10 +751,7 @@ export type PadroneBuilderMethods<
    * @category Builder
    */
   dryRun: <TDryRes = TRes>(
-    handler: (
-      args: StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>,
-      ctx: PadroneActionContext<TContext & TContextProvided>,
-    ) => TDryRes,
+    handler: (args: ArgsOutput<WithGlobalArgs<TArgs, TGlobals>>, ctx: PadroneActionContext<TContext & TContextProvided>) => TDryRes,
   ) => BuilderOrProgram<
     TReturn,
     TProgramName,
@@ -783,9 +778,7 @@ export type PadroneBuilderMethods<
   hook: {
     (
       name: 'preAction',
-      handler: (
-        ctx: PadroneHookContext<StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>, TContext & TContextProvided>,
-      ) => unknown,
+      handler: (ctx: PadroneHookContext<ArgsOutput<WithGlobalArgs<TArgs, TGlobals>>, TContext & TContextProvided>) => unknown,
     ): BuilderOrProgram<
       TReturn,
       TProgramName,
@@ -803,7 +796,7 @@ export type PadroneBuilderMethods<
     (
       name: 'postAction',
       handler: (
-        ctx: PadroneHookContext<StandardSchemaV1.InferOutput<WithGlobalArgs<TArgs, TGlobals>>, TContext & TContextProvided>,
+        ctx: PadroneHookContext<ArgsOutput<WithGlobalArgs<TArgs, TGlobals>>, TContext & TContextProvided>,
         result: unknown,
       ) => unknown,
     ): BuilderOrProgram<

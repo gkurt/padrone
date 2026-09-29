@@ -75,7 +75,7 @@ type TestCommand<TProgram, TInput> = [TInput] extends [never]
     : AnyPadroneCommand;
 
 /** The context the program declares (`.context<T>()`), or anything when it declares none. */
-type TestContext<TProgram> = TProgram extends { '~types': { context: infer C } } ? (unknown extends C ? unknown : C) : unknown;
+type TestContext<TProgram> = TProgram extends { '~types': { callerContext: infer C } } ? (unknown extends C ? unknown : C) : unknown;
 
 /**
  * Fluent builder for setting up CLI test scenarios.

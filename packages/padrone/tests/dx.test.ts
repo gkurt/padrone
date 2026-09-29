@@ -544,3 +544,48 @@ describe('recommendations from the third sample program', () => {
     expect(errors.join('\n')).toContain('  - Option "-l" requires a value');
   });
 });
+
+describe('program-level context transforms', () => {
+  it('leave the context callers pass as the one the program declares', async () => {
+    const program = createPadrone('app')
+      .runtime(quiet)
+      .context<{ user: string }>()
+      .context((ctx) => ({ ...ctx, greeting: `hi ${ctx.user}` }))
+      .command('whoami', (c) => c.action((_args, ctx) => ctx.context.greeting));
+    const context = { user: 'ada' };
+    expect(program.eval('whoami', { context }).result).toBe('hi ada');
+    expect(program.run('whoami', undefined, { context }).result).toBe('hi ada');
+    expect(program.api({ context }).whoami()).toBe('hi ada');
+    expect((await testCli(program).context(context).run('whoami')).result).toBe('hi ada');
+    expect(((await program.tool({ context }).execute!({ command: 'whoami' }, {} as never)) as { result: unknown }).result).toBe('hi ada');
+    // @ts-expect-error the declared context is required
+    program.eval('whoami');
+    // @ts-expect-error callers pass the declared context, not the transformed one
+    program.eval('whoami', { context: { greeting: 'x' } });
+  });
+
+  it('give commands and later transforms the transformed context', () => {
+    const program = createPadrone('app')
+      .runtime(quiet)
+      .context<{ url: string }>()
+      .context((ctx) => ({ db: { url: ctx.url } }))
+      .context((ctx) => ({ ...ctx, tables: [ctx.db.url] }))
+      .command('tables', (c) =>
+        c.action((_args, ctx) => {
+          expectTypeOf(ctx.context).toEqualTypeOf<{ db: { url: string }; tables: string[] }>();
+          return ctx.context.tables;
+        }),
+      );
+    expect(program.run('tables', undefined, { context: { url: 'pg://x' } }).result).toEqual(['pg://x']);
+  });
+
+  it('need no context from callers when the program declares none', () => {
+    const program = createPadrone('app')
+      .runtime(quiet)
+      .context(() => ({ db: { name: 'main' } }))
+      .context((ctx) => ({ ...ctx, label: ctx.db.name.toUpperCase() }))
+      .command('label', (c) => c.action((_args, ctx) => ctx.context.label));
+    expect(program.eval('label').result).toBe('MAIN');
+    expect(program.api().label()).toBe('MAIN');
+  });
+});

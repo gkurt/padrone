@@ -214,11 +214,12 @@ export type WithCommand<T, TName extends string, TCmd extends AnyPadroneCommand>
     async: infer AS extends boolean;
     context: infer CTX;
     contextProvided: infer CTXP;
+    callerContext: infer CC;
     globals: infer G extends PadroneSchema;
   };
 }
   ? T extends { run: any }
-    ? PadroneProgram<PN, N, PaN, A, R, ReplaceOrAppendCommand<C, TName, TCmd>, any, AS, CTX, CTXP, G>
+    ? PadroneProgram<PN, N, PaN, A, R, ReplaceOrAppendCommand<C, TName, TCmd>, any, AS, CTX, CTXP, G, CC>
     : PadroneBuilder<PN, N, PaN, A, R, ReplaceOrAppendCommand<C, TName, TCmd>, any, AS, CTX, CTXP, G>
   : T;
 
@@ -237,11 +238,12 @@ export type WithInterceptor<T, TProvides> = T extends {
     async: infer AS extends boolean;
     context: infer CTX;
     contextProvided: infer CTXP;
+    callerContext: infer CC;
     globals: infer G extends PadroneSchema;
   };
 }
   ? T extends { run: any }
-    ? PadroneProgram<PN, N, PaN, A, R, C, any, AS, CTX, CTXP & TProvides, G>
+    ? PadroneProgram<PN, N, PaN, A, R, C, any, AS, CTX, CTXP & TProvides, G, CC>
     : PadroneBuilder<PN, N, PaN, A, R, C, any, AS, CTX, CTXP & TProvides, G>
   : T;
 
@@ -260,11 +262,12 @@ export type WithAsync<T> = T extends {
     async: any;
     context: infer CTX;
     contextProvided: infer CTXP;
+    callerContext: infer CC;
     globals: infer G extends PadroneSchema;
   };
 }
   ? T extends { run: any }
-    ? PadroneProgram<PN, N, PaN, A, R, C, any, true, CTX, CTXP, G>
+    ? PadroneProgram<PN, N, PaN, A, R, C, any, true, CTX, CTXP, G, CC>
     : PadroneBuilder<PN, N, PaN, A, R, C, any, true, CTX, CTXP, G>
   : T;
 

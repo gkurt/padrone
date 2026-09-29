@@ -137,7 +137,7 @@ type MountedCommand<
 
 /**
  * The trailing preferences parameter of `cli()`, `eval()`, `run()`, `repl()`, `api()`, `tool()`, `serve()` and `mcp()`: optional, unless the program
- * declares a context (`.context<T>()`) that the caller has to pass.
+ * declares a context (`.context<T>()`) that the caller has to pass (`TContext` here is the program's caller context).
  */
 type PrefsParam<TContext, TPrefs> = unknown extends TContext
   ? [prefs?: TPrefs & { context?: TContext }]
@@ -272,8 +272,18 @@ type GlobalArgsWithAsync<TGlobals extends PadroneSchema, TMeta> =
  * Conditional type that returns either PadroneBuilder or PadroneProgram based on TReturn.
  * Used to avoid repetition in PadroneBuilderMethods return types.
  */
+/**
+ * What builder methods return: `'builder'`, or a program whose callers pass `TCallerContext` to `cli()`, `eval()`, `run()`, ….
+ * That's the context `.context<T>()` declared on the program, which its `.context(transform)` calls leave unchanged: they change
+ * what commands get (`TContext`), not what callers pass.
+ */
+type BuilderReturn = 'builder' | ProgramReturn<unknown>;
+type ProgramReturn<TCallerContext> = { program: TCallerContext };
+/** The context callers pass to a program built by methods returning `TReturn`. */
+type CallerContextOf<TReturn, TContext> = TReturn extends ProgramReturn<infer C> ? C : TContext;
+
 type BuilderOrProgram<
-  TReturn extends 'builder' | 'program',
+  TReturn extends BuilderReturn,
   TProgramName extends string,
   TName extends string,
   TParentName extends string,
@@ -287,7 +297,20 @@ type BuilderOrProgram<
   TGlobals extends PadroneSchema = PadroneSchema<void>,
 > = TReturn extends 'builder'
   ? PadroneBuilder<TProgramName, TName, TParentName, TArgs, TRes, TCommands, TParentArgs, TAsync, TContext, TContextProvided, TGlobals>
-  : PadroneProgram<TProgramName, TName, TParentName, TArgs, TRes, TCommands, TParentArgs, TAsync, TContext, TContextProvided, TGlobals>;
+  : PadroneProgram<
+      TProgramName,
+      TName,
+      TParentName,
+      TArgs,
+      TRes,
+      TCommands,
+      TParentArgs,
+      TAsync,
+      TContext,
+      TContextProvided,
+      TGlobals,
+      CallerContextOf<TReturn, TContext>
+    >;
 
 /**
  * Base builder methods shared between PadroneBuilder and PadroneProgram.
@@ -306,8 +329,8 @@ export type PadroneBuilderMethods<
   TContextProvided,
   /** The global args in effect for this command (its own `.globalArgs()` or the nearest ancestor's) */
   TGlobals extends PadroneSchema,
-  /** The return type for builder methods - either PadroneBuilder or PadroneProgram */
-  TReturn extends 'builder' | 'program',
+  /** The return type for builder methods - either PadroneBuilder or PadroneProgram (with the context its callers pass) */
+  TReturn extends BuilderReturn,
 > = {
   /**
    * Apply build-time extensions that transform this builder/program, in order: `.extend(padroneJson(), padroneFormat())`.
@@ -567,8 +590,9 @@ export type PadroneBuilderMethods<
    * @category Builder
    */
   context: {
+    // On a program, the declared context is also what its callers pass
     <TNewContext>(): BuilderOrProgram<
-      TReturn,
+      TReturn extends 'builder' ? 'builder' : ProgramReturn<TNewContext>,
       TProgramName,
       TName,
       TParentName,
@@ -581,8 +605,8 @@ export type PadroneBuilderMethods<
       TContextProvided,
       TGlobals
     >;
-    // A transform of no context (e.g. `.context(() => ({ db }))` on the program) provides the context itself:
-    // callers don't pass one, so it's typed as provided context rather than the context callers must give.
+    // Commands (and later transforms) get the transformed context; callers still pass the one the program declares
+    // (none for `.context(() => ({ db }))` on a program without `.context<T>()`)
     <TNewContext>(
       transform: (ctx: TContext) => TNewContext,
     ): BuilderOrProgram<
@@ -595,8 +619,8 @@ export type PadroneBuilderMethods<
       TCommands,
       TParentArgs,
       TAsync,
-      unknown extends TContext ? unknown : TNewContext,
-      unknown extends TContext ? TContextProvided & TNewContext : TContextProvided,
+      TNewContext,
+      TContextProvided,
       TGlobals
     >;
   };
@@ -986,6 +1010,8 @@ export type PadroneBuilderMethods<
     async: TAsync;
     context: TContext;
     contextProvided: TContextProvided;
+    /** The context callers pass to `cli()`, `eval()`, `run()`, …: the program's `.context<T>()`, before its transforms. */
+    callerContext: CallerContextOf<TReturn, TContext>;
     globals: TGlobals;
     command: PadroneCommand<TName, TParentName, WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands, [], TAsync, TContext, TContextProvided>;
   };
@@ -1030,6 +1056,8 @@ export type PadroneProgram<
   TContext = unknown,
   TContextProvided = unknown,
   TGlobals extends PadroneSchema = PadroneSchema<void>,
+  /** The context callers pass (`.context<T>()` on the program); its `.context(transform)` calls change `TContext` only. */
+  TCallerContext = TContext,
 > = PadroneBuilderMethods<
   TProgramName,
   TName,
@@ -1042,7 +1070,7 @@ export type PadroneProgram<
   TContext,
   TContextProvided,
   TGlobals,
-  'program'
+  ProgramReturn<TCallerContext>
 > & {
   /** Execute a command by name with pre-validated args (skips parsing and validation). @category Execution */
   run: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], true, true>>(
@@ -1050,7 +1078,7 @@ export type PadroneProgram<
     args: NoInfer<
       KnownCommandArgs<PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>, TCommand>
     >,
-    ...prefs: PrefsParam<TContext, { signal?: AbortSignal }>
+    ...prefs: PrefsParam<TCallerContext, { signal?: AbortSignal }>
   ) => PadroneCommandResult<PickCommandByName<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>>;
 
   /**
@@ -1065,7 +1093,7 @@ export type PadroneProgram<
    */
   eval: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], true, true>>(
     input: TCommand | SafeString | readonly string[],
-    ...prefs: PrefsParam<TContext, PadroneEvalPreferences>
+    ...prefs: PrefsParam<TCallerContext, PadroneEvalPreferences>
   ) => MaybePromiseCommandResult<
     PickCommandByPossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>,
     PickCommandByPossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], TCommand>['~types']['async']
@@ -1073,7 +1101,7 @@ export type PadroneProgram<
 
   /** Parse and execute from `process.argv` through the full interceptor pipeline. @category Execution */
   cli: (
-    ...prefs: PrefsParam<TContext, PadroneCliPreferences>
+    ...prefs: PrefsParam<TCallerContext, PadroneCliPreferences>
   ) => MaybePromiseCommandResult<FlattenCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>, TAsync>;
 
   /** Parse and validate input (a string, or argv as an array) without executing the action. @category Execution */
@@ -1106,13 +1134,13 @@ export type PadroneProgram<
    * @category Utility
    */
   api: (
-    ...prefs: PrefsParam<TContext, { signal?: AbortSignal }>
+    ...prefs: PrefsParam<TCallerContext, { signal?: AbortSignal }>
   ) => PadroneAPI<PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>>;
 
   /** Start an interactive REPL session. @category Execution */
   repl: (
     ...options: PrefsParam<
-      TContext,
+      TCallerContext,
       PadroneReplPreferences<PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>>
     >
   ) => AsyncIterable<PadroneCommandResult<FlattenCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>]>>> & {
@@ -1124,7 +1152,7 @@ export type PadroneProgram<
   };
 
   /** Export as an AI SDK tool. @category Utility */
-  tool: (...prefs: PrefsParam<TContext, PadroneToolPreferences>) => Tool<{ command: string }>;
+  tool: (...prefs: PrefsParam<TCallerContext, PadroneToolPreferences>) => Tool<{ command: string }>;
 
   /** Generate help text for a command. @category Utility */
   help: <const TCommand extends PossibleCommands<[PadroneCommand<'', '', WithGlobalArgs<TArgs, TGlobals>, TRes, TCommands>], false, true>>(
@@ -1136,10 +1164,10 @@ export type PadroneProgram<
   completion: (shell?: 'bash' | 'zsh' | 'fish' | 'powershell', options?: CompletionScriptOptions) => Promise<string>;
 
   /** Start a Model Context Protocol server. @category Server */
-  mcp: (...prefs: PrefsParam<TContext, PadroneMcpPreferences>) => Promise<void>;
+  mcp: (...prefs: PrefsParam<TCallerContext, PadroneMcpPreferences>) => Promise<void>;
 
   /** Start a REST HTTP server with OpenAPI docs. @category Server */
-  serve: (...prefs: PrefsParam<TContext, PadroneServePreferences>) => Promise<void>;
+  serve: (...prefs: PrefsParam<TCallerContext, PadroneServePreferences>) => Promise<void>;
 
   /** Read-only metadata about the program (name, version, description, commands, etc.). @category Utility */
   info: PadroneProgramMeta<TProgramName>;

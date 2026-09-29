@@ -198,7 +198,7 @@ Sets or transforms the typed context for this command. Context flows through the
 
 When used without arguments, `.context<T>()` only changes the TypeScript type. When called with a transform function, the function is applied at runtime when resolving context from root to the target command.
 
-A program's `.context<T>()` is context callers pass: `cli()`, `eval()`, `run()`, `repl()` and `api()` require `{ context }`. A transform of no context (`.context(() => ({ db }))` on the program) creates it, so callers pass none.
+A program's `.context<T>()` is context callers pass: `cli()`, `eval()`, `run()`, `repl()`, `api()`, `tool()`, `serve()` and `mcp()` require `{ context }`. Its `.context(transform)` calls change what commands (and later transforms) get, not what callers pass: after `.context<{ url: string }>().context((ctx) => ({ db: connect(ctx.url) }))`, callers pass `{ url }` and commands get `{ db }`. A transform of no context (`.context(() => ({ db }))` on the program) creates it, so callers pass none.
 
 ### `.action(handler?)`
 

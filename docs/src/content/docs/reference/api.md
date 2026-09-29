@@ -194,7 +194,7 @@ program
 
 When called without arguments, `.context<T>()` only changes the TypeScript type. When called with a transform function, the function is applied at runtime to the inherited context as it resolves from root to the target command.
 
-A context declared with `.context<T>()` on the program is one callers pass: `cli()`, `eval()`, `run()`, `repl()` and `api()` require `{ context }` (a type error without it). A transform of no context, like `.context(() => ({ db: createDb() }))` on the program, creates the context itself, so callers don't pass one.
+A context declared with `.context<T>()` on the program is one callers pass: `cli()`, `eval()`, `run()`, `repl()`, `api()`, `tool()`, `serve()` and `mcp()` require `{ context }` (a type error without it). The program's `.context(transform)` calls change what commands (and later transforms) get, not what callers pass: after `.context<{ url: string }>().context((ctx) => ({ db: connect(ctx.url) }))`, callers pass `{ url }` and commands get `{ db }`. A transform of no context, like `.context(() => ({ db: createDb() }))` on the program, creates the context itself, so callers don't pass one.
 
 **Returns:** The program builder (chainable)
 

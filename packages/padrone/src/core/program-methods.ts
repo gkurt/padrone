@@ -28,7 +28,7 @@ import { withEmit } from './events.ts';
 import type { ExecContext } from './exec.ts';
 import { collectInterceptors, errorResultWithSignal, execCommand } from './exec.ts';
 import { checkInterceptorRequirements, resolveRegisteredInterceptors, runInterceptorChain } from './interceptors.ts';
-import { errorResult, makeThenable, thenMaybe, warnIfUnexpectedAsync, withDrain, withPromiseDrain } from './results.ts';
+import { errorResult, finalizeResult, makeThenable, thenMaybe, warnIfUnexpectedAsync, withPromiseDrain } from './results.ts';
 import { coreValidateForParse, formatIssueMessages, takeDryRunFlag } from './validate.ts';
 
 /** The exit code an error asks for: its own `exitCode` (as `PadroneError` carries), or 1. */
@@ -38,23 +38,17 @@ function errorExitCode(error: unknown): number {
 }
 
 /**
- * Sets the process exit code for a `cli()` result that ended with an error or a signal —
- * and for an error that only surfaces when the result is drained. Successful runs leave it untouched.
+ * Finalizes a `cli()` result, setting the process exit code when it ended with an error or a signal,
+ * or when an error only surfaces as it is drained. Successful runs leave it untouched.
  */
-function reportExitCode<T extends { error?: unknown; exitCode?: number; drain: () => Promise<{ error?: unknown }> }>(
+function finalizeCliResult<T extends { error?: unknown; exitCode?: number }>(
   result: T,
   setExitCode: ((code: number) => void) | undefined,
 ): T {
-  if (!setExitCode) return result;
+  if (!setExitCode) return finalizeResult(result);
   const code = result.exitCode ?? (result.error !== undefined ? errorExitCode(result.error) : undefined);
   if (code) setExitCode(code);
-  const drain = result.drain;
-  result.drain = async () => {
-    const drained = await drain();
-    if (drained.error !== undefined && result.error === undefined) setExitCode(result.exitCode ?? errorExitCode(drained.error));
-    return drained;
-  };
-  return result;
+  return finalizeResult(result, (error) => setExitCode(result.exitCode ?? errorExitCode(error)));
 }
 
 /** Quotes a token for `eval()`'s tokenizer when it has spaces or quotes (JSON values do), escaping `\` and the quote. */
@@ -142,14 +136,16 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
       const commandInterceptors = resolveRegisteredInterceptors(registered, new Map());
       const executedOrPromise = runInterceptorChain('execute', commandInterceptors, executeCtx, coreExecute);
 
-      const toResult = (e: InterceptorExecuteResult) => withDrain({ command: commandObj as any, args: args as any, result: e.result });
+      const toResult = (e: InterceptorExecuteResult) => finalizeResult({ command: commandObj as any, args: args as any, result: e.result });
 
       if (executedOrPromise instanceof Promise) {
-        return executedOrPromise.then(toResult).catch((err: unknown) => errorResult(err, { command: commandObj, args })) as any;
+        return executedOrPromise
+          .then(toResult)
+          .catch((err: unknown) => finalizeResult(errorResult(err, { command: commandObj, args }))) as any;
       }
       return toResult(executedOrPromise);
     } catch (err) {
-      return errorResult(err) as any;
+      return finalizeResult(errorResult(err)) as any;
     }
   };
 
@@ -245,7 +241,7 @@ export function createProgramMethods(ctx: ExecContext, evalCommand: AnyPadronePr
   const cli: AnyPadroneProgram['cli'] = (cliOptions) => {
     const runtime = getCommandRuntime(rootCommand);
     const setExitCode = cliOptions?.runtime?.setExitCode ?? runtime.setExitCode;
-    const withExitCode = (result: any) => reportExitCode(result, setExitCode);
+    const withExitCode = (result: any) => finalizeCliResult(result, setExitCode);
     try {
       // argv is already tokenized by the shell: pass it through as is, one token per entry.
       const argv = (cliOptions?.runtime?.argv ?? runtime.argv)();

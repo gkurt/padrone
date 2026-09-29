@@ -1,7 +1,6 @@
 import type { ShellType } from '#src/util/shell-utils.ts';
 import { resolveAllCommands } from '../core/commands.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
-import { withDrain } from '../core/results.ts';
 import { COMPLETE_COMMAND, COMPLETE_DESCRIBED_COMMAND, formatCompletionResult, getCompletionResult } from '../feature/complete.ts';
 import type { AnyPadroneBuilder, CommandTypesBase, PadroneCommand } from '../types/index.ts';
 import type { PadroneSchema } from '../types/schema.ts';
@@ -46,7 +45,7 @@ const completeInterceptor = defineInterceptor({ id: 'padrone:completion', name: 
       const values = completion.items.map((item) => item.value);
       if (described) ctx.runtime.output(formatCompletionResult(completion));
       else if (values.length > 0) ctx.runtime.output(values.join('\n'));
-      return withDrain({ command: ctx.command, args: undefined, result: described ? completion : values });
+      return { command: ctx.command, args: undefined, result: described ? completion : values };
     });
   },
 }));

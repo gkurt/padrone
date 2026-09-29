@@ -181,37 +181,39 @@ export async function drainValue(value: unknown): Promise<unknown> {
 }
 
 /**
- * Attaches a `drain()` method to a command result object.
- * If the result has an `error` field, `drain()` returns `{ error }`.
- * Otherwise, resolves the result (unwrapping Promises, collecting iterables), catches errors,
- * and returns a discriminated union `{ value } | { error }` that never throws.
+ * Gives a command result its `drain()`. Called once, by `eval()`, `cli()` and `run()` on the result they return,
+ * so results built inside the pipeline (including ones interceptors return) are plain objects.
+ *
+ * `drain()` returns `{ error }` for a failed result, else resolves `result` (unwrapping Promises, collecting iterables)
+ * into `{ value }`, catching errors. It never throws and is cached, so draining twice gives the same answer.
+ * `onDrainError` is called once with an error that only surfaced while draining.
  */
-export function withDrain<T extends Record<string, unknown>>(obj: T): T & { drain: () => Promise<any> } {
-  (obj as any).drain = async () => {
-    if ('error' in obj && obj.error !== undefined) {
-      return { error: obj.error };
-    }
+export function finalizeResult<T>(obj: T, onDrainError?: (error: unknown) => void): T {
+  if (obj === null || typeof obj !== 'object') return obj;
+  const result = obj as { error?: unknown; result?: unknown; drain?: () => Promise<unknown> };
+  let drained: Promise<{ value: unknown } | { error: unknown }> | undefined;
+  const run = async () => {
+    if (result.error !== undefined) return { error: result.error };
     try {
-      const value = await drainValue(obj.result);
-      return { value };
-    } catch (err) {
-      return { error: err };
+      return { value: await drainValue(result.result) };
+    } catch (error) {
+      onDrainError?.(error);
+      return { error };
     }
   };
-  return obj as any;
+  result.drain = () => (drained ??= run());
+  return obj;
 }
 
-/**
- * Creates an error command result with a `drain()` that returns the error.
- */
+/** An error command result, before `finalizeResult`. */
 export function errorResult(error: unknown, partial?: { command?: unknown; args?: unknown; argsResult?: unknown }) {
-  return withDrain({
+  return {
     error,
     result: undefined,
     command: partial?.command,
     args: partial?.args,
     argsResult: partial?.argsResult,
-  });
+  };
 }
 
 export function isAsyncBranded(schema: unknown): boolean {

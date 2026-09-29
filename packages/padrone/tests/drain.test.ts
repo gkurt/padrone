@@ -1,5 +1,13 @@
 import { describe, expect, expectTypeOf, it } from 'bun:test';
-import { ActionError, asyncSchema, createPadrone, type Drained, type PadroneDrainResult } from 'padrone';
+import {
+  ActionError,
+  asyncSchema,
+  createPadrone,
+  type Drained,
+  defineInterceptor,
+  type PadroneDrainResult,
+  padroneAutoOutput,
+} from 'padrone';
 import * as z from 'zod/v4';
 
 describe('drain()', () => {
@@ -261,6 +269,49 @@ describe('drain()', () => {
       expect(value).toBeUndefined();
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toBe('pipeline error');
+    });
+  });
+
+  describe('finalized results', () => {
+    it('gives the same answer when drained twice, even for an unconsumed iterator', async () => {
+      const program = createPadrone('app')
+        .extend(padroneAutoOutput({ disabled: true }))
+        .command('gen', (c) =>
+          c.action(function* () {
+            yield 1;
+            yield 2;
+          }),
+        );
+
+      const result = program.eval('gen');
+      expect(await result.drain()).toEqual({ value: [1, 2] });
+      expect(await result.drain()).toEqual({ value: [1, 2] });
+    });
+
+    it('reports a drain error once, for cli()', async () => {
+      const exitCodes: number[] = [];
+      const program = createPadrone('app')
+        .extend(padroneAutoOutput({ disabled: true }))
+        .runtime({ argv: () => ['boom'], output: () => {}, error: () => {}, setExitCode: (code) => exitCodes.push(code) })
+        .command('boom', (c) =>
+          c.action(async function* () {
+            yield 1;
+            throw new Error('late');
+          }),
+        );
+
+      const result = program.cli();
+      await result.drain();
+      await result.drain();
+      expect(exitCodes).toEqual([1]);
+    });
+
+    it('adds drain() to a plain result returned by a start interceptor', async () => {
+      const program = createPadrone('app')
+        .intercept(defineInterceptor({ name: 'short-circuit' }, () => ({ start: () => ({ result: 'early' }) })))
+        .command('x', (c) => c.action(() => 'late'));
+
+      expect(await program.eval('x').drain()).toEqual({ value: 'early' });
     });
   });
 

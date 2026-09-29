@@ -2,7 +2,7 @@ import { findCommandByName } from '../core/commands.ts';
 import { ActionError } from '../core/errors.ts';
 import { defineInterceptor } from '../core/interceptors.ts';
 import { parseCliInputToParts } from '../core/parse.ts';
-import { thenMaybe, withDrain } from '../core/results.ts';
+import { thenMaybe } from '../core/results.ts';
 import { createParseResolver, getKnownOptionNames } from '../core/validate.ts';
 import type {
   AnyPadroneBuilder,
@@ -96,7 +96,7 @@ function createReplInterceptor(defaults?: PadroneReplPreferences, disabled?: boo
         return program
           .repl(replPreferences(defaults, replInfo.scope, ctx.runtime, callerContext))
           .drain()
-          .then((r: any) => withDrain({ command: ctx.command, args: undefined, result: r.value }));
+          .then((r: any) => ({ command: ctx.command, args: undefined, result: r.value }));
       },
       // The `repl` command: nothing is returned, so auto-output doesn't print the session's results when it ends
       execute(ctx, next) {

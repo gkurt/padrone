@@ -48,7 +48,7 @@ import { collectInterceptors, errorResultWithSignal, execCommand, execContextKey
 import { hookInterceptor } from './hooks.ts';
 import { toRegisteredInterceptor } from './interceptors.ts';
 import { createProgramMethods } from './program-methods.ts';
-import { hasInteractiveConfig, isAsyncBranded, makeThenable, noop, withPromiseDrain } from './results.ts';
+import { finalizeResult, hasInteractiveConfig, isAsyncBranded, makeThenable, noop, withPromiseDrain } from './results.ts';
 import { parseCommand } from './validate.ts';
 
 export { buildReplCompleter } from './commands.ts';
@@ -145,10 +145,11 @@ export function createPadroneBuilder<TBuilder extends PadroneProgram = PadronePr
   const evalCommand: AnyPadroneProgram['eval'] = (input, evalOptions) => {
     try {
       const result = execCommand(input as string, execCtx, evalOptions, 'soft', evalOptions?.caller ?? 'eval');
-      if (result instanceof Promise) return withPromiseDrain(result.catch((err: unknown) => errorResultWithSignal(err))) as any;
-      return makeThenable(result);
+      if (result instanceof Promise)
+        return withPromiseDrain(result.catch((err: unknown) => errorResultWithSignal(err)).then((r) => finalizeResult(r))) as any;
+      return makeThenable(finalizeResult(result));
     } catch (err) {
-      return makeThenable(errorResultWithSignal(err)) as any;
+      return makeThenable(finalizeResult(errorResultWithSignal(err))) as any;
     }
   };
 

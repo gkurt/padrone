@@ -29,7 +29,7 @@ import {
   wrapWithLifecycle,
 } from './interceptors.ts';
 import { emitCommandNotFound, isNotFoundCommand } from './not-found.ts';
-import { errorResult, noop, thenMaybe, warnIfUnexpectedAsync, withDrain } from './results.ts';
+import { errorResult, noop, thenMaybe, warnIfUnexpectedAsync } from './results.ts';
 import { buildCommandArgs, formatIssueMessages, getDeprecationWarnings, takeDryRunFlag, validateCommandArgs } from './validate.ts';
 
 export type ExecContext = {
@@ -117,12 +117,12 @@ function handleValidationIssues(argsResult: StandardSchemaV1.FailureResult, comm
     });
   }
 
-  return withDrain({
+  return {
     command: command as any,
     args: undefined,
     argsResult,
     result: undefined,
-  });
+  };
 }
 
 /**
@@ -303,16 +303,10 @@ export function execCommand(
             const executedOrPromise = runInterceptorChain('execute', commandInterceptors, executeCtx, coreExecute);
 
             return thenMaybe(executedOrPromise, (e) => {
-              const finalize = (result: unknown) =>
-                withDrain({
-                  command: command as any,
-                  args: v.args,
-                  argsResult: v.argsResult,
-                  result,
-                });
+              const toResult = (result: unknown) => ({ command: command as any, args: v.args, argsResult: v.argsResult, result });
 
-              if (e.result instanceof Promise) return e.result.then(finalize);
-              return finalize(e.result);
+              if (e.result instanceof Promise) return e.result.then(toResult);
+              return toResult(e.result);
             });
           };
 
@@ -331,7 +325,7 @@ export function execCommand(
           command,
           resolvedInput,
           readFilesThenValidate,
-          (result) => withDrain({ command: command as any, args: undefined, argsResult: undefined, result }),
+          (result) => ({ command: command as any, args: undefined, argsResult: undefined, result }),
           signal,
           context,
           runtime,
@@ -353,7 +347,7 @@ export function execCommand(
     rootCommand,
     resolvedInput,
     runPipeline,
-    (result) => withDrain({ command: rootCommand, args: undefined, argsResult: undefined, result }),
+    (result) => ({ command: rootCommand, args: undefined, argsResult: undefined, result }),
     baseSignal,
     initialContext,
     runtime,
